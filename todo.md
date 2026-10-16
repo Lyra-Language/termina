@@ -5,14 +5,17 @@ milestones are in `CLAUDE.md` § Plan.
 
 ## The command line (M3)
 
-- **[OPEN] Tab completion** — Tab does nothing at a prompt yet; the shell's completion needs its line editor holding the text.
+- **[DONE 10/16] Tab completion** — zsh's own, captured by a widget and offered in a menu (`CLAUDE.md`, Tab completion).
+- **[OPEN] Filter the menu as you type** — typing closes it today; narrowing it by the word as it grows would save a Tab.
+- **[OPEN] A completion's own suffix rules** — zsh removes an auto-added space or `/` when the next key is `/` or `)`; Sulafat keeps it.
 - **[OPEN] Type-ahead** — keys typed between Return and the next prompt go to the shell's own line editor, and would reach the next command unseen.
 - **[OPEN] Right prompts** — zsh's `RPROMPT` sits under the editor's band and is hidden by nothing; text typed past it overlaps.
 - **[OPEN] Syntax colouring, Ctrl+R search, bash integration** — next after Tab.
 
 ## M1 — a classic terminal
 
-- **[OPEN] Colours and attributes** — SGR into a cell (rune, fg, bg, flags); draw runs of one style.
+- **[DONE 10/16] Colours and attributes** — SGR (both spellings) into styled cells, erases on the pen's background, drawn by runs.
+- **[OPEN] Bold as bright** — an option to draw bold 0–7 text in the bright colours, as old programs expect; off by default.
 - **[OPEN] Wide characters** — an East Asian Width / emoji table; a wide rune takes two cells.
 - **[OPEN] DEC private modes** — `?1049` alternate screen, `?1` cursor keys, `?2004` paste, `?25` cursor, `?7` autowrap.
 - **[OPEN] Mouse reporting** — `?1000`/`?1002`/`?1006` (SGR) to the program; plain selection otherwise.

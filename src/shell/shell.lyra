@@ -8,6 +8,13 @@ module shell
 //! them): `A` a prompt begins, `B` the prompt has been drawn and input begins, `C` a command
 //! is running and its output begins, `D;status` it ended. OSC 7 reports the directory.
 //!
+//! **Tab completion is zsh's own.** Sulafat writes the command line to a request file and
+//! sends a key bound to a widget here, which loads it into zsh's buffer, runs zsh's
+//! completion system with `compadd` captured — so the user's completion settings, plugins
+//! and directory all apply — and reports each match (OSC 7770) without inserting or listing
+//! any. Its messages are `b` (begin), `m;<prefix>;<insert>;<suffix>;<shown>;<description>`
+//! (a match, each field percent-encoded) and `e` (end); `vt.Screen` collects them.
+//!
 //! **zsh** is reached through `ZDOTDIR`: zsh reads `$ZDOTDIR/.zshenv` first, and Sulafat's
 //! puts the user's `ZDOTDIR` back, reads their `.zshenv`, and adds two hooks — so their
 //! `.zprofile`, `.zshrc` and `.zlogin` are read from their own directory as always. Other
@@ -17,18 +24,43 @@ import std.env.{ lookup }
 import std.io.{ write_file, create_dir_all, read_bytes }
 import std.path
 
-/// The environment that gives `shell` (a path, as `$SHELL` holds it) Sulafat's integration,
-/// as `NAME=value` entries for `bindings.pty`'s `spawn`; empty for a shell it has none for,
-/// or when its files could not be written.
-pub let integration_env = (shell: string) -> []string => {
-  if shell.base() != "zsh" { return [] }
-  let Some(dir) = zsh_dir() else { return [] }
-  [
-    "ZDOTDIR=${dir}",
-    "SULAFAT_ORIG_ZDOTDIR=${lookup("ZDOTDIR") ?? ""}",
-    "SULAFAT_SHELL_INTEGRATION=1",
-  ]
+/// What a shell with Sulafat's integration is started with: its environment, as `NAME=value`
+/// entries for `bindings.pty`'s `spawn`, and the file completion requests are written to.
+pub struct Integration {
+  env: []string,
+  request: string,
 }
+
+/// The integration for `shell` (a path, as `$SHELL` holds it), its files written; `None` for
+/// a shell it has none for, or when they could not be written. Each window has a request
+/// file of its own, named by `id`.
+pub let integration = (shell: string, id: string) -> Maybe<Integration> => {
+  if shell.base() != "zsh" { return None }
+  let Some(dir) = zsh_dir() else { return None }
+  let request = dir.join("request-${id}")
+  Some(Integration {
+    env: [
+      "ZDOTDIR=${dir}",
+      "SULAFAT_ORIG_ZDOTDIR=${lookup("ZDOTDIR") ?? ""}",
+      "SULAFAT_SHELL_INTEGRATION=1",
+      "SULAFAT_COMPLETE_FILE=${request}",
+    ],
+    request: request,
+  })
+}
+
+/// Ask the shell for the completions of `text` with the caret at rune `cursor`: the request
+/// written, and the key that runs the shell's widget on it, to be sent to the shell. `None`
+/// when the file cannot be written.
+pub let completion_request = (
+  i: Integration,
+  text: string,
+  cursor: i64
+) -> Maybe<string> =>
+  if write_file(i.request, "${cursor}\n${text}") { Some(COMPLETE_KEY) } else { None }
+
+/// The key zsh's completion widget is bound to: a private CSI no keyboard sends.
+const COMPLETE_KEY: string = "\e[9898~"
 
 /// What the shell is sent to run `command`. Through bracketed paste when the shell has it
 /// on (zsh does at its prompt), so that a command of several lines reaches the shell's line
@@ -139,5 +171,82 @@ if [[ -o interactive ]]; then
   }
   add-zsh-hook precmd _sulafat_precmd
   add-zsh-hook preexec _sulafat_preexec
+
+  # Tab completion for the command line Sulafat edits: the request file holds the caret's
+  # offset, a newline and the text; each match is reported (OSC 7770) and none is added.
+  _sulafat_enc() {
+    local s=${1//\%/%25}
+    s=${s//;/%3B}
+    s=${s//$'\n'/%0A}
+    s=${s//$'\t'/%09}
+    s=${s//$'\e'/}
+    s=${s//$'\a'/}
+    REPLY=$s
+  }
+  _sulafat_capture() {
+    compadd() {
+      # A compadd that only asks (-O, -A, -D) is a completion function's own business.
+      if [[ ${@[1,(i)(-|--)]} == *-(O|A|D)\ * ]]; then builtin compadd "$@"; return; fi
+      local -a hits dscr
+      local -A o
+      zparseopts -A o -E P: S: p: s: i: I: W: d: J: V: X: x: r: R: F: E: M: o:: a k q Q f e n U l 1 2 C
+      [[ -n ${o[-d]} ]] && dscr=( "${(@P)o[-d]}" )
+      builtin compadd -A hits -D dscr "$@"
+      (( $#hits )) || return 1
+      local h i=0 ins shown suf desc dir pre
+      for h in $hits; do
+        (( i++ ))
+        (( _sulafat_count >= 500 )) && return 0
+        (( _sulafat_count++ ))
+        if (( $+o[-Q] )) || [[ -n $QIPREFIX ]]; then ins=$h; shown=${(Q)h}; else ins=${(q)h}; shown=$h; fi
+        ins="${o[-P]}${o[-p]}${ins}"
+        suf=${o[-S]- }
+        if (( $+o[-f] )); then
+          dir=${o[-W]-${o[-p]}}
+          [[ -d ${~dir}${(Q)h} ]] && suf=/
+        fi
+        # Inside quotes, close them after a match that is finished.
+        [[ -n $QIPREFIX && $suf != / ]] && suf="${QIPREFIX[1]}${suf}"
+        desc=${dscr[i]}
+        if [[ $desc == *' -- '* ]]; then desc=${desc#* -- }; else desc=; fi
+        _sulafat_enc "${QIPREFIX}${IPREFIX}"; pre=$REPLY
+        _sulafat_enc "$ins"; ins=$REPLY
+        _sulafat_enc "$suf"; suf=$REPLY
+        _sulafat_enc "$shown"; shown=$REPLY
+        _sulafat_enc "$desc"; desc=$REPLY
+        builtin printf '\e]7770;m;%s;%s;%s;%s;%s\a' "$pre" "$ins" "$suf" "$shown" "$desc"
+      done
+      return 0
+    }
+    _main_complete
+    builtin unfunction compadd
+    compstate[insert]=''
+    compstate[list]=''
+  }
+  _sulafat_complete() {
+    if (( ! $+functions[_main_complete] )); then
+      builtin autoload -Uz compinit && compinit -i -d "${SULAFAT_COMPLETE_FILE:h}/zcompdump"
+    fi
+    local f=$SULAFAT_COMPLETE_FILE data
+    [[ -r $f ]] || return 0
+    data=$(<$f)
+    BUFFER=${data#*$'\n'}
+    CURSOR=${data%%$'\n'*}
+    typeset -gi _sulafat_count=0
+    builtin printf '\e]7770;b\a'
+    zle _sulafat_complete_word
+    builtin printf '\e]7770;e\a'
+    BUFFER=
+    CURSOR=0
+  }
+  _sulafat_bind() {
+    zle -C _sulafat_complete_word complete-word _sulafat_capture
+    zle -N _sulafat_complete
+    # Bound once the user's .zshrc has chosen emacs or vi keys, in every keymap.
+    local m
+    for m in emacs viins vicmd; do builtin bindkey -M $m '\e[9898~' _sulafat_complete; done
+    add-zsh-hook -d precmd _sulafat_bind
+  }
+  add-zsh-hook precmd _sulafat_bind
 fi
 `##

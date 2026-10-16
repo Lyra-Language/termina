@@ -114,6 +114,16 @@ impl Editor {
     self.last = Other
   }
 
+  /// Replace runes `start` up to `end` with `s`, the caret after it, as one edit — a
+  /// completion applied.
+  pub let replace = (self: mut, start: i64, end: i64, s: string) -> void => {
+    self.save()
+    self.anchor = start.clamp(0, self.text.len())
+    self.cursor = end.clamp(self.anchor, self.text.len())
+    self.replace_selection(s.to_runes())
+    self.last = Other
+  }
+
   /// Delete the selection, or the rune before the caret.
   pub let backspace = (self: mut) -> void => {
     if self.has_selection() { self.delete_selection() } else { self.delete_to(
@@ -492,6 +502,47 @@ let line_end_of = pure (text: []rune, i: i64) -> i64 => {
   while k < text.len() && text[k] != '\n' { k += 1 }
   k
 }
+
+/// The shell word around position `i` — what a completion replaces — as `(start, end)`: from
+/// the last separator before `i` that is not quoted or escaped (a space, a tab, a line
+/// break, or one of `;&|()<>`) to the next one after it. A quote begun in the word is part
+/// of it, as the shell reads it.
+pub let shell_word_at = pure (text: []rune, i: i64) -> (i64, i64) => {
+  let at = i.clamp(0, text.len())
+  var start = 0
+  var single = false
+  var double = false
+  var k = 0
+  while k < at {
+    let r = text[k]
+    if r == '\\' && !single && k + 1 < text.len() { k += 2 }
+    else {
+      if r == '\'' && !double { single = !single }
+      else if r == '"' && !single { double = !double }
+      else if !single && !double && is_separator(r) { start = k + 1 }
+      k += 1
+    }
+  }
+  // A backslash just before the caret escaped nothing yet; the word still started where it
+  // did.
+  start = start.min(at)
+  var end = at
+  while end < text.len() {
+    let r = text[end]
+    if r == '\\' && !single && end + 1 < text.len() { end += 2 }
+    else {
+      if r == '\'' && !double { single = !single }
+      else if r == '"' && !single { double = !double }
+      else if !single && !double && is_separator(r) { break }
+      end += 1
+    }
+  }
+  (start, end.min(text.len()))
+}
+
+let is_separator = pure (r: rune) -> bool =>
+  r == ' ' || r == '\t' || r == '\n' || r == ';' || r == '&' || r == '|' || r == '(' ||
+  r == ')' || r == '<' || r == '>'
 
 /// Runes as a string, built once.
 pub let text_of = pure (runes: []rune) -> string => [r in runes | "${r}"].join("")

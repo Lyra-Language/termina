@@ -2,22 +2,21 @@ module vt
 //! The screen a program draws on: a grid of cells, a cursor, and the lines that have scrolled
 //! off the top. [Screen.apply] carries out the parser's [Action]s; nothing here reads bytes.
 //!
-//! **What M0 models**: text, the cursor movements and erases a shell's line editor uses
-//! (`\r`, backspace, tabs, `\e[K`, `\e[J`, cursor positioning), scrolling with a scroll
-//! region, xterm's deferred wrap at the last column, and the window title. Colours and
-//! attributes, wide characters, the alternate screen and the DEC private modes come next
-//! (`../../todo.md`).
+//! **What it models**: text in colour with attributes (`style.lyra`), the cursor movements
+//! and erases a shell's line editor uses (`\r`, backspace, tabs, `\e[K`, `\e[J`, cursor
+//! positioning), scrolling with a scroll region, xterm's deferred wrap at the last column,
+//! the window title, the shell's marks, and bracketed paste. Wide characters, the alternate
+//! screen and the other DEC private modes come next (`../../todo.md`).
 
 /// The screen, its cursor and its scrollback.
 pub struct Screen {
   cols: i64,
   rows: i64,
-  /// `rows` lines of `cols` runes; a blank cell is a space. Each line its own array: see
-  /// [blank_line].
-  lines: [][]rune,
+  /// `rows` lines of `cols` cells. Each line its own array: see [blank_line].
+  lines: [][]Cell,
   /// Lines scrolled off the top, a ring of at most [SCROLLBACK] — the oldest at
   /// `scrollback_start` once it is full.
-  scrollback: [][]rune,
+  scrollback: [][]Cell,
   scrollback_start: i64,
   /// The cursor, 0-based.
   x: i64,
@@ -29,20 +28,39 @@ pub struct Screen {
   /// The scroll region's first and last lines, inclusive (`\e[r`).
   top: i64,
   bottom: i64,
+  /// The style the next character is written in.
+  pen: Pen,
   saved_x: i64,
   saved_y: i64,
+  saved_pen: Pen,
   /// The window title the program last set (OSC 0 or 2).
   title: string,
   /// The directory the shell last reported (OSC 7), or `""`.
   cwd: string,
   /// What the shell's integration has reported since [Screen.take_marks] last asked.
   marks: []Mark,
+  /// The completions the shell is reporting (OSC 7770 `m`), until its `e`.
+  completing: []Completion,
+  /// Lists of completions the shell has finished reporting, since [Screen.take_completions].
+  completed: [][]Completion,
   /// Lines dropped off the top of a full scrollback: what makes an [Screen.absolute] line
   /// number stay the same line while the ring turns.
   dropped: i64,
   /// DEC private modes: bracketed paste (`?2004`) and the cursor shown (`?25`).
   bracketed_paste: bool,
   cursor_visible: bool,
+}
+
+/// One completion the shell offered for the word at the caret (`../shell/shell.lyra`): the
+/// word becomes `prefix`, `insert`, `suffix` — the part of the word kept before the match
+/// (an opening quote, a `$`), the match as it goes into the line (quoted), and what follows
+/// it (a space, a `/`, a closing quote) — and the menu shows `shown` and `description`.
+pub struct Completion {
+  prefix: string,
+  insert: string,
+  suffix: string,
+  shown: string,
+  description: string,
 }
 
 /// Where a shell with Sulafat's integration is (OSC 133 — `shell/shell.lyra`).
@@ -61,7 +79,7 @@ pub data Mark =
 pub let screen = pure (cols: i64, rows: i64) -> Screen => Screen {
   cols: cols,
   rows: rows,
-  lines: [row in 0..<rows | blank_line(cols)],
+  lines: [row in 0..<rows | blank_line(cols, DEFAULT)],
   scrollback: [],
   scrollback_start: 0,
   x: 0,
@@ -69,11 +87,15 @@ pub let screen = pure (cols: i64, rows: i64) -> Screen => Screen {
   wrap_pending: false,
   top: 0,
   bottom: rows - 1,
+  pen: plain_pen(),
   saved_x: 0,
   saved_y: 0,
+  saved_pen: plain_pen(),
   title: "",
   cwd: "",
   marks: [],
+  completing: [],
+  completed: [],
   dropped: 0,
   bracketed_paste: false,
   cursor_visible: true,
@@ -103,6 +125,14 @@ impl Screen {
     out
   }
 
+  /// The completion lists the shell has finished reporting since the last call, oldest
+  /// first; emptied.
+  pub let take_completions = (self: mut) -> [][]Completion => {
+    let out = self.completed
+    self.completed = []
+    out
+  }
+
   /// The absolute number of everything's line `i` ([line]'s numbering): it counts lines
   /// from the first the screen ever had, so it names the same line however much has
   /// scrolled since — until it leaves the scrollback, when [line_at] answers `None`.
@@ -123,7 +153,7 @@ impl Screen {
   pub let scrollback_len = pure (self) -> i64 => self.scrollback.len()
 
   /// Line `i` of everything — the scrollback's, oldest first, then the screen's.
-  pub let line = pure (self, i: i64) -> []rune => {
+  pub let line = pure (self, i: i64) -> []Cell => {
     let n = self.scrollback.len()
     if i < n { self.scrollback[(self.scrollback_start + i) % n] }
     else { self.lines[i - n] }
@@ -134,7 +164,7 @@ impl Screen {
   /// cursor's line stays on it). Text is not reflowed.
   pub let resize = (self: mut, cols: i64, rows: i64) -> void => {
     if cols == self.cols && rows == self.rows { return }
-    var kept: [][]rune = []
+    var kept: [][]Cell = []
     for l in self.lines { kept.push(fit(l, cols)) }
     // Losing rows: push lines off the top while the cursor's line would fall off the bottom.
     var y = self.y
@@ -144,7 +174,7 @@ impl Screen {
       y -= 1
     }
     if kept.len() > rows { kept = kept.slice(0, rows) }
-    while kept.len() < rows { kept.push(blank_line(cols)) }
+    while kept.len() < rows { kept.push(blank_line(cols, DEFAULT)) }
     self.lines = kept
     self.cols = cols
     self.rows = rows
@@ -162,7 +192,7 @@ impl Screen {
         self.linefeed()
         self.wrap_pending = false
       }
-      self.lines[self.y][self.x] = r
+      self.lines[self.y][self.x] = self.pen.cell(r)
       if self.x == self.cols - 1 { self.wrap_pending = true } else { self.x += 1 }
     }
   }
@@ -188,6 +218,7 @@ impl Screen {
     }
     if seq.marker != "" || seq.intermediates != "" { return }
     let f = seq.final
+    if f == 'm' { return self.pen.sgr(seq.params, seq.sub) }
     let n = seq.param_or(0, 1)
     if f == 'A' { self.move_to(self.x, (self.y - n).max(self.top.min(self.y))) }
     else if f == 'B' || f == 'e' { self.move_to(
@@ -239,6 +270,8 @@ impl Screen {
       self.cwd = file_url_path(text.slice(2, text.len()))
     } else if text.starts_with("133;") {
       self.shell_mark(text.slice(4, text.len()))
+    } else if text.starts_with("7770;") {
+      self.completion_report(text.slice(5, text.len()))
     }
   }
 
@@ -256,6 +289,26 @@ impl Screen {
         mark.len()
       ).parse_i64() ?? -1 } else { -1 }
       self.marks.push(CommandEnd(status))
+    }
+  }
+
+  // OSC 7770, Sulafat's own: the shell reporting completions.
+  let completion_report = (self: mut, report: string) -> void => {
+    if report == "b" { self.completing = [] }
+    else if report == "e" {
+      self.completed.push(self.completing)
+      self.completing = []
+    } else if report.starts_with("m;") {
+      let f = report.slice(2, report.len()).split(";")
+      if f.len() == 5 {
+        self.completing.push(Completion {
+          prefix: percent_decode(f[0]),
+          insert: percent_decode(f[1]),
+          suffix: percent_decode(f[2]),
+          shown: percent_decode(f[3]),
+          description: percent_decode(f[4]),
+        })
+      }
     }
   }
 
@@ -286,7 +339,7 @@ impl Screen {
   let scroll_up = (self: mut) -> void => {
     if self.top == 0 { self.push_scrollback(self.lines[0]) }
     for i in self.top..<self.bottom { self.lines[i] = self.lines[i + 1] }
-    self.lines[self.bottom] = blank_line(self.cols)
+    self.lines[self.bottom] = blank_line(self.cols, self.pen.bg)
   }
 
   let scroll_down = (self: mut) -> void => {
@@ -295,10 +348,10 @@ impl Screen {
       self.lines[i] = self.lines[i - 1]
       i -= 1
     }
-    self.lines[self.top] = blank_line(self.cols)
+    self.lines[self.top] = blank_line(self.cols, self.pen.bg)
   }
 
-  let push_scrollback = (self: mut, line: []rune) -> void => {
+  let push_scrollback = (self: mut, line: []Cell) -> void => {
     if self.scrollback.len() < SCROLLBACK { self.scrollback.push(line) }
     else {
       self.scrollback[self.scrollback_start] = line
@@ -320,12 +373,15 @@ impl Screen {
   let erase_display = (self: mut, mode: i64) -> void => {
     if mode == 0 {
       self.erase_line(0)
-      for y in (self.y + 1)..<self.rows { self.lines[y] = blank_line(self.cols) }
+      for y in (self.y + 1)..<self.rows { self.lines[y] = blank_line(
+        self.cols,
+        self.pen.bg
+      ) }
     } else if mode == 1 {
       self.erase_line(1)
-      for y in 0..<self.y { self.lines[y] = blank_line(self.cols) }
+      for y in 0..<self.y { self.lines[y] = blank_line(self.cols, self.pen.bg) }
     } else if mode == 2 || mode == 3 {
-      for y in 0..<self.rows { self.lines[y] = blank_line(self.cols) }
+      for y in 0..<self.rows { self.lines[y] = blank_line(self.cols, self.pen.bg) }
     }
   }
 
@@ -337,7 +393,8 @@ impl Screen {
 
   // Cells `from` up to `to` of line `y` made blank.
   let blank = (self: mut, y: i64, from: i64, to: i64) -> void => {
-    for x in from..<to { self.lines[y][x] = ' ' }
+    let empty = blank_cell(self.pen.bg)
+    for x in from..<to { self.lines[y][x] = empty }
   }
 
   let delete_chars = (self: mut, n: i64) -> void => {
@@ -374,31 +431,39 @@ impl Screen {
     // Deleted lines are not scrollback, even when the region starts at the top.
     for _ in 0..<n.min(self.bottom - self.y + 1) {
       for i in self.top..<self.bottom { self.lines[i] = self.lines[i + 1] }
-      self.lines[self.bottom] = blank_line(self.cols)
+      self.lines[self.bottom] = blank_line(self.cols, self.pen.bg)
     }
     self.top = top
     self.x = 0
   }
 
+  // The cursor and the pen, as DECSC saves them.
   let save_cursor = (self: mut) -> void => {
     self.saved_x = self.x
     self.saved_y = self.y
+    self.saved_pen = self.pen
   }
 
-  let restore_cursor = (self: mut) -> void => self.move_to(self.saved_x, self.saved_y)
+  let restore_cursor = (self: mut) -> void => {
+    self.move_to(self.saved_x, self.saved_y)
+    self.pen = self.saved_pen
+  }
 }
 
-/// A line of `cols` blank cells — a new array each call: lines are written in place, so
-/// two lines sharing one array would show each other's text.
-let blank_line = pure (cols: i64) -> []rune => [' '; cols]
+/// A line of `cols` blank cells on `bg` — a new array each call: lines are written in place,
+/// so two lines sharing one array would show each other's text.
+let blank_line = pure (cols: i64, bg: u32) -> []Cell => [blank_cell(bg); cols]
 
 /// `line` made `cols` cells long: cut, or padded with blanks.
-let fit = pure (line: []rune, cols: i64) -> []rune => {
+let fit = pure (line: []Cell, cols: i64) -> []Cell => {
   if line.len() >= cols { return line.slice(0, cols) }
   var out = line.slice(0, line.len())
-  while out.len() < cols { out.push(' ') }
+  while out.len() < cols { out.push(blank_cell(DEFAULT)) }
   out
 }
+
+/// A line's runes, its styles left behind.
+pub let runes_of = pure (line: []Cell) -> []rune => [c in line | c.ch]
 
 /// The path of a `file://host/path` URL (OSC 7's form), its `%XX` escapes decoded; `""`
 /// when it is not one.
@@ -406,7 +471,13 @@ let file_url_path = pure (url: string) -> string => {
   if !url.starts_with("file://") { return "" }
   let rest = url.slice(7, url.len())
   let Some(slash) = rest.index("/") else { return "" }
-  let raw = rest.slice(slash, rest.len()).encode_utf8()
+  percent_decode(rest.slice(slash, rest.len()))
+}
+
+/// `s` with each `%XX` escape decoded to its byte; a `%` not followed by two hex digits is
+/// itself.
+let percent_decode = pure (s: string) -> string => {
+  let raw = s.encode_utf8()
   var out: []u8 = []
   var i = 0
   while i < raw.len() {

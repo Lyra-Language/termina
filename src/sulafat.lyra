@@ -2,13 +2,15 @@
 // and the keyboard sent back to it.
 //
 //   build/sulafat              the login shell ($SHELL, else /bin/sh), in the home directory
+//   build/sulafat CMD [ARG…]   that program instead, in this directory (as `xterm -e`)
 //
-// A classic terminal, monochrome so far, whose command line is an editor of its own while
+// A classic terminal, in colour, whose command line is an editor of its own while
 // zsh is at a prompt (its integration says when — shell/shell.lyra; the keys are in
 // ui/command_line.lyra). The window closes when the shell ends. ⌘V (Ctrl+Shift+V off macOS)
 // pastes; the wheel scrolls back.
 
 import std.env.{ lookup }
+import std.io.{ remove_file }
 import bindings.pty.{ spawn, close, Pty }
 import bindings.sdl3.{ platform }
 import bindings.imgui.{
@@ -70,8 +72,21 @@ import bindings.imgui.{
   KEY_ESCAPE,
 }
 import vt.{ parser, screen, Parser, Screen, InputStart }
-import shell.{ integration_env, load_history, submission }
-import ui.{ command_line, CommandLine, Place, Style, Submit, Send, push_rune }
+import shell.{ integration, load_history, submission, completion_request, Integration }
+import ui.{
+  Complete,
+  command_line,
+  CommandLine,
+  Place,
+  Style,
+  Submit,
+  Send,
+  draw_line,
+  dark_theme,
+  Theme,
+  Fonts,
+  LineAt,
+}
 import editor.{ Wrap }
 
 let main = () -> void => {
@@ -79,15 +94,30 @@ let main = () -> void => {
   // The keyboard is the shell's: ImGui's own navigation would take the arrows and Tab.
   let io = get_io()
   io.set_config_flags(io.config_flags() & ~CONFIG_FLAGS_NAV_ENABLE_KEYBOARD)
-  let font = load_font(host)
+  let fonts = load_fonts(host)
+  let theme = dark_theme()
   let shell = lookup("SHELL") ?? "/bin/sh"
+  // A program given on the command line runs instead of the shell, without the shell's
+  // integration — the window is a classic terminal for it — and where Sulafat was started.
+  let given = program_args().slice(1, program_args().len())
+  let program = if given.len() > 0 { given } else { [shell, "-l"] }
+  // The request file is this window's: named by the time it started, to the nanosecond.
+  let integrated = if given.len() > 0 { None } else { integration(
+    shell,
+    "${wall_clock_nanos()}"
+  ) }
+  let integration_env = match integrated {
+    Some(i) => i.env,
+    None => [],
+  }
+  let dir = if given.len() > 0 { None } else { lookup("HOME") }
   let env = [
     "TERM=xterm-256color",
     "COLORTERM=truecolor",
     "TERM_PROGRAM=Sulafat",
-    ...integration_env(shell),
+    ...integration_env,
   ]
-  let Some(pty) = spawn([shell, "-l"], 80, 24, lookup("HOME"), env) else {
+  let Some(pty) = spawn(program, 80, 24, dir, env) else {
     destroy_host(host)
     return
   }
@@ -107,14 +137,21 @@ let main = () -> void => {
         _ => Raw,
       }
     }
+    for offered in shown.take_completions() { line.completed(offered) }
     if shown.title != title {
       title = shown.title
       set_window_title(host, if title == "" { "Sulafat" } else { title })
     }
-    draw(pty, shown, font, got_output, mode, line)
+    draw(pty, shown, fonts, theme, integrated, got_output, mode, line)
     end_frame(host, BACKGROUND.0, BACKGROUND.1, BACKGROUND.2)
   }
   close(pty)
+  match integrated {
+    Some(i) => {
+      let _ = remove_file(i.request)
+    },
+    None => {},
+  }
   destroy_host(host)
 }
 
@@ -128,13 +165,17 @@ data Mode =
   | AtPrompt(i64, i64)
 
 /// The window's colour behind the text, and the text's.
-const BACKGROUND: (f32, f32, f32) = (0.094, 0.098, 0.118)
-const FOREGROUND: u32 = 0xFFE6E1DC
+/// The window's own background is the theme's (`ui/theme.lyra`'s `#181A1E`), cleared to
+/// before anything is drawn.
+const BACKGROUND: (f32, f32, f32) = (0.094, 0.102, 0.118)
 const CURSOR: u32 = 0xB0E6E1DC
 const CARET: u32 = 0xFFFFC66D
 const SELECTION: u32 = 0x66B07A3A
 /// The band behind the command line being edited.
 const INPUT_BAND: u32 = 0x10FFFFFF
+/// The completion menu, and its chosen row.
+const MENU: u32 = 0xFF2E2A25
+const MENU_CHOSEN: u32 = 0xFF4A4038
 
 /// Points between the window's edge and the grid.
 const PADDING: f32 = 10.0
@@ -150,23 +191,51 @@ const MEASURE: string = "MMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMM
 /// cannot stop the window drawing.
 const READS_PER_FRAME: i64 = 16
 
-/// The first monospaced font found among the system's, or ImGui's own (which is one).
-let load_font = (host: Host) -> Maybe<Font> => {
-  let candidates = [
-    "/System/Library/Fonts/SFNSMono.ttf",
-    "/System/Library/Fonts/Menlo.ttc",
-    "/usr/share/fonts/truetype/dejavu/DejaVuSansMono.ttf",
-    "/usr/share/fonts/TTF/DejaVuSansMono.ttf",
-    "/usr/share/fonts/dejavu-sans-mono-fonts/DejaVuSansMono.ttf",
-  ]
-  for path in candidates {
-    match font_file(host, path, FONT_SIZE) {
-      Some(f) => return Some(f),
+/// The first monospaced family found among the system's — its regular face, and the bold,
+/// italic and bold italic ones it has — or ImGui's own face (which is monospaced) alone.
+let load_fonts = (host: Host) -> Fonts => {
+  for family in FAMILIES {
+    match font_file(host, family.0, FONT_SIZE) {
+      Some(regular) => return Fonts {
+        regular: Some(regular),
+        bold: face(host, family.1),
+        italic: face(host, family.2),
+        bold_italic: face(host, family.3),
+        size: FONT_SIZE,
+      },
       None => {},
     }
   }
-  None
+  Fonts { regular: None, bold: None, italic: None, bold_italic: None, size: FONT_SIZE }
 }
+
+/// Monospaced families: regular, bold, italic and bold italic files (`""` for a face the
+/// family has no file of). macOS's SF Mono is one variable font, so its bold is drawn.
+const FAMILIES: [](string, string, string, string) = [
+  ("/System/Library/Fonts/SFNSMono.ttf", "", "/System/Library/Fonts/SFNSMonoItalic.ttf", ""),
+  ("/System/Library/Fonts/Menlo.ttc", "", "", ""),
+  (
+    "/usr/share/fonts/truetype/dejavu/DejaVuSansMono.ttf",
+    "/usr/share/fonts/truetype/dejavu/DejaVuSansMono-Bold.ttf",
+    "/usr/share/fonts/truetype/dejavu/DejaVuSansMono-Oblique.ttf",
+    "/usr/share/fonts/truetype/dejavu/DejaVuSansMono-BoldOblique.ttf",
+  ),
+  (
+    "/usr/share/fonts/TTF/DejaVuSansMono.ttf",
+    "/usr/share/fonts/TTF/DejaVuSansMono-Bold.ttf",
+    "/usr/share/fonts/TTF/DejaVuSansMono-Oblique.ttf",
+    "/usr/share/fonts/TTF/DejaVuSansMono-BoldOblique.ttf",
+  ),
+  (
+    "/usr/share/fonts/dejavu-sans-mono-fonts/DejaVuSansMono.ttf",
+    "/usr/share/fonts/dejavu-sans-mono-fonts/DejaVuSansMono-Bold.ttf",
+    "/usr/share/fonts/dejavu-sans-mono-fonts/DejaVuSansMono-Oblique.ttf",
+    "/usr/share/fonts/dejavu-sans-mono-fonts/DejaVuSansMono-BoldOblique.ttf",
+  ),
+]
+
+let face = (host: Host, path: string) -> Maybe<Font> =>
+  if path == "" { None } else { font_file(host, path, FONT_SIZE) }
 
 /// What the shell has written since the last frame, carried out on `shown`. Answers whether
 /// the shell is still there, and whether anything arrived.
@@ -191,7 +260,9 @@ let drain = (pty: Pty, parse: mut Parser, shown: mut Screen) -> (bool, bool) => 
 let draw = (
   pty: Pty,
   shown: mut Screen,
-  font: Maybe<Font>,
+  fonts: Fonts,
+  theme: Theme,
+  integrated: Maybe<Integration>,
   got_output: bool,
   mode: mut Mode,
   line: mut CommandLine
@@ -204,7 +275,7 @@ let draw = (
     WINDOW_FLAGS_NO_BACKGROUND | WINDOW_FLAGS_NO_SAVED_SETTINGS
   let _ = begin("terminal", flags)
   pop_style_var()
-  match font {
+  match fonts.regular {
     Some(f) => push_font_float(f, FONT_SIZE),
     None => {},
   }
@@ -216,6 +287,8 @@ let draw = (
     y: f32((get_font_size() * LINE_SPACING).round()),
   }
   let text_dy = f32(((cell.y - get_font_size()) / 2.0).floor())
+  // One display pixel, in points: what a drawn bold is offset by.
+  let pixel = 1.0 / get_io().display_framebuffer_scale().x.max(1.0)
 
   // The grid is as many whole cells as the window holds.
   let avail = get_content_region_avail()
@@ -235,9 +308,11 @@ let draw = (
     },
     Raw => None,
   }
-  let (input_line, input_rows) = match prompt {
-    Some((i, wrap)) => (i, line.rows(wrap)),
-    None => (-1, 0),
+  // The command line's rows, and with the completion menu's below them those the grid
+  // leaves to it.
+  let (input_line, edit_rows, input_rows) = match prompt {
+    Some((i, wrap)) => (i, line.rows(wrap), line.rows(wrap) + line.menu_rows()),
+    None => (-1, 0, 0),
   }
 
   // Following the output: the view was at the bottom before this frame's scroll.
@@ -251,7 +326,7 @@ let draw = (
     let y = origin.y + f32(input_line) * cell.y
     list.add_rect_filled(
       Vec2 { x: origin.x - PADDING / 2.0, y: y },
-      Vec2 { x: origin.x + f32(cols) * cell.x + PADDING / 2.0, y: y + f32(input_rows) * cell.y },
+      Vec2 { x: origin.x + f32(cols) * cell.x + PADDING / 2.0, y: y + f32(edit_rows) * cell.y },
       INPUT_BAND,
       4.0
     )
@@ -259,25 +334,23 @@ let draw = (
   for i in top..<bottom {
     // The command line's rows are the editor's: of the prompt's line only the prompt is
     // drawn, and the shell's empty input below it not at all.
-    let cells = shown.line(i)
-    let shown_cells = if i == input_line {
+    let upto = if i == input_line {
       match prompt {
-        Some((_, wrap)) => cells.slice(0, wrap.first),
-        None => cells,
+        Some((_, wrap)) => wrap.first,
+        None => shown.cols,
       }
     } else if i > input_line && i < input_line + input_rows {
-      []
+      0
     } else {
-      cells
+      shown.cols
     }
-    let text = text_of(shown_cells)
-    if text != "" {
-      list.add_text(
-        Vec2 { x: origin.x, y: origin.y + f32(i) * cell.y + text_dy },
-        FOREGROUND,
-        text
-      )
+    let at = LineAt {
+      origin: Vec2 { x: origin.x, y: origin.y + f32(i) * cell.y },
+      cell: cell,
+      text_dy: text_dy,
+      pixel: pixel,
     }
+    draw_line(list, theme, fonts, at, shown.line(i), upto)
   }
   let cursor = Vec2 {
     x: origin.x + f32(shown.x) * cell.x,
@@ -296,7 +369,14 @@ let draw = (
         text_dy: text_dy,
         wrap: wrap,
       }
-      let style = Style { text: FOREGROUND, caret: CARET, selection: SELECTION }
+      let style = Style {
+        text: theme.fg,
+        caret: CARET,
+        selection: SELECTION,
+        menu: MENU,
+        menu_chosen: MENU_CHOSEN,
+        faint: theme.palette[8],
+      }
       match line.update(place, list, style, focused) {
         Submit(command) => {
           let _ = pty.write(submission(command, shown.bracketed_paste))
@@ -306,6 +386,17 @@ let draw = (
         },
         Send(bytes) => {
           let _ = pty.write(bytes)
+        },
+        Complete(text, cursor) => {
+          match integrated {
+            Some(i) => match completion_request(i, text, cursor) {
+              Some(key) => {
+                let _ = pty.write(key)
+              },
+              None => {},
+            },
+            None => {},
+          }
         },
         _ => {},
       }
@@ -327,7 +418,7 @@ let draw = (
     },
   }
   if follow { set_scroll_y(f32(total) * cell.y) }
-  match font {
+  match fonts.regular {
     Some(_) => pop_font(),
     None => {},
   }
@@ -378,13 +469,4 @@ let send_keys = (pty: Pty) -> bool => {
   if out == "" { return false }
   let _ = pty.write(out)
   true
-}
-
-/// A line's text, its trailing blanks left off.
-let text_of = (line: []rune) -> string => {
-  var n = line.len()
-  while n > 0 && line[n - 1] == ' ' { n -= 1 }
-  var bytes: []u8 = []
-  for i in 0..<n { push_rune(bytes, i64(line[i])) }
-  bytes.decode_utf8()
 }

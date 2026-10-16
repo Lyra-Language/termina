@@ -5,9 +5,25 @@
 //   build/vttest               every check; exits 1 naming each that failed
 
 import bindings.pty.{ spawn, close }
-import shell.{ integration_env, submission }
-import editor.{ editor, Editor, Wrap, position, index_at, rune_at }
+import shell.{ integration, submission, completion_request }
+import editor.{ editor, Editor, Wrap, position, index_at, rune_at, shell_word_at }
+import std.env.{ lookup }
+import std.io.{ create_dir_all, write_file, remove_file }
+import std.path
 import vt.{
+  runes_of,
+  indexed,
+  rgb,
+  DEFAULT,
+  BOLD,
+  DIM,
+  ITALIC,
+  UNDERLINE,
+  DOUBLE_UNDERLINE,
+  CURLY_UNDERLINE,
+  INVERSE,
+  STRIKE,
+  Cell,
   parser,
   screen,
   Screen,
@@ -27,11 +43,15 @@ let main = () -> u8 => {
   var failed = 0
   failed += check_parser()
   failed += check_screen()
+  failed += check_style()
   failed += check_pty()
   failed += check_typing()
   failed += check_editor()
   failed += check_marks()
   failed += check_zsh()
+  failed += check_words()
+  failed += check_completion_reports()
+  failed += check_zsh_completion()
   if failed == 0 {
     println("vttest: all passed")
     0
@@ -89,13 +109,120 @@ let check_screen = () -> i64 => {
   failed += check("scroll", rows(scrolled), "2  |3  ")
   failed += check(
     "scrollback",
-    "${scrolled.scrollback_len()}:${text(scrolled.line(0))}",
+    "${scrolled.scrollback_len()}:${line_text(scrolled.line(0))}",
     "1:1  "
   )
   failed += check("region", rows(run(2, 3, "a\r\nb\r\nc\e[1;2r\e[2Hz\nq")), "z | q|c ")
   failed += check("title", run(4, 1, "\e]0;hello\x07").title, "hello")
   failed
 }
+
+// SGR: colours in each spelling, attributes set and cleared, and erases on the pen's
+// background.
+let check_style = () -> i64 => {
+  var failed = 0
+  failed += check("bold red", style_at("\e[1;31mR", 0), style(indexed(1), DEFAULT, BOLD))
+  failed += check("reset", style_at("\e[1;31mR\e[0mx", 1), style(DEFAULT, DEFAULT, 0))
+  failed += check(
+    "empty SGR resets",
+    style_at("\e[7mR\e[mx", 1),
+    style(DEFAULT, DEFAULT, 0)
+  )
+  failed += check("bright", style_at("\e[91;103mx", 0), style(indexed(9), indexed(11), 0))
+  failed += check("256", style_at("\e[38;5;208mx", 0), style(indexed(208), DEFAULT, 0))
+  failed += check(
+    "24-bit",
+    style_at("\e[38;2;10;20;30mx", 0),
+    style(rgb(10, 20, 30), DEFAULT, 0)
+  )
+  failed += check(
+    "24-bit, colons",
+    style_at("\e[38:2::10:20:30mx", 0),
+    style(rgb(10, 20, 30), DEFAULT, 0)
+  )
+  failed += check(
+    "24-bit, colons, no colour space",
+    style_at("\e[48:2:10:20:30mx", 0),
+    style(DEFAULT, rgb(10, 20, 30), 0)
+  )
+  failed += check(
+    "256 background, colons",
+    style_at("\e[48:5:17mx", 0),
+    style(DEFAULT, indexed(17), 0)
+  )
+  failed += check(
+    "codes around a colour",
+    style_at("\e[1;38;5;9;4mx", 0),
+    style(indexed(9), DEFAULT, BOLD | UNDERLINE)
+  )
+  failed += check(
+    "curly underline",
+    style_at("\e[4:3mx", 0),
+    style(DEFAULT, DEFAULT, CURLY_UNDERLINE)
+  )
+  failed += check(
+    "underline off by 4:0",
+    style_at("\e[4m\e[4:0mx", 0),
+    style(DEFAULT, DEFAULT, 0)
+  )
+  failed += check(
+    "double underline",
+    style_at("\e[21mx", 0),
+    style(DEFAULT, DEFAULT, DOUBLE_UNDERLINE)
+  )
+  failed += check(
+    "22 clears bold and dim",
+    style_at("\e[1;2;3m\e[22mx", 0),
+    style(DEFAULT, DEFAULT, ITALIC)
+  )
+  failed += check(
+    "inverse, strike",
+    style_at("\e[7;9mx", 0),
+    style(DEFAULT, DEFAULT, INVERSE | STRIKE)
+  )
+  failed += check(
+    "39 and 49",
+    style_at("\e[31;42m\e[39;49mx", 0),
+    style(DEFAULT, DEFAULT, 0)
+  )
+  failed += check(
+    "a colour cut short",
+    style_at("\e[38;5mx", 0),
+    style(DEFAULT, DEFAULT, 0)
+  )
+  failed += check("dim", style_at("\e[2mx", 0), style(DEFAULT, DEFAULT, DIM))
+  // Erases take the pen's background, and nothing else of it.
+  failed += check(
+    "erase line on blue",
+    style_at("\e[1;44mA\e[K", 3),
+    style(DEFAULT, indexed(4), 0)
+  )
+  failed += check(
+    "clear on blue",
+    style_at("\e[44m\e[2J", 5),
+    style(DEFAULT, indexed(4), 0)
+  )
+  failed += check(
+    "written after reset",
+    style_at("\e[44m\e[0m\e[K", 2),
+    style(DEFAULT, DEFAULT, 0)
+  )
+  // DECSC keeps the pen, and DECRC brings it back.
+  failed += check(
+    "save and restore the pen",
+    style_at("\e[31m\e7\e[32m\e8x", 0),
+    style(indexed(1), DEFAULT, 0)
+  )
+  failed
+}
+
+/// The style of cell `col` on the first line after `input`, as `fg/bg/attrs`.
+let style_at = (input: string, col: i64) -> string => {
+  let c = run(8, 2, input).line(0)[col]
+  style(c.fg, c.bg, c.attrs)
+}
+
+let style = (fg: u32, bg: u32, attrs: u32) -> string => "${fg}/${bg}/${attrs}"
 
 // `printf` on a pseudo-terminal: a real program's bytes through the PTY, parser and screen.
 let check_pty = () -> i64 => {
@@ -131,10 +258,10 @@ let check_pty = () -> i64 => {
   // The terminal turns `\n` into `\r\n` (onlcr), and `stty size` reads the size it was given.
   failed += check(
     "pty output",
-    "${text(s.line(0)).trim()}|${text(s.line(1)).trim()}",
+    "${line_text(s.line(0)).trim()}|${line_text(s.line(1)).trim()}",
     "one|xwo"
   )
-  failed += check("pty size", text(s.line(2)).trim(), "4 20")
+  failed += check("pty size", line_text(s.line(2)).trim(), "4 20")
   failed += check("exit status", "${status ?? -1}", "0")
   failed
 }
@@ -151,7 +278,7 @@ let check_typing = () -> i64 => {
   var s = screen(20, 4)
   let wrote = pty.write("héllo\r")
   var spins = 0
-  while text(s.line(1)).trim() != "héllo" && spins < 2000000 {
+  while line_text(s.line(1)).trim() != "héllo" && spins < 2000000 {
     match pty.read() {
       None => { spins = 2000000 },
       Some(bytes) => {
@@ -165,7 +292,7 @@ let check_typing = () -> i64 => {
   var failed = check("write", "${wrote}", "true")
   failed += check(
     "echo",
-    "${text(s.line(0)).trim()}|${text(s.line(1)).trim()}",
+    "${line_text(s.line(0)).trim()}|${line_text(s.line(1)).trim()}",
     "héllo|héllo"
   )
   failed
@@ -303,8 +430,10 @@ let check_marks = () -> i64 => {
 // zsh with the integration, end to end: the prompt's mark arrives, a two-line command sent
 // as the command line sends it runs as one, and its end reports the last line's status.
 let check_zsh = () -> i64 => {
-  let env = ["TERM=xterm-256color", ...integration_env("/bin/zsh")]
-  if env.len() == 1 { return check("zsh integration", "not written", "written") }
+  let Some(i) = integration("/bin/zsh", "vttest") else {
+    return check("zsh integration", "not written", "written")
+  }
+  let env = ["TERM=xterm-256color", ...i.env]
   let Some(pty) = spawn(["/bin/zsh", "-i"], 60, 10, None, env) else {
     return check("spawn zsh", "failed", "spawned")
   }
@@ -344,11 +473,130 @@ let check_zsh = () -> i64 => {
   close(pty)
   var output: []string = []
   for i in 0..<(s.scrollback_len() + s.rows) {
-    let t = text(s.line(i)).trim()
+    let t = line_text(s.line(i)).trim()
     if t == "one" || t == "two" { output.push(t) }
   }
   var failed = check("zsh marks", seen.join(" "), "B C D1 B")
   failed += check("zsh ran both lines", output.join(","), "one,two")
+  failed
+}
+
+// The shell word a completion replaces: quotes and escapes keep a word together.
+let check_words = () -> i64 => {
+  var failed = 0
+  failed += check("plain word", word("ls lyra/bi", 10), "lyra/bi")
+  failed += check("caret inside a word", word("cat foo.txt bar", 6), "foo.txt")
+  failed += check("escaped space", word("cat a\\ b", 8), "a\\ b")
+  failed += check("open quote", word("cat \"sp a", 9), "\"sp a")
+  failed += check("after a pipe", word("ls | gr", 7), "gr")
+  failed += check("empty word", word("ls ", 3), "")
+  failed
+}
+
+let word = (text: string, at: i64) -> string => {
+  let runes = text.to_runes()
+  let (a, b) = shell_word_at(runes, at)
+  text_of_runes(runes.slice(a, b))
+}
+
+let text_of_runes = (r: []rune) -> string => text(r)
+
+// OSC 7770: a list begun, matches with percent-encoded fields, and its end.
+let check_completion_reports = () -> i64 => {
+  var p = parser()
+  var s = screen(20, 2)
+  s.apply(p.feed("\e]7770;b\x07\e]7770;m;$;HOME; ;HOME;\x07\e]7770;m;;a%3Bb%25; ;a%3Bb%25;semi%0Acolon\x07\e]7770;e\x07".encode_utf8()))
+  let lists = s.take_completions()
+  var failed = check("one list", "${lists.len()}", "1")
+  if lists.len() == 1 {
+    let l = lists[0]
+    failed += check("two matches", "${l.len()}", "2")
+    if l.len() == 2 {
+      failed += check(
+        "variable",
+        "${l[0].prefix}|${l[0].insert}|${l[0].suffix}",
+        "$|HOME| "
+      )
+      failed += check(
+        "decoded",
+        "${l[1].insert}|${l[1].shown}|${l[1].description}",
+        "a;b%|a;b%|semi\ncolon"
+      )
+    }
+  }
+  failed
+}
+
+// zsh's own completions through the integration, in a directory of known files.
+let check_zsh_completion = () -> i64 => {
+  let dir = (lookup("TMPDIR") ?? "/tmp").join("sulafat-vttest-${wall_clock_nanos()}")
+  if !create_dir_all(dir.join("sub dir")) { return check(
+    "scratch dir",
+    "not made",
+    "made"
+  ) }
+  let _ = write_file(dir.join("plain.txt"), "")
+  let _ = write_file(dir.join("a b.txt"), "")
+  let Some(i) = integration("/bin/zsh", "vttest-complete") else {
+    return check("zsh integration", "not written", "written")
+  }
+  let Some(pty) = spawn(
+    ["/bin/zsh", "-i"],
+    80,
+    10,
+    Some(dir),
+    ["TERM=xterm-256color", ...i.env]
+  ) else {
+    return check("spawn zsh", "failed", "spawned")
+  }
+  var p = parser()
+  var s = screen(80, 10)
+  let asks = ["cat pl", "cd su", "cat a", "ech", "echo $HO"]
+  var answers: []string = []
+  var asked = 0
+  var at_prompt = false
+  var spins = 0
+  while answers.len() < asks.len() && spins < 5000000 {
+    if at_prompt && asked == answers.len() {
+      let ask = asks[asked]
+      match completion_request(i, ask, ask.len()) {
+        Some(key) => {
+          let _ = pty.write(key)
+        },
+        None => {},
+      }
+      asked += 1
+    }
+    match pty.read() {
+      None => { spins = 5000000 },
+      Some(bytes) => {
+        if bytes.len() > 0 { s.apply(p.feed(bytes)) }
+        for m in s.take_marks() {
+          match m {
+            InputStart(_, _) => { at_prompt = true },
+            _ => {},
+          }
+        }
+        for l in s.take_completions() {
+          answers.push([c in l | "${c.prefix}${c.insert}${c.suffix}"].join(","))
+        }
+        spins += 1
+      },
+    }
+  }
+  close(pty)
+  // What the check made, removed: the request file, the scratch directory's files.
+  let _ = remove_file(i.request)
+  let _ = remove_file(dir.join("plain.txt"))
+  let _ = remove_file(dir.join("a b.txt"))
+  var failed = check("asked them all", "${answers.len()}", "${asks.len()}")
+  if answers.len() == asks.len() {
+    failed += check("a file", answers[0], "plain.txt ")
+    failed += check("a directory", answers[1], "sub\\ dir/")
+    failed += check("a name with a space", answers[2], "a\\ b.txt ")
+    failed += check("a command", "${answers[3].contains("echo ")}", "true")
+    failed += check("a variable", "${answers[4].contains("$HOME ")}", "true")
+  }
   failed
 }
 
@@ -386,7 +634,10 @@ let run = (cols: i64, rows: i64, input: string) -> Screen => {
 }
 
 let rows = (s: Screen) -> string =>
-  [y in 0..<s.rows | text(s.line(s.scrollback_len() + y))].join("|")
+  [y in 0..<s.rows | line_text(s.line(s.scrollback_len() + y))].join("|")
+
+/// A screen line's text.
+let line_text = (line: []Cell) -> string => text(runes_of(line))
 
 let text = (line: []rune) -> string => [r in line | "${r}"].join("")
 

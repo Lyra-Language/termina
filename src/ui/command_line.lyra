@@ -11,6 +11,12 @@ module ui
 //! Ctrl+W a word back, Ctrl+C clears, Ctrl+D on an empty line ends the shell, Ctrl+L clears
 //! the screen. **Elsewhere** Ctrl takes ⌥'s place for words, and Ctrl+Shift ⌘'s.
 //!
+//! **Tab** asks the shell for the completions of the word at the caret (zsh's own, through
+//! its integration — `../shell/shell.lyra`). One is put in at once; of several, the start
+//! they share is, and a menu opens under the word: ↑/↓ or Tab/⇧Tab choose, Return or a
+//! click puts the chosen one in, Escape closes it, and anything else closes it and is
+//! itself.
+//!
 //! **Mouse** — a click puts the caret; a drag, or a shift-click, selects; a double-click
 //! selects the word under the pointer and a drag after it extends by whole words; a
 //! triple-click selects the line.
@@ -54,8 +60,20 @@ import bindings.imgui.{
   KEY_ENTER,
   KEY_KEYPAD_ENTER,
   KEY_ESCAPE,
+  KEY_TAB,
 }
-import editor.{ editor, Editor, Wrap, position, row_count, index_at, rune_at }
+import editor.{
+  editor,
+  Editor,
+  Wrap,
+  position,
+  row_count,
+  index_at,
+  rune_at,
+  shell_word_at,
+  text_of
+}
+import vt.{ Completion }
 
 /// The command line's state between frames: the editor, the history being walked, and a
 /// drag under way.
@@ -70,7 +88,22 @@ pub struct CommandLine {
   dragging: bool,
   /// The word a double-click selected, while the drag after it extends by words.
   word_drag: Maybe<(i64, i64)>,
+  /// The text and caret completions were asked for, while the shell works on them: an
+  /// answer for anything else (the user went on typing) is dropped.
+  pending: Maybe<(string, i64)>,
+  /// The completions offered, while their menu is open (empty: closed), the one chosen, and
+  /// the first the menu shows.
+  menu: []Completion,
+  chosen: i64,
+  menu_top: i64,
 }
+
+/// Completions a menu shows at once; more scroll.
+const MENU_ROWS: i64 = 8
+
+/// The widest a completion and its description are shown, in cells; longer is cut.
+const MENU_SHOWN: i64 = 40
+const MENU_DESCRIPTION: i64 = 60
 
 /// What the command line asks of the terminal this frame.
 pub data Outcome =
@@ -79,6 +112,8 @@ pub data Outcome =
   | Submit string
   /// Send these bytes to the shell as typed (Ctrl+D, Ctrl+L).
   | Send string
+  /// Ask the shell for the completions of this text, the caret at this rune (Tab).
+  | Complete(string, i64)
 
 /// An empty command line over `history` (oldest first).
 pub let command_line = (history: []string) -> CommandLine => CommandLine {
@@ -88,6 +123,10 @@ pub let command_line = (history: []string) -> CommandLine => CommandLine {
   draft: "",
   dragging: false,
   word_drag: None,
+  pending: None,
+  menu: [],
+  chosen: 0,
+  menu_top: 0,
 }
 
 /// How the command line looks.
@@ -95,6 +134,10 @@ pub struct Style {
   text: u32,
   caret: u32,
   selection: u32,
+  /// The completion menu: its background, the chosen row's, and descriptions' text.
+  menu: u32,
+  menu_chosen: u32,
+  faint: u32,
 }
 
 /// Where the command line is: the screen position of column 0 of its first row, a cell's
@@ -111,8 +154,80 @@ impl CommandLine {
   /// How many rows the command line takes laid out by `wrap`.
   pub let rows = pure (self, wrap: Wrap) -> i64 => row_count(self.edit.text, wrap)
 
+  /// How many rows the completion menu takes below them (0 when it is closed).
+  pub let menu_rows = pure (self) -> i64 =>
+    if self.menu.len() == 0 { 0 } else { self.menu.len().min(MENU_ROWS) }
+
+  /// The shell's completions arrived. Those for a line since edited are dropped; one is put
+  /// in; of several, the start they share is put in and the menu opens.
+  pub let completed = (self: mut, offered: []Completion) -> void => {
+    let Some((text, cursor)) = self.pending else { return }
+    self.pending = None
+    if text != self.edit.content() || cursor != self.edit.cursor { return }
+    // The same completion can come from two completion functions (zsh's `echo` is a
+    // builtin and a command): offered once.
+    var unique: []Completion = []
+    for c in offered {
+      var seen = false
+      for u in unique { if u.prefix == c.prefix && u.insert == c.insert && u.suffix == c.suffix { seen = true } }
+      if !seen { unique.push(c) }
+    }
+    if unique.len() == 0 { return }
+    if unique.len() == 1 { return self.apply(unique[0]) }
+    let (start, end) = shell_word_at(self.edit.text, self.edit.cursor)
+    let word = text_of(self.edit.text.slice(start, end))
+    let shared = common_start([c in unique | "${c.prefix}${c.insert}"])
+    if shared.len() > word.len() && shared.starts_with(word) { self.edit.replace(
+      start,
+      end,
+      shared
+    ) }
+    self.menu = unique
+    self.chosen = 0
+    self.menu_top = 0
+  }
+
+  // Put completion `c` in place of the word at the caret, and close the menu.
+  let apply = (self: mut, c: Completion) -> void => {
+    let (start, end) = shell_word_at(self.edit.text, self.edit.cursor)
+    self.edit.replace(start, end, "${c.prefix}${c.insert}${c.suffix}")
+    self.close_menu()
+  }
+
+  let close_menu = (self: mut) -> void => {
+    self.menu = []
+    self.chosen = 0
+    self.menu_top = 0
+  }
+
+  // Move the menu's choice by `by`, round its ends, scrolling to keep it shown.
+  let choose = (self: mut, by: i64) -> void => {
+    let n = self.menu.len()
+    self.chosen = (self.chosen + by) %% n
+    if self.chosen < self.menu_top { self.menu_top = self.chosen }
+    if self.chosen >= self.menu_top + MENU_ROWS { self.menu_top = self.chosen - MENU_ROWS + 1 }
+  }
+
+  // Where the menu is: its first row (below the command line's last), its column (the
+  // word's, moved left to fit), and its width — in cells.
+  let menu_layout = pure (self, wrap: Wrap) -> (i64, i64, i64) => {
+    var shown_w = 0
+    var desc_w = 0
+    for c in self.menu {
+      shown_w = shown_w.max(c.shown.len().min(MENU_SHOWN))
+      desc_w = desc_w.max(c.description.len().min(MENU_DESCRIPTION))
+    }
+    let gap = if desc_w > 0 { desc_w + 2 } else { 0 }
+    let width = (shown_w + 2 + gap).min(wrap.cols)
+    let (start, _) = shell_word_at(self.edit.text, self.edit.cursor)
+    let (_, col) = position(self.edit.text, wrap, start)
+    (row_count(self.edit.text, wrap), col.min(wrap.cols - width).max(0), width)
+  }
+
   /// Run a command: remember it, and start an empty line.
   pub let submitted = (self: mut, command: string) -> void => {
+    self.close_menu()
+    self.pending = None
     if command.trim() != "" && (self.history.len() == 0 || self.history[self.history.len() - 1] != command) {
       self.history.push(command)
     }
@@ -153,9 +268,22 @@ impl CommandLine {
       return
     }
     let row = ((m.y - at.origin.y) / at.cell.y).floor()
+    let fx = (m.x - at.origin.x) / at.cell.x
+    if self.menu.len() > 0 {
+      let (menu_row, menu_col, width) = self.menu_layout(at.wrap)
+      let k = row - menu_row
+      let inside = k >= 0 &&
+        k < self.menu_rows() &&
+        fx >= f32(menu_col) &&
+        fx < f32(menu_col + width)
+      if inside {
+        if is_mouse_clicked(0) { return self.apply(self.menu[self.menu_top + k]) }
+        return
+      }
+      if is_mouse_clicked(0) { self.close_menu() }
+    }
     let over = is_window_hovered() && row >= 0
     if over { set_mouse_cursor(MOUSE_CURSOR_TEXT_INPUT) }
-    let fx = (m.x - at.origin.x) / at.cell.x
     // A caret goes to the nearer edge of a cell; a word is the rune in the cell.
     let caret = index_at(self.edit.text, at.wrap, row, (fx + 0.5).floor())
     let under = rune_at(self.edit.text, at.wrap, row, fx.floor())
@@ -195,6 +323,40 @@ impl CommandLine {
     let command = if mac { io.key_super() } else { ctrl && shift }
     // A word at a time: ⌥ on a Mac, Ctrl elsewhere.
     let by_word = if mac { io.key_alt() } else { ctrl }
+    if self.menu.len() > 0 {
+      if is_key_pressed(KEY_DOWN_ARROW) || (is_key_pressed(KEY_TAB) && !shift) { self.choose(1); return Nothing }
+      if is_key_pressed(KEY_UP_ARROW) || (is_key_pressed(KEY_TAB) && shift) { self.choose(-1); return Nothing }
+      if is_key_pressed(KEY_ENTER) || is_key_pressed(KEY_KEYPAD_ENTER) {
+        self.apply(self.menu[self.chosen])
+        return Nothing
+      }
+      if is_key_pressed(KEY_ESCAPE) {
+        self.close_menu()
+        return Nothing
+      }
+      // Anything else closes the menu and is itself.
+      let before = "${self.edit.cursor}:${self.edit.content()}"
+      let outcome = self.edit_keys(wrap, mac, shift, ctrl, command, by_word)
+      if "${self.edit.cursor}:${self.edit.content()}" != before { self.close_menu() }
+      return outcome
+    }
+    if is_key_pressed(KEY_TAB) && !ctrl && !command {
+      self.pending = Some((self.edit.content(), self.edit.cursor))
+      return Complete(self.edit.content(), self.edit.cursor)
+    }
+    self.edit_keys(wrap, mac, shift, ctrl, command, by_word)
+  }
+
+  let edit_keys = (
+    self: mut,
+    wrap: Wrap,
+    mac: bool,
+    shift: bool,
+    ctrl: bool,
+    command: bool,
+    by_word: bool
+  ) -> Outcome => {
+    let io = get_io()
     if !ctrl && !(mac && command) {
       let typed = typed_text()
       if typed != "" { self.type_text(typed) }
@@ -312,6 +474,54 @@ impl CommandLine {
       let p = cell_pos(at, r, c)
       list.add_rect_filled(p, Vec2 { x: p.x + 2.0, y: p.y + at.cell.y }, style.caret)
     }
+    if self.menu.len() > 0 { self.draw_menu(at, list, style) }
+  }
+
+  // The completion menu: a row each, the chosen one marked, descriptions fainter.
+  let draw_menu = (self, at: Place, list: DrawList, style: Style) -> void => {
+    let (row, col, width) = self.menu_layout(at.wrap)
+    let top = cell_pos(at, row, col)
+    let shown_rows = self.menu_rows()
+    let pad = at.cell.x * 0.5
+    list.add_rect_filled(
+      Vec2 { x: top.x - pad, y: top.y },
+      Vec2 { x: top.x + f32(width) * at.cell.x + pad, y: top.y + f32(shown_rows) * at.cell.y },
+      style.menu,
+      4.0
+    )
+    var shown_w = 0
+    for c in self.menu { shown_w = shown_w.max(c.shown.len().min(MENU_SHOWN)) }
+    for k in 0..<shown_rows {
+      let c = self.menu[self.menu_top + k]
+      let y = top.y + f32(k) * at.cell.y
+      if self.menu_top + k == self.chosen {
+        list.add_rect_filled(
+          Vec2 { x: top.x - pad, y: y },
+          Vec2 { x: top.x + f32(width) * at.cell.x + pad, y: y + at.cell.y },
+          style.menu_chosen,
+          4.0
+        )
+      }
+      let shown = if c.shown.len() > MENU_SHOWN { c.shown.slice(
+        0,
+        MENU_SHOWN
+      ) } else { c.shown }
+      list.add_text(Vec2 { x: top.x + at.cell.x, y: y + at.text_dy }, style.text, shown)
+      if c.description != "" {
+        let room = width - shown_w - 4
+        if room > 0 {
+          let d = if c.description.len() > room { c.description.slice(
+            0,
+            room
+          ) } else { c.description }
+          list.add_text(
+            Vec2 { x: top.x + f32(shown_w + 3) * at.cell.x, y: y + at.text_dy },
+            style.faint,
+            d
+          )
+        }
+      }
+    }
   }
 }
 
@@ -349,4 +559,17 @@ pub let push_rune = (bytes: mut []u8, c: i64) -> void => {
     bytes.push(u8(0x80 | ((c >> 6) & 0x3F)))
     bytes.push(u8(0x80 | (c & 0x3F)))
   }
+}
+
+/// The longest start every one of `words` shares.
+let common_start = pure (words: []string) -> string => {
+  if words.len() == 0 { return "" }
+  var shared = words[0].to_runes()
+  for w in words {
+    let r = w.to_runes()
+    var n = 0
+    while n < shared.len() && n < r.len() && shared[n] == r[n] { n += 1 }
+    shared = shared.slice(0, n)
+  }
+  text_of(shared)
 }

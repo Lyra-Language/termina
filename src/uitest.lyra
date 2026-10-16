@@ -24,6 +24,8 @@ import bindings.imgui.{
   KEY_DOWN_ARROW,
   KEY_HOME,
   KEY_END,
+  KEY_TAB,
+  KEY_ESCAPE,
   KEY_BACKSPACE,
   KEY_ENTER,
   KEY_A,
@@ -33,8 +35,20 @@ import bindings.imgui.{
   MOD_CTRL,
   MOD_ALT,
 }
-import ui.{ command_line, CommandLine, Place, Style, Outcome, Nothing, Submit, Send }
+import ui.{
+  command_line,
+  CommandLine,
+  Place,
+  Style,
+  Outcome,
+  Nothing,
+  Submit,
+  Send,
+  Complete
+}
 import editor.{ Wrap }
+import ui.{ dark_theme, abgr }
+import vt.{ Cell, Completion, DEFAULT, INVERSE, DIM, HIDDEN, indexed, rgb }
 
 let main = () -> u8 => {
   let Some(host) = create_headless_host(800, 400, 0) else {
@@ -45,6 +59,8 @@ let main = () -> u8 => {
   failed += check_typing_and_words(host)
   failed += check_keys(host)
   failed += check_history(host)
+  failed += check_theme()
+  failed += check_completion(host)
   destroy_host(host)
   if failed == 0 {
     println("uitest: all passed")
@@ -149,6 +165,135 @@ let check_history = (host: Host) -> i64 => {
   failed
 }
 
+// Tab: the request it makes, and the shell's answer — one match put in, several sharing a
+// start put in as far as they agree and offered in a menu, an answer for an edited line
+// dropped.
+let check_completion = (host: Host) -> i64 => {
+  var failed = 0
+  var line = command_line([])
+  type_text(host, line, "cd ly")
+  failed += check(
+    "tab asks",
+    describe(press(host, line, [], KEY_TAB)),
+    "complete cd ly at 5"
+  )
+  line.completed([offer("", "lyra-workspace", "/", "lyra-workspace", "")])
+  failed += check("one match is put in", line.edit.content(), "cd lyra-workspace/")
+  failed += check("and no menu", "${line.menu_rows()}", "0")
+
+  var many = command_line([])
+  type_text(host, many, "git ch")
+  let _ = press(host, many, [], KEY_TAB)
+  many.completed([
+    offer("", "checkout", " ", "checkout", "switch branches"),
+    offer("", "cherry-pick", " ", "cherry-pick", "apply commits"),
+    offer("", "cherry", " ", "cherry", ""),
+    offer("", "checkout", " ", "checkout", "switch branches"),
+  ])
+  failed += check("the shared start", many.edit.content(), "git che")
+  failed += check("a menu of the others, once each", "${many.menu_rows()}", "3")
+  press(host, many, [], KEY_DOWN_ARROW)
+  press(host, many, [], KEY_TAB)
+  failed += check("down, then tab: the third", "${many.chosen}", "2")
+  press(host, many, [MOD_SHIFT], KEY_TAB)
+  let outcome = press(host, many, [], KEY_ENTER)
+  failed += check("return puts in the choice", many.edit.content(), "git cherry-pick ")
+  failed += check("and does not run it", describe(outcome), "nothing")
+  failed += check("the menu closes", "${many.menu_rows()}", "0")
+
+  // A click on a row puts it in.
+  var clicked = command_line([])
+  type_text(host, clicked, "ls s")
+  let _ = press(host, clicked, [], KEY_TAB)
+  clicked.completed([offer("", "src", "/", "src", ""), offer("", "sub", "/", "sub", "")])
+  // The menu's first row is the one under the command line, at the word's column (3).
+  click(host, clicked, 2, 5 + 4)
+  failed += check("click a completion", clicked.edit.content(), "ls sub/")
+
+  // Escape closes the menu and leaves the text; typing closes it and is typed.
+  var closing = command_line([])
+  type_text(host, closing, "x")
+  let _ = press(host, closing, [], KEY_TAB)
+  closing.completed([offer("", "xa", " ", "xa", ""), offer("", "xb", " ", "xb", "")])
+  press(host, closing, [], KEY_ESCAPE)
+  failed += check(
+    "escape closes",
+    "${closing.menu_rows()}|${closing.edit.content()}",
+    "0|x"
+  )
+  let _ = press(host, closing, [], KEY_TAB)
+  closing.completed([offer("", "xa", " ", "xa", ""), offer("", "xb", " ", "xb", "")])
+  type_text(host, closing, "y")
+  failed += check(
+    "typing closes, and types",
+    "${closing.menu_rows()}|${closing.edit.content()}",
+    "0|xy"
+  )
+
+  // An answer for a line edited since is dropped.
+  var stale = command_line([])
+  type_text(host, stale, "ec")
+  let _ = press(host, stale, [], KEY_TAB)
+  type_text(host, stale, "h")
+  stale.completed([offer("", "echo", " ", "echo", "")])
+  failed += check("a stale answer", stale.edit.content(), "ech")
+  failed
+}
+
+let offer = (
+  prefix: string,
+  insert: string,
+  suffix: string,
+  shown: string,
+  description: string
+) -> Completion =>
+  Completion {
+    prefix: prefix,
+    insert: insert,
+    suffix: suffix,
+    shown: shown,
+    description: description
+  }
+
+// The theme: what a cell's recorded colours look like.
+let check_theme = () -> i64 => {
+  let t = dark_theme()
+  var failed = 0
+  failed += check("256 entries", "${t.palette.len()}", "256")
+  // The cube's corner and the greys' first step, as xterm has them.
+  failed += check("cube white", hex(t.palette[231]), hex(abgr(0xFFFFFF)))
+  failed += check("cube 0,95,135", hex(t.palette[16 + 1 * 6 + 2]), hex(abgr(0x005F87)))
+  failed += check("first grey", hex(t.palette[232]), hex(abgr(0x080808)))
+  failed += check("24-bit", hex(t.colour(rgb(1, 2, 3), 0)), hex(abgr(0x010203)))
+  let (fg, bg) = t.colours(Cell { ch: 'x', fg: DEFAULT, bg: DEFAULT, attrs: 0 })
+  failed += check("plain", "${hex(fg)} ${bg == None}", "${hex(t.fg)} true")
+  let (ifg, ibg) = t.colours(Cell { ch: 'x', fg: DEFAULT, bg: DEFAULT, attrs: INVERSE })
+  failed += check(
+    "inverse of the defaults",
+    "${hex(ifg)} ${hex(ibg ?? 0)}",
+    "${hex(t.bg)} ${hex(t.fg)}"
+  )
+  let (
+    rfg,
+    rbg
+  ) = t.colours(Cell { ch: 'x', fg: indexed(1), bg: indexed(4), attrs: INVERSE })
+  failed += check(
+    "inverse of colours",
+    "${hex(rfg)} ${hex(rbg ?? 0)}",
+    "${hex(t.palette[4])} ${hex(t.palette[1])}"
+  )
+  let (
+    hfg,
+    _
+  ) = t.colours(Cell { ch: 'x', fg: indexed(1), bg: indexed(4), attrs: HIDDEN })
+  failed += check("hidden is the background", hex(hfg), hex(t.palette[4]))
+  let (dfg, _) = t.colours(Cell { ch: 'x', fg: DEFAULT, bg: DEFAULT, attrs: DIM })
+  failed += check("dim is nearer the background", "${hex(dfg) != hex(t.fg)}", "true")
+  failed
+}
+
+let hex = (c: u32) -> string => "${c}"
+
 // ── Driving ──────────────────────────────────────────────────────────────────
 
 /// One frame with the command line in a window covering the host, focused.
@@ -157,7 +302,14 @@ let frame = (host: Host, line: mut CommandLine) -> Outcome => {
   set_next_window_pos(Vec2 { x: 0.0, y: 0.0 })
   set_next_window_size(Vec2 { x: 800.0, y: 400.0 })
   let _ = begin("checks", WINDOW_FLAGS_NO_DECORATION)
-  let style = Style { text: 0xFFFFFFFF, caret: 0xFFFFFFFF, selection: 0x80808080 }
+  let style = Style {
+    text: 0xFFFFFFFF,
+    caret: 0xFFFFFFFF,
+    selection: 0x80808080,
+    menu: 0xFF202020,
+    menu_chosen: 0xFF404040,
+    faint: 0xFF808080,
+  }
   let outcome = line.update(PLACE, get_window_draw_list(), style, true)
   end()
   end_frame(host, 0.0, 0.0, 0.0)
@@ -254,6 +406,7 @@ let describe = (o: Outcome) -> string => match o {
   Nothing => "nothing",
   Submit(c) => "submit ${c}",
   Send(b) => "send ${b}",
+  Complete(t, c) => "complete ${t} at ${c}",
 }
 
 let check = (name: string, got: string, want: string) -> i64 => {

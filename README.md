@@ -6,8 +6,8 @@ Linux.
 
 **Status: early.** The login shell runs in a window. With zsh, the command line is an
 editor of Sulafat's own: several lines, the mouse (double-click a word to select it),
-word-by-word motions, undo, the clipboard and history. Text is monochrome so far; colours,
-full-screen programs and blocks come next (`CLAUDE.md` § Plan).
+word-by-word motions, undo, the clipboard, history, and Tab completion — zsh's own, in a menu. Text is in colour, 16, 256 and 24-bit, with
+bold, italic, underlines, strikethrough and inverse. Full-screen programs and blocks come next (`CLAUDE.md` § Plan).
 
 ```bash
 ../lyra/build.sh     # the compiler, with std/ and bindings/ beside it (SDL3 needed)

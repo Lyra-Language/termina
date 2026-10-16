@@ -1,0 +1,96 @@
+module ui
+//! The colours a cell's style is drawn in. The screen records what a program asked for —
+//! palette entry 1, the default background (`../vt/style.lyra`) — and the theme says what
+//! that looks like: its own foreground and background, the 16 ANSI colours, and xterm's
+//! 256-colour palette built from them.
+//!
+//! Colours here are ImGui's: `0xAABBGGRR`, as `IM_COL32` packs them.
+
+import vt.{
+  Cell,
+  DEFAULT,
+  DIM,
+  INVERSE,
+  HIDDEN,
+  palette_index,
+  rgb_of,
+}
+
+/// A theme: its own text and background colours, and a 256-entry palette.
+pub struct Theme {
+  fg: u32,
+  bg: u32,
+  palette: []u32,
+}
+
+/// Sulafat's dark theme: the window's own `#181A1E` behind `#E6E1DC`, and an ANSI set in
+/// the spirit of One Dark — black lifted far enough off the background to be seen, and
+/// each bright colour a lighter step of its normal one.
+pub let dark_theme = pure () -> Theme => Theme {
+  fg: abgr(0xE6E1DC),
+  bg: abgr(0x181A1E),
+  palette: palette_256([
+    0x3B3F4A, 0xE06C75, 0x98C379, 0xE5C07B, 0x61AFEF, 0xC678DD, 0x56B6C2, 0xABB2BF,
+    0x5C6370, 0xF08A93, 0xB5E08F, 0xF2D49B, 0x84C3F5, 0xD79BE8, 0x7FCBD5, 0xF5F2EE,
+  ]),
+}
+
+impl Theme {
+  /// The colours `cell` is drawn in: its text, and its background — `None` for the theme's
+  /// own, which the window is already. Inverse swaps the two (the theme's own included), a
+  /// hidden cell's text is its background, and dim text is half-way to the background.
+  pub let colours = pure (self, cell: Cell) -> (u32, Maybe<u32>) => {
+    var fg = self.colour(cell.fg, self.fg)
+    var bg = if cell.bg == DEFAULT { None } else { Some(self.colour(cell.bg, self.bg)) }
+    if cell.attrs & INVERSE != 0 {
+      let was = fg
+      fg = bg ?? self.bg
+      bg = Some(was)
+    }
+    if cell.attrs & DIM != 0 { fg = blend(fg, bg ?? self.bg) }
+    if cell.attrs & HIDDEN != 0 { fg = bg ?? self.bg }
+    (fg, bg)
+  }
+
+  /// A recorded colour drawn: `fallback` for the default.
+  pub let colour = pure (self, c: u32, fallback: u32) -> u32 => {
+    match palette_index(c) {
+      Some(i) => return self.palette[i],
+      None => {},
+    }
+    match rgb_of(c) {
+      Some((r, g, b)) => 0xFF000000 | (u32(b) << 16) | (u32(g) << 8) | u32(r),
+      None => fallback,
+    }
+  }
+}
+
+/// `0xRRGGBB` as ImGui's opaque `0xAABBGGRR`.
+pub let abgr = pure (rgb: u32) -> u32 =>
+  0xFF000000 | ((rgb & 0xFF) << 16) | (rgb & 0xFF00) | ((rgb >> 16) & 0xFF)
+
+/// xterm's 256 colours: the 16 given, then a 6×6×6 cube (levels 0, 95, 135, 175, 215, 255),
+/// then 24 greys from 8 to 238.
+let palette_256 = pure (ansi: []u32) -> []u32 => {
+  var out: []u32 = [c in ansi | abgr(c)]
+  let levels = [0, 95, 135, 175, 215, 255]
+  for i in 0..<216 {
+    let r = levels[i / 36]
+    let g = levels[(i / 6) % 6]
+    let b = levels[i % 6]
+    out.push(abgr(u32(r * 65536 + g * 256 + b)))
+  }
+  for i in 0..<24 {
+    let v = 8 + i * 10
+    out.push(abgr(u32(v * 65536 + v * 256 + v)))
+  }
+  out
+}
+
+/// Half-way between two ImGui colours, opaque.
+let blend = pure (a: u32, b: u32) -> u32 => {
+  let r = ((a & 0xFF) + (b & 0xFF)) / 2
+  let g = (((a >> 8) & 0xFF) + ((b >> 8) & 0xFF)) / 2
+  let bl = (((a >> 16) & 0xFF) + ((b >> 16) & 0xFF)) / 2
+  0xFF000000 | (bl << 16) | (g << 8) | r
+}

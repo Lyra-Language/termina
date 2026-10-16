@@ -13,6 +13,8 @@ workspace's `CLAUDE.md` rules apply here too. **macOS and Linux** — Windows wa
 ../lyra/build.sh            # the compiler, std/, bindings/ and lib/liblyra-{pty,imgui}.a
 ./build.sh                  # -> build/: sulafat (and Sulafat.app on macOS), vttest, uitest
 build/sulafat               # the login shell ($SHELL -l) in a window; closes when it ends
+build/sulafat CMD [ARG…]    # that program instead (as xterm -e), no integration — a test
+                            #    script's colours, say, seen without typing
 open build/Sulafat.app      # the same, as a Mac app
 build/vttest                # parser, screen, editor, PTY and zsh checks; exit 1 on a failure
 SDL_VIDEODRIVER=dummy build/uitest   # the command line on a headless ImGui host, driven by
@@ -32,11 +34,14 @@ shell ⇄ bindings.pty ──bytes──▶ vt.Parser ──[]Action──▶ vt
 | file | what |
 |---|---|
 | `src/sulafat.lyra` | `main`: the ImGui host, the frame loop, `Mode`, drawing the grid, keys → bytes |
-| `src/shell/shell.lyra` | shell integration (zsh's `.zshenv`, through `ZDOTDIR`), the history file, what Return sends |
+| `src/shell/shell.lyra` | shell integration (zsh's `.zshenv`, through `ZDOTDIR`): the marks, Tab's completion widget and its request file, the history file, what Return sends |
 | `src/editor/editor.lyra` | the command line's editor — text, caret, selection, motions, words, undo, layout; **pure** |
-| `src/ui/command_line.lyra` | the editor at the prompt: keys and mouse into editor calls, history, drawing |
+| `src/ui/command_line.lyra` | the editor at the prompt: keys and mouse into editor calls, history, the completion menu, drawing |
 | `src/vt/parser.lyra` | bytes → `Action`s — Paul Williams' DEC parser; **pure**, keeps all state across reads |
 | `src/vt/screen.lyra` | `Action`s → the cell grid, cursor, scroll region, scrollback ring |
+| `src/vt/style.lyra` | a `Cell`'s colours and attributes, and SGR on the `Pen` that writes them; **pure** |
+| `src/ui/theme.lyra` | recorded colours → pixels: the theme's own pair, ANSI 16, xterm's 256; inverse, dim, hidden |
+| `src/ui/grid.lyra` | a screen line drawn: background runs, text runs of one style, faces, underlines, strike |
 | `src/vttest.lyra` | the checks: byte strings against actions and screens, the editor on text, real programs and zsh on a PTY |
 | `src/uitest.lyra` | the command line on a headless host: injected input, the editor checked after |
 
@@ -45,6 +50,12 @@ shell ⇄ bindings.pty ──bytes──▶ vt.Parser ──[]Action──▶ vt
   case and a `vttest` line.
 - **Nothing blocks**: `Pty.read` is non-blocking and drained once a frame, at most
   `READS_PER_FRAME` reads, so a program that never stops writing cannot freeze the window.
+- **A colour is one `u32`** (`DEFAULT`, a palette index, or RGB — `vt/style.lyra`): the
+  screen records what the program asked for; the theme decides what it looks like.
+- **Erases and scrolls fill with the pen's background** (xterm's BCE, which
+  `TERM=xterm-256color` promises), and nothing else of the pen.
+- **Bold is a face when the family has one, else drawn twice a pixel apart** — SF Mono is
+  one variable font. Bold italic falls back to the italic face drawn bold.
 - **Lines are separate arrays** (`blank_line`): rows are written in place, and two rows
   sharing one array show each other's text.
 - **A cell's width is measured over 100 characters**: ImGui's `CalcTextSize` rounds up to a
@@ -64,6 +75,15 @@ shell ⇄ bindings.pty ──bytes──▶ vt.Parser ──[]Action──▶ vt
 - **The `B` mark is the end of `PS1`**, re-added at each prompt by a precmd hook that moves
   itself last, so a theme's own hook has built `PS1` first. A theme that redraws the
   prompt asynchronously is untested.
+- **Tab completion is zsh's, run in the live shell.** Sulafat writes `caret\ntext` to the
+  window's request file (`SULAFAT_COMPLETE_FILE`) and sends `\e[9898~`, bound (once the
+  user's `.zshrc` has chosen emacs or vi keys) to a widget that loads it into `BUFFER`, runs
+  `complete-word` with `compadd` captured, and reports matches as OSC 7770 (`b`,
+  `m;prefix;insert;suffix;shown;description` percent-encoded, `e`) — none inserted, none
+  listed. **Sulafat finds the word itself** (`editor.shell_word_at`, quotes and escapes
+  included): inside quotes zsh measures positions with the quote removed. The answer for a
+  line edited since the request is dropped. `compinit` is loaded only if the user's
+  config has not, its dump in Sulafat's cache.
 - **Editor edits build new arrays** (undo snapshots share buffers); typing joins one undo
   step until a word ends, rune deletes join, word and line deletes stand alone.
 - **ImGui's mouse is at -FLT_MAX when it is nowhere**: test before any cell arithmetic.
@@ -72,7 +92,7 @@ shell ⇄ bindings.pty ──bytes──▶ vt.Parser ──[]Action──▶ vt
 ## Plan
 
 1. **M0 — a terminal (done 10/16)**: PTY, parser, monochrome grid, scrollback, keys, paste.
-2. **M1 — a classic terminal**: SGR colours (16, 256, 24-bit) and attributes; wide characters
+2. **M1 — a classic terminal**: SGR colours (16, 256, 24-bit) and attributes (done 10/16); wide characters
    (a width table); the alternate screen (`?1049`), application cursor keys (`?1`), bracketed
    paste (`?2004`), mouse reporting (`?1000`/`?1006`), DECSCUSR; selection and copy. Done
    when vim, htop and less run correctly.
@@ -83,7 +103,7 @@ shell ⇄ bindings.pty ──bytes──▶ vt.Parser ──[]Action──▶ vt
 4. **M3 — the editor (begun 10/16, before M1 and the block cards)**: zsh's integration,
    then the command line as Sulafat's editor — multi-line, soft wrap, the mouse (click,
    drag, double-click a word, triple-click a line), word and line motions, undo, the
-   clipboard, history from `~/.zsh_history`. Next: Tab completion, syntax colouring,
-   Ctrl+R history search, bash's integration.
+   clipboard, history from `~/.zsh_history`, Tab completion (zsh's own, in a menu). Next:
+   syntax colouring, Ctrl+R history search, bash's integration.
 
 Open work is in `todo.md`.
