@@ -39,7 +39,7 @@ shell ⇄ bindings.pty ──bytes──▶ vt.Parser ──[]Action──▶ vt
 |---|---|
 | `src/sulafat.lyra` | `main`: the ImGui host, the frame loop, the tabs and their bar, fonts |
 | `src/session/session.lyra` | one tab: its PTY, screen, `Mode` and command line; read each frame, drawn and given keys when shown |
-| `src/ui/tabs.lyra` | the tab shortcuts, and the Mac's menu bar (Shell's tab items, Edit, the Window menu) |
+| `src/ui/tabs.lyra` | the tab bar (reorderable, its order read back), the tab shortcuts, and the Mac's menu bar |
 | `src/menutest.lyra` | the menu bar installed and read back |
 | `src/shell/shell.lyra` | shell integration (zsh's `.zshenv`, through `ZDOTDIR`): the marks, Tab's completion widget and its request file, the history file, what Return sends |
 | `src/editor/editor.lyra` | the command line's editor — text, caret, selection, motions, words, undo, layout; **pure** |
@@ -60,7 +60,10 @@ shell ⇄ bindings.pty ──bytes──▶ vt.Parser ──[]Action──▶ vt
 - **Every tab is read every frame, shown or not** (`Session.step`), so a program writing in a
   hidden tab never waits on a full terminal; only the shown one is drawn and gets keys.
   **Reading only ever ends a tab** (`alive` cleared, never set): a tab the user closed
-  (`request_close`) stays closed though its program has not ended yet. A
+  (`request_close`) stays closed though its program has not ended yet. **Tabs drag into a new order** (`TAB_BAR_FLAGS_REORDERABLE`): ImGui keeps that order to
+  itself, so `ui.tab_bar` reads each tab's place after drawing it and answers the order
+  (`TabBar.order`), and the loop puts its sessions in it — one order for the bar, ⌘1–9 and
+  ⌘⇧[ ⌘⇧], the shown tab followed. A
   tab's label is `name###tab<id>`: ImGui keys a tab by the part after `###`, which a
   changing title must not move. The grid is a child window under the bar, so it scrolls
   alone; focus is asked of root and child (`FOCUSED_FLAGS_ROOT_AND_CHILD_WINDOWS`), and a

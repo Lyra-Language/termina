@@ -12,7 +12,6 @@ milestones are in `CLAUDE.md` § Plan; finished items move to `done.md`.
 
 ## Tabs
 
-- **[OPEN] Reorder tabs by dragging** — ImGui can (`TAB_BAR_FLAGS_REORDERABLE`) but its order would part from ⌘1–9's; keep one order.
 - **[OPEN] Copy from the grid** — Copy and Select All have nothing to act on while a program runs, until the grid has a selection (M1).
 
 ## M1 — a classic terminal

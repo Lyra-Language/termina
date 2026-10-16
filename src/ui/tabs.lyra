@@ -1,6 +1,11 @@
 module ui
-//! The tab shortcuts: which, if any, was pressed this frame. The tabs themselves are
-//! `../sulafat.lyra`'s.
+//! The tabs' bar and shortcuts: the bar drawn and what was done to it, and which shortcut,
+//! if any, was pressed this frame. The tabs themselves are `../sulafat.lyra`'s.
+//!
+//! **Tabs are dragged into a new order by ImGui**, which keeps its own display order and
+//! does not tell it. [tab_bar] reads it back — each tab's place on the bar, after it is
+//! drawn — and answers it as [TabBar.order], for the caller to put its tabs in, so that the
+//! order shown, ⌘1–9's and ⌘⇧[ ⌘⇧]'s stay one.
 //!
 //! **On a Mac with Sulafat's menu bar, ⌘T, ⌘W, ⌘⇧[ and ⌘⇧] are its menu items'**, and
 //! come as menu choices: AppKit hands a key equivalent to the menu as well as to SDL, so
@@ -10,6 +15,19 @@ module ui
 import bindings.sdl3.{ platform }
 import bindings.menubar.{ menu, item, separator, window_menu, install, COMMAND, SHIFT }
 import bindings.imgui.{
+  begin_tab_bar,
+  end_tab_bar,
+  begin_tab_item_closable,
+  end_tab_item,
+  tab_item_button,
+  get_item_rect_min,
+  get_item_rect_max,
+  Vec2,
+  TAB_BAR_FLAGS_FITTING_POLICY_SHRINK,
+  TAB_BAR_FLAGS_REORDERABLE,
+  TAB_ITEM_FLAGS_SET_SELECTED,
+  TAB_ITEM_FLAGS_TRAILING,
+  TAB_ITEM_FLAGS_NO_TOOLTIP,
   is_key_pressed,
   KEY_T,
   KEY_W,
@@ -18,6 +36,93 @@ import bindings.imgui.{
   KEY_RIGHT_BRACKET,
   KEY_PAGE_UP,
   KEY_PAGE_DOWN,
+}
+
+/// A tab on the bar: what it is called, and its identity, which no other tab of the window
+/// has and a changing name must not move.
+pub struct TabLabel {
+  name: string,
+  id: i64,
+}
+
+/// What the tab bar answers for a frame, every index into the tabs as they were given.
+pub struct TabBar {
+  /// The tab shown: a click may have chosen another.
+  shown: i64,
+  /// A tab whose close button was pressed.
+  closing: Maybe<i64>,
+  /// Whether `+` was pressed.
+  add: bool,
+  /// The tabs in the order the bar now shows them — the order given, unless one was dragged.
+  order: []i64,
+  /// Each tab's middle on the screen.
+  centres: []Vec2,
+}
+
+/// Draw the tab bar for `tabs`, `active` shown and `select` (a tab chosen by a key, or just
+/// opened) made the shown one; its tabs dragged into another order as the user likes.
+pub let tab_bar = (tabs: []TabLabel, active: i64, select: Maybe<i64>) -> TabBar => {
+  var shown = active
+  var closing: Maybe<i64> = None
+  var add = false
+  var lefts: []f32 = []
+  var centres: []Vec2 = []
+  if begin_tab_bar(
+    "tabs",
+    TAB_BAR_FLAGS_FITTING_POLICY_SHRINK | TAB_BAR_FLAGS_REORDERABLE
+  ) {
+    for k in 0..<tabs.len() {
+      var open = true
+      let chosen = match select {
+        Some(n) => if n == k { TAB_ITEM_FLAGS_SET_SELECTED } else { 0 },
+        None => 0,
+      }
+      // The label after `###` is the tab's identity.
+      if begin_tab_item_closable("${tabs[k].name}###tab${tabs[k].id}", open, chosen) {
+        shown = k
+        end_tab_item()
+      }
+      // Where the bar put this tab: what its order is read from.
+      let lo = get_item_rect_min()
+      let hi = get_item_rect_max()
+      lefts.push(lo.x)
+      centres.push(Vec2 { x: (lo.x + hi.x) / 2.0, y: (lo.y + hi.y) / 2.0 })
+      if !open { closing = Some(k) }
+    }
+    if tab_item_button(
+      "+",
+      TAB_ITEM_FLAGS_TRAILING | TAB_ITEM_FLAGS_NO_TOOLTIP
+    ) { add = true }
+    end_tab_bar()
+  }
+  // A tab chosen by a key this frame is shown now, whatever the bar has yet caught up with.
+  match select {
+    Some(n) => { shown = n },
+    None => {},
+  }
+  TabBar {
+    shown: shown.clamp(0, (tabs.len() - 1).max(0)),
+    closing: closing,
+    add: add,
+    order: order_by(lefts),
+    centres: centres,
+  }
+}
+
+/// The indices of `lefts` from the leftmost to the rightmost — an insertion sort, stable,
+/// for a bar's handful of tabs.
+pub let order_by = pure (lefts: []f32) -> []i64 => {
+  var order: []i64 = [k in 0..<lefts.len() | k]
+  for i in 1..<order.len() {
+    var j = i
+    while j > 0 && lefts[order[j - 1]] > lefts[order[j]] {
+      let t = order[j]
+      order[j] = order[j - 1]
+      order[j - 1] = t
+      j -= 1
+    }
+  }
+  order
 }
 
 /// A tab shortcut pressed this frame.

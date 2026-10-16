@@ -12,6 +12,7 @@ Finished work, moved from `todo.md` with its section; the rules it left behind a
 ## Tabs
 
 - **[DONE 10/16] Tabs** — a session each, read every frame; ⌘T/⌘W/⌘1–9/⌘⇧[ ⌘⇧], a `+` and close buttons, `•` for unseen output.
+- **[DONE 10/16] Reorder tabs by dragging** — ImGui's bar, its order read back from where it draws each tab; the list, ⌘1–9 and the shown tab follow.
 - **[DONE 10/16] Tabs in the Mac menu bar** — Shell ▸ New Tab, Show Previous/Next Tab, Close Tab; replaces SDL's bar, whose ⌘W closed the app.
 - **[DONE 10/16] An Edit menu** — Undo, Redo, Cut, Copy, Paste, Select All; greyed when they would do nothing.
 

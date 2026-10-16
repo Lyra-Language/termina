@@ -61,6 +61,10 @@ import ui.{
   abgr,
   typed_lines,
   tab_command,
+  tab_bar,
+  order_by,
+  TabBar,
+  TabLabel,
   Undo,
   Redo,
   Cut,
@@ -97,6 +101,7 @@ let main = () -> u8 => {
   failed += check_tab_keys(host)
   failed += check_sessions()
   failed += check_edit_actions(host)
+  failed += check_tab_drag(host)
   destroy_host(host)
   if failed == 0 {
     println("uitest: all passed")
@@ -454,6 +459,85 @@ let check_edit_actions = (host: Host) -> i64 => {
   failed += check("a bracketed paste", pasted("a\e[201~b", true), "\e[200~ab\e[201~")
   failed
 }
+
+// Tabs dragged into a new order: the bar's order read back, and the list kept in it.
+let check_tab_drag = (host: Host) -> i64 => {
+  var failed = 0
+  failed += check("order by place", ints(order_by([30.0, 10.0, 20.0])), "1 2 0")
+  failed += check("order already so", ints(order_by([1.0, 2.0, 3.0])), "0 1 2")
+  var tabs = [
+    TabLabel { name: "one", id: 1 },
+    TabLabel { name: "two", id: 2 },
+    TabLabel { name: "three", id: 3 },
+  ]
+  var active = 0
+  // A tab bar lays its tabs out over its first frames: let it settle before aiming.
+  var bar = bar_frame(host, tabs, active)
+  for _ in 0..<3 { bar = bar_frame(host, tabs, active) }
+  failed += check("as given", names(tabs), "one two three")
+  // Drag the first tab past the last, a few points a frame, as a hand would.
+  let from = bar.centres[0]
+  let to = Vec2 { x: bar.centres[2].x + 40.0, y: from.y }
+  let io = get_io()
+  io.add_mouse_pos_event(from.x, from.y)
+  bar = bar_frame(host, tabs, active)
+  io.add_mouse_button_event(0, true)
+  bar = bar_frame(host, tabs, active)
+  var x = from.x
+  while x < to.x {
+    x += 8.0
+    io.add_mouse_pos_event(x, from.y)
+    bar = bar_frame(host, tabs, active)
+    (tabs, active) = follow(tabs, active, bar)
+  }
+  io.add_mouse_button_event(0, false)
+  for _ in 0..<5 {
+    bar = bar_frame(host, tabs, active)
+    (tabs, active) = follow(tabs, active, bar)
+  }
+  failed += check("dragged to the end", names(tabs), "two three one")
+  failed += check("the shown tab is still the dragged one", tabs[active].name, "one")
+  // A click on a tab shows it.
+  let two = bar.centres[0]
+  io.add_mouse_pos_event(two.x, two.y)
+  bar = bar_frame(host, tabs, active)
+  io.add_mouse_button_event(0, true)
+  bar = bar_frame(host, tabs, active)
+  io.add_mouse_button_event(0, false)
+  bar = bar_frame(host, tabs, active)
+  active = bar.shown
+  bar = bar_frame(host, tabs, active)
+  failed += check("a click shows it", tabs[bar.shown].name, "two")
+  failed
+}
+
+/// One frame of a window holding the tab bar alone.
+let bar_frame = (host: Host, tabs: []TabLabel, active: i64) -> TabBar => {
+  let none = TabBar { shown: active, closing: None, add: false, order: [], centres: [] }
+  if !begin_frame(host) { return none }
+  set_next_window_pos(Vec2 { x: 0.0, y: 0.0 })
+  set_next_window_size(Vec2 { x: 800.0, y: 400.0 })
+  let _ = begin("bar", WINDOW_FLAGS_NO_DECORATION)
+  let bar = tab_bar(tabs, active, None)
+  end()
+  end_frame(host, 0.0, 0.0, 0.0)
+  bar
+}
+
+/// The tabs put in the bar's order, and the shown one followed, as Sulafat's loop does.
+let follow = (tabs: []TabLabel, active: i64, bar: TabBar) -> ([]TabLabel, i64) => {
+  var moved: []TabLabel = []
+  var now = active
+  for i in 0..<bar.order.len() {
+    moved.push(tabs[bar.order[i]])
+    if bar.order[i] == active { now = i }
+  }
+  (moved, now)
+}
+
+let ints = (xs: []i64) -> string => [x in xs | "${x}"].join(" ")
+
+let names = (tabs: []TabLabel) -> string => [t in tabs | t.name].join(" ")
 
 // The tab shortcuts on a Mac, with ImGui's Ctrl/⌘ swap on as the real window has it.
 let check_tab_keys = (host: Host) -> i64 => {

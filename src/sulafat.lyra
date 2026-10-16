@@ -28,11 +28,6 @@ import bindings.imgui.{
   end,
   begin_child,
   end_child,
-  begin_tab_bar,
-  end_tab_bar,
-  begin_tab_item_closable,
-  end_tab_item,
-  tab_item_button,
   get_main_viewport,
   set_next_window_pos,
   set_next_window_size,
@@ -55,10 +50,6 @@ import bindings.imgui.{
   CONFIG_FLAGS_NAV_ENABLE_KEYBOARD,
   FOCUSED_FLAGS_ROOT_AND_CHILD_WINDOWS,
   CHILD_FLAGS_ALWAYS_USE_WINDOW_PADDING,
-  TAB_BAR_FLAGS_FITTING_POLICY_SHRINK,
-  TAB_ITEM_FLAGS_SET_SELECTED,
-  TAB_ITEM_FLAGS_TRAILING,
-  TAB_ITEM_FLAGS_NO_TOOLTIP,
 }
 import session.{
   open_session,
@@ -74,6 +65,9 @@ import ui.{
   tab_command,
   menu_command,
   install_menus,
+  tab_bar,
+  TabBar,
+  TabLabel,
   edit_action_of,
   EDIT_ITEMS,
   dark_theme,
@@ -160,20 +154,25 @@ let main = () -> void => {
       NoCommand => {},
     }
 
-    let (
-      shown,
-      closing,
-      add
-    ) = draw_window(sessions, active, select, fonts, theme, home, command, menus)
+    let bar = draw_window(sessions, active, select, fonts, theme, home, command, menus)
     select = None
-    if shown != active {
-      active = shown
-    }
-    match closing {
+    active = bar.shown
+    match bar.closing {
       Some(n) => sessions[n].request_close(),
       None => {},
     }
-    if add {
+    // Tabs dragged into a new order: the list put in it, the shown tab still the same one.
+    if !in_order(bar.order) {
+      var moved: []Session = []
+      for old in bar.order { moved.push(sessions[old]) }
+      sessions = moved
+      for i in 0..<bar.order.len() {
+        if bar.order[i] == active {
+          active = i
+        }
+      }
+    }
+    if bar.add {
       match open_session([], directory(sessions[active]), next_id) {
         Some(s) => {
           sessions.push(s)
@@ -200,8 +199,7 @@ let main = () -> void => {
 }
 
 /// The window: the tab bar, and the tab shown below it, drawn and given the keys — unless a
-/// tab shortcut took them this frame. Answers the tab now shown (a click may have chosen
-/// another), one whose close button was pressed, and whether `+` was.
+/// tab shortcut took them this frame. Answers what was done to the bar (`ui.tab_bar`).
 let draw_window = (
   sessions: mut []Session,
   active: i64,
@@ -211,7 +209,7 @@ let draw_window = (
   home: string,
   command: TabCommand,
   menus: bool
-) -> (i64, Maybe<i64>, bool) => {
+) -> TabBar => {
   let viewport = get_main_viewport()
   set_next_window_pos(viewport.work_pos())
   set_next_window_size(viewport.work_size())
@@ -222,37 +220,12 @@ let draw_window = (
   let _ = begin("terminal", flags)
   pop_style_var()
 
-  var shown = active
-  var closing: Maybe<i64> = None
-  var add = false
-  if begin_tab_bar("tabs", TAB_BAR_FLAGS_FITTING_POLICY_SHRINK) {
-    for k in 0..<sessions.len() {
-      var open = true
-      let chosen = match select {
-        Some(n) => if n == k { TAB_ITEM_FLAGS_SET_SELECTED } else { 0 },
-        None => 0,
-      }
-      // The label after `###` is the tab's identity, which a changing title must not move.
-      let mark = if sessions[k].unseen { "• " } else { "" }
-      let label = "${mark}${tab_title(sessions[k], home)}###tab${sessions[k].id}"
-      if begin_tab_item_closable(label, open, chosen) {
-        shown = k
-        end_tab_item()
-      }
-      if !open { closing = Some(k) }
-    }
-    if tab_item_button(
-      "+",
-      TAB_ITEM_FLAGS_TRAILING | TAB_ITEM_FLAGS_NO_TOOLTIP
-    ) { add = true }
-    end_tab_bar()
-  }
-  // A tab chosen by a key this frame is shown now, whatever the bar has yet caught up with.
-  match select {
-    Some(n) => { shown = n },
-    None => {},
-  }
-  shown = shown.clamp(0, sessions.len() - 1)
+  let labels = [k in 0..<sessions.len() | TabLabel {
+    name: "${if sessions[k].unseen { "• " } else { "" }}${tab_title(sessions[k], home)}",
+    id: sessions[k].id,
+  }]
+  let bar = tab_bar(labels, active, select)
+  let shown = bar.shown
 
   // The shown tab fills the rest of the window, in a child that scrolls on its own.
   push_style_var_vec2(STYLE_VAR_WINDOW_PADDING, Vec2 { x: PADDING, y: PADDING / 2.0 })
@@ -294,7 +267,13 @@ let draw_window = (
   }
   end_child()
   end()
-  (shown, closing, add)
+  bar
+}
+
+/// Whether `order` is 0, 1, 2, … — the tabs as they were.
+let in_order = pure (order: []i64) -> bool => {
+  for i in 0..<order.len() { if order[i] != i { return false } }
+  true
 }
 
 /// The window's own background is the theme's (`ui/theme.lyra`'s `#181A1E`), cleared to
