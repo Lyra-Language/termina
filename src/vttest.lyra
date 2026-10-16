@@ -1,0 +1,199 @@
+// vttest — the parser and the screen checked without a window: byte strings fed in, the
+// actions and the screen's lines compared with what xterm shows; and a real program run on
+// a pseudo-terminal, its output carried through both.
+//
+//   build/vttest               every check; exits 1 naming each that failed
+
+import bindings.pty.{ spawn, close }
+import vt.{ parser, screen, Screen, Action, Print, Execute, Csi, Esc, Osc }
+
+let main = () -> u8 => {
+  var failed = 0
+  failed += check_parser()
+  failed += check_screen()
+  failed += check_pty()
+  failed += check_typing()
+  if failed == 0 {
+    println("vttest: all passed")
+    0
+  } else {
+    println("vttest: ${failed} failed")
+    1
+  }
+}
+
+let check_parser = () -> i64 => {
+  var failed = 0
+  failed += check("text and controls", describe(feed_all(["ab\r\n"])), "P(ab) X13 X10")
+  failed += check("CSI with params", describe(feed_all(["\e[12;5H"])), "C(;12,5;H)")
+  failed += check("private marker", describe(feed_all(["\e[?1049h"])), "C(?;1049;h)")
+  failed += check("no params", describe(feed_all(["\e[m"])), "C(;0;m)")
+  failed += check("sub-parameters", subs(feed_all(["\e[38:2::1:2:3m"])), "FTTTTT")
+  failed += check("OSC by BEL", describe(feed_all(["\e]0;hi\x07"])), "O(0;hi)")
+  failed += check("OSC by ST", describe(feed_all(["\e]2;yo\e\\"])), "O(2;yo)")
+  failed += check("ESC sequence", describe(feed_all(["\e7\e(B"])), "E(;7) E((;B)")
+  // The same stream cut at every byte: the actions' content is the same.
+  failed += check(
+    "split across reads",
+    describe(feed_all(["\e", "[", "3", "1", ";", "4", "m", "x"])),
+    "C(;31,4;m) P(x)"
+  )
+  failed += check("UTF-8 whole", describe(feed_all(["é→"])), "P(é→)")
+  failed += check(
+    "UTF-8 split",
+    describe(feed_bytes([[0xC3], [0xA9], [0xE2, 0x86], [0x92]])),
+    "P(é) P(→)"
+  )
+  failed += check("bad UTF-8", describe(feed_bytes([[0xFF, 0x41]])), "P(\uFFFDA)")
+  failed += check("CAN aborts", describe(feed_all(["\e[1\x18x"])), "P(x)")
+  failed += check(
+    "huge param",
+    describe(feed_all(["\e[99999999999999999999A"])),
+    "C(;0;A)"
+  )
+  failed
+}
+
+let check_screen = () -> i64 => {
+  var failed = 0
+  failed += check("print", rows(run(5, 2, "ab")), "ab   |     ")
+  failed += check("CR overwrites", rows(run(5, 2, "abc\rX")), "Xbc  |     ")
+  failed += check("deferred wrap", rows(run(3, 2, "abc")), "abc|   ")
+  failed += check("wrap on next", rows(run(3, 2, "abcd")), "abc|d  ")
+  failed += check("erase line", rows(run(5, 1, "abcde\r\e[2C\e[K")), "ab   ")
+  failed += check("cursor position", rows(run(4, 2, "\e[2;3Hx")), "    |  x ")
+  failed += check("backspace", rows(run(4, 1, "ab\x08c")), "ac  ")
+  failed += check("tab", rows(run(12, 1, "a\tb")), "a       b   ")
+  failed += check("delete chars", rows(run(5, 1, "abcde\r\e[2P")), "cde  ")
+  failed += check("insert chars", rows(run(5, 1, "abcde\r\e[2@")), "  abc")
+  let scrolled = run(3, 2, "1\r\n2\r\n3")
+  failed += check("scroll", rows(scrolled), "2  |3  ")
+  failed += check(
+    "scrollback",
+    "${scrolled.scrollback_len()}:${text(scrolled.line(0))}",
+    "1:1  "
+  )
+  failed += check("region", rows(run(2, 3, "a\r\nb\r\nc\e[1;2r\e[2Hz\nq")), "z | q|c ")
+  failed += check("title", run(4, 1, "\e]0;hello\x07").title, "hello")
+  failed
+}
+
+// `printf` on a pseudo-terminal: a real program's bytes through the PTY, parser and screen.
+let check_pty = () -> i64 => {
+  let Some(pty) = spawn(
+    ["/bin/sh", "-c", "printf 'one\\ntwo\\033[1Gx\\n'; stty size"],
+    20,
+    4
+  ) else {
+    return check("spawn", "failed", "spawned")
+  }
+  var p = parser()
+  var s = screen(20, 4)
+  var going = true
+  var spins = 0
+  while going && spins < 2000000 {
+    match pty.read() {
+      None => { going = false },
+      Some(bytes) => {
+        if bytes.len() > 0 { s.apply(p.feed(bytes)) }
+        spins += 1
+      },
+    }
+  }
+  // The terminal closes as the program ends, a moment before the program can be reaped.
+  var status = pty.exit_status()
+  var waits = 0
+  while status == None && waits < 1000000 {
+    status = pty.exit_status()
+    waits += 1
+  }
+  close(pty)
+  var failed = 0
+  // The terminal turns `\n` into `\r\n` (onlcr), and `stty size` reads the size it was given.
+  failed += check(
+    "pty output",
+    "${text(s.line(0)).trim()}|${text(s.line(1)).trim()}",
+    "one|xwo"
+  )
+  failed += check("pty size", text(s.line(2)).trim(), "4 20")
+  failed += check("exit status", "${status ?? -1}", "0")
+  failed
+}
+
+// Keys written to a program and echoed by the terminal's line discipline, as the shell's
+// line editor would see them: Return as `\r`, turned into `\r\n` on the way back.
+let check_typing = () -> i64 => {
+  let Some(pty) = spawn(
+    ["/bin/cat"],
+    20,
+    4
+  ) else { return check("spawn cat", "failed", "spawned") }
+  var p = parser()
+  var s = screen(20, 4)
+  let wrote = pty.write("héllo\r")
+  var spins = 0
+  while text(s.line(1)).trim() != "héllo" && spins < 2000000 {
+    match pty.read() {
+      None => { spins = 2000000 },
+      Some(bytes) => {
+        if bytes.len() > 0 { s.apply(p.feed(bytes)) }
+        spins += 1
+      },
+    }
+  }
+  let _ = pty.write("\x04")
+  close(pty)
+  var failed = check("write", "${wrote}", "true")
+  failed += check(
+    "echo",
+    "${text(s.line(0)).trim()}|${text(s.line(1)).trim()}",
+    "héllo|héllo"
+  )
+  failed
+}
+
+let check = (name: string, got: string, want: string) -> i64 => {
+  if got == want { 0 } else {
+    println("FAIL ${name}: got «${got}», want «${want}»")
+    1
+  }
+}
+
+let feed_all = (pieces: []string) -> []Action =>
+  feed_bytes([p in pieces | p.encode_utf8()])
+
+let feed_bytes = (pieces: [][]u8) -> []Action => {
+  var p = parser()
+  var out: []Action = []
+  for piece in pieces {
+    for a in p.feed(piece) { out.push(a) }
+  }
+  out
+}
+
+let run = (cols: i64, rows: i64, input: string) -> Screen => {
+  var p = parser()
+  var s = screen(cols, rows)
+  s.apply(p.feed(input.encode_utf8()))
+  s
+}
+
+let rows = (s: Screen) -> string =>
+  [y in 0..<s.rows | text(s.line(s.scrollback_len() + y))].join("|")
+
+let text = (line: []rune) -> string => [r in line | "${r}"].join("")
+
+let describe = (actions: []Action) -> string => [a in actions | describe_one(a)].join(" ")
+
+let describe_one = (a: Action) -> string => match a {
+  Print(t) => "P(${text(t)})",
+  Execute(c) => "X${c}",
+  Csi(seq) => "C(${seq.marker};${[n in seq.params | "${n}"].join(",")};${seq.intermediates}${seq.final})",
+  Esc(seq) => "E(${seq.intermediates};${seq.final})",
+  Osc(t) => "O(${t})",
+}
+
+let subs = (actions: []Action) -> string => match actions[0] {
+  Csi(seq) => [s in seq.sub | if s { "T" } else { "F" }].join(""),
+  _ => "not a CSI",
+}

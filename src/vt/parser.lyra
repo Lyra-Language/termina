@@ -1,0 +1,357 @@
+module vt
+//! A program's output, read as a terminal reads it: text, control characters and escape
+//! sequences, in the shape of Paul Williams' DEC-compatible parser (vt100.net/emu/dec_ansi_parser)
+//! — the one xterm, libvterm and every serious emulator follow, because it says what to do
+//! with *malformed* input too, and programs write plenty of that.
+//!
+//! **The parser only recognises; it changes nothing.** [Parser.feed] turns bytes into
+//! [Action]s and the screen (`screen.lyra`) carries them out, so the parser is tested on
+//! byte strings alone and the screen on actions alone.
+//!
+//! **Bytes in, across any boundary.** A read from a terminal can stop anywhere — inside a
+//! UTF-8 sequence, between `\e` and `[`, halfway through a colour — so every piece of state
+//! is kept between calls, and feeding a stream a byte at a time gives the same actions as
+//! feeding it whole (text arriving in more, shorter runs).
+
+/// Something the program's output asked the terminal to do.
+pub data Action =
+  /// Text to show at the cursor, a rune a cell (or two, for a wide one).
+  Print []rune
+  /// A C0 control character: BEL 7, BS 8, HT 9, LF 10, VT 11, FF 12, CR 13, SO 14, SI 15.
+  | Execute u8
+  /// A control sequence, `\e[`…
+  | Csi CsiSequence
+  /// An escape sequence that is not a control sequence: `\e7` (save the cursor), `\e(B`.
+  | Esc EscSequence
+  /// An operating system command, `\e]`… ended by BEL or `\e\`: its text, such as `0;title`
+  /// (the window title) or `133;A` (a shell's prompt is starting).
+  | Osc string
+
+/// A control sequence: `\e[`, a private marker, numeric parameters, intermediates and the
+/// final character that says what it is — `\e[?25l` is marker `?`, parameter 25, final `l`.
+pub struct CsiSequence {
+  /// `?`, `>`, `<` or `=` when the sequence began with one (a private sequence), else `""`.
+  marker: string,
+  /// The parameters in order; one left out (`\e[;5H`) is 0, as is one too large to hold.
+  params: []i64,
+  /// Whether each parameter followed a `:` rather than a `;` — a sub-parameter, as in
+  /// `\e[38:2:255:0:0m`'s colour. As long as `params`.
+  sub: []bool,
+  /// The characters between the parameters and the final one (`\e[2 q`'s space).
+  intermediates: string,
+  /// The final character.
+  final: rune,
+}
+
+impl CsiSequence {
+  /// Parameter `i`, or `default` when it was left out or is 0 — the rule for counts
+  /// (`\e[A` and `\e[0A` both move one line).
+  pub let param_or = pure (self, i: i64, default: i64) -> i64 =>
+    if i < self.params.len() && self.params[i] != 0 { self.params[i] } else { default }
+}
+
+/// An escape sequence that is not a control sequence: `\e`, intermediates, a final.
+pub struct EscSequence {
+  intermediates: string,
+  final: rune,
+}
+
+/// Where the parser is in the stream.
+data State =
+  Ground
+  | Escape
+  | EscapeIntermediate
+  | CsiEntry
+  | CsiParam
+  | CsiIntermediate
+  | CsiIgnore
+  | OscString
+  /// Inside an OSC string, just after its `\e`: a `\` ends the string.
+  | OscEscape
+  /// Inside a string this terminal does not interpret (DCS, SOS, PM, APC), until it ends.
+  | StringIgnore
+  | StringIgnoreEscape
+
+/// The parser and everything it carries from one [Parser.feed] to the next.
+pub struct Parser {
+  state: State,
+  marker: string,
+  params: []i64,
+  sub: []bool,
+  /// The parameter being read: its digits so far, and whether there have been any.
+  current: i64,
+  has_current: bool,
+  next_is_sub: bool,
+  intermediates: string,
+  osc: []u8,
+  /// A UTF-8 sequence begun in ground state: its code point so far, and the bytes still to come.
+  code: i64,
+  need: i64,
+  /// Text recognised but not yet handed out: a run of printable runes becomes one `Print`.
+  text: []rune,
+}
+
+/// A parser at the start of a stream.
+pub let parser = pure () -> Parser => Parser {
+  state: Ground,
+  marker: "",
+  params: [],
+  sub: [],
+  current: 0,
+  has_current: false,
+  next_is_sub: false,
+  intermediates: "",
+  osc: [],
+  code: 0,
+  need: 0,
+  text: [],
+}
+
+impl Parser {
+  /// The actions `bytes` complete, in order. Whatever they leave unfinished — a sequence,
+  /// a UTF-8 character — is kept and finished by the next call.
+  pub let feed = (self: mut, bytes: []u8) -> []Action => {
+    var out: []Action = []
+    for b in bytes { self.step(b, out) }
+    self.flush_text(out)
+    out
+  }
+
+  // One byte. The transitions "from anywhere" come first, as in the diagram: CAN and SUB
+  // abandon a sequence, ESC starts a new one (except inside a string, where it may be the
+  // start of its terminator).
+  let step = (self: mut, b: u8, out: mut []Action) -> void => {
+    // Only ground state begins a UTF-8 sequence, and any other byte ends one.
+    if self.need > 0 && b >= 0x80 && b < 0xC0 {
+      self.continue_utf8(b)
+      return
+    }
+    if self.need > 0 {
+      // A sequence cut short by a byte that does not continue it: U+FFFD for what came,
+      // then this byte on its own.
+      self.need = 0
+      self.text.push(rune(0xFFFD))
+    }
+    if b == 0x18 || b == 0x1A {
+      self.flush_text(out)
+      self.state = Ground
+      return
+    }
+    match self.state {
+      OscString => self.osc_byte(b, out),
+      OscEscape => {
+        if b == 0x5C { self.dispatch_osc(out) }
+        else {
+          self.dispatch_osc(out)
+          self.enter_escape()
+          self.escape_byte(b, out)
+        }
+      },
+      StringIgnore => {
+        if b == 0x1B { self.state = StringIgnoreEscape }
+        else if b == 0x07 { self.state = Ground }
+      },
+      StringIgnoreEscape => {
+        if b == 0x5C { self.state = Ground } else { self.state = StringIgnore }
+      },
+      _ => {
+        if b == 0x1B {
+          self.flush_text(out)
+          self.enter_escape()
+        } else {
+          match self.state {
+            Ground => self.ground_byte(b, out),
+            Escape => self.escape_byte(b, out),
+            EscapeIntermediate => self.escape_intermediate_byte(b, out),
+            CsiEntry => self.csi_entry_byte(b, out),
+            CsiParam => self.csi_param_byte(b, out),
+            CsiIntermediate => self.csi_intermediate_byte(b, out),
+            CsiIgnore => self.csi_ignore_byte(b, out),
+            _ => {},
+          }
+        }
+      },
+    }
+  }
+
+  let ground_byte = (self: mut, b: u8, out: mut []Action) -> void => {
+    if b < 0x20 {
+      self.flush_text(out)
+      out.push(Execute(b))
+    } else if b == 0x7F {
+      // DEL is ignored in ground state.
+    } else if b < 0x80 {
+      self.text.push(rune(i64(b)))
+    } else if b >= 0xC2 && b < 0xE0 {
+      self.code = i64(b & 0x1F)
+      self.need = 1
+    } else if b >= 0xE0 && b < 0xF0 {
+      self.code = i64(b & 0x0F)
+      self.need = 2
+    } else if b >= 0xF0 && b < 0xF5 {
+      self.code = i64(b & 0x07)
+      self.need = 3
+    } else {
+      // A continuation byte with nothing to continue, or a byte UTF-8 never uses.
+      self.text.push(rune(0xFFFD))
+    }
+  }
+
+  let continue_utf8 = (self: mut, b: u8) -> void => {
+    self.code = self.code * 64 + i64(b & 0x3F)
+    self.need -= 1
+    if self.need == 0 {
+      let c = self.code
+      // Overlong forms, surrogates and C1 controls are not text.
+      if c < 0xA0 || (c >= 0xD800 && c < 0xE000) || c > 0x10FFFF {
+        if c >= 0xA0 { self.text.push(rune(0xFFFD)) }
+      } else {
+        self.text.push(rune(c))
+      }
+    }
+  }
+
+  let enter_escape = (self: mut) -> void => {
+    self.state = Escape
+    self.intermediates = ""
+  }
+
+  let escape_byte = (self: mut, b: u8, out: mut []Action) -> void => {
+    if b < 0x20 { out.push(Execute(b)) }
+    else if b == 0x5B { self.enter_csi() }
+    else if b == 0x5D {
+      self.osc = []
+      self.state = OscString
+    } else if b == 0x50 || b == 0x58 || b == 0x5E || b == 0x5F {
+      // DCS, SOS, PM, APC: strings this terminal does not interpret yet.
+      self.state = StringIgnore
+    } else if b < 0x30 {
+      self.intermediates = "${self.intermediates}${rune(i64(b))}"
+      self.state = EscapeIntermediate
+    } else if b < 0x7F {
+      out.push(Esc(EscSequence {
+        intermediates: self.intermediates,
+        final: rune(i64(b))
+      }))
+      self.state = Ground
+    }
+  }
+
+  let escape_intermediate_byte = (self: mut, b: u8, out: mut []Action) -> void => {
+    if b < 0x20 { out.push(Execute(b)) }
+    else if b < 0x30 { self.intermediates = "${self.intermediates}${rune(i64(b))}" }
+    else if b < 0x7F {
+      out.push(Esc(EscSequence {
+        intermediates: self.intermediates,
+        final: rune(i64(b))
+      }))
+      self.state = Ground
+    }
+  }
+
+  let enter_csi = (self: mut) -> void => {
+    self.state = CsiEntry
+    self.marker = ""
+    self.params = []
+    self.sub = []
+    self.current = 0
+    self.has_current = false
+    self.next_is_sub = false
+    self.intermediates = ""
+  }
+
+  let csi_entry_byte = (self: mut, b: u8, out: mut []Action) -> void => {
+    if b >= 0x3C && b <= 0x3F {
+      self.marker = "${rune(i64(b))}"
+      self.state = CsiParam
+    } else {
+      self.state = CsiParam
+      self.csi_param_byte(b, out)
+    }
+  }
+
+  let csi_param_byte = (self: mut, b: u8, out: mut []Action) -> void => {
+    if b < 0x20 { out.push(Execute(b)) }
+    else if b >= 0x30 && b <= 0x39 {
+      // Held below 65536: a parameter is a count or a code, and a longer run of digits is
+      // malformed input that must not overflow (which would trap).
+      if self.current < 65536 { self.current = self.current * 10 + i64(b - 0x30) }
+      self.has_current = true
+    } else if b == 0x3B || b == 0x3A {
+      self.end_param()
+      self.next_is_sub = b == 0x3A
+    } else if b >= 0x3C && b <= 0x3F {
+        self.state = CsiIgnore
+      } else if b < 0x30 {
+        self.end_param()
+        self.intermediates = "${rune(i64(b))}"
+        self.state = CsiIntermediate
+      } else if b < 0x7F {
+        self.end_param()
+        self.dispatch_csi(b, out)
+      }
+  }
+
+  let csi_intermediate_byte = (self: mut, b: u8, out: mut []Action) -> void => {
+    if b < 0x20 { out.push(Execute(b)) }
+    else if b < 0x30 { self.intermediates = "${self.intermediates}${rune(i64(b))}" }
+    else if b < 0x40 { self.state = CsiIgnore }
+    else if b < 0x7F { self.dispatch_csi(b, out) }
+  }
+
+  let csi_ignore_byte = (self: mut, b: u8, out: mut []Action) -> void => {
+    if b < 0x20 { out.push(Execute(b)) }
+    else if b >= 0x40 && b < 0x7F { self.state = Ground }
+  }
+
+  // Close the parameter being read. At most 32 are kept; the rest of a longer list is
+  // dropped, as xterm does.
+  let end_param = (self: mut) -> void => {
+    if self.params.len() < MAX_PARAMS {
+      self.params.push(if self.current < 65536 { self.current } else { 0 })
+      self.sub.push(self.next_is_sub)
+    }
+    self.current = 0
+    self.has_current = false
+    self.next_is_sub = false
+  }
+
+  let dispatch_csi = (self: mut, b: u8, out: mut []Action) -> void => {
+    // `\e[m` has no parameter at all, which end_param has recorded as one 0. Keep it: a
+    // missing parameter and a 0 mean the same to every sequence.
+    out.push(Csi(CsiSequence {
+      marker: self.marker,
+      params: self.params,
+      sub: self.sub,
+      intermediates: self.intermediates,
+      final: rune(i64(b)),
+    }))
+    self.state = Ground
+  }
+
+  let osc_byte = (self: mut, b: u8, out: mut []Action) -> void => {
+    if b == 0x07 { self.dispatch_osc(out) }
+    else if b == 0x1B { self.state = OscEscape }
+    else if b >= 0x20 && self.osc.len() < MAX_OSC { self.osc.push(b) }
+  }
+
+  let dispatch_osc = (self: mut, out: mut []Action) -> void => {
+    out.push(Osc(self.osc.decode_utf8()))
+    self.osc = []
+    self.state = Ground
+  }
+
+  let flush_text = (self: mut, out: mut []Action) -> void => {
+    if self.text.len() > 0 {
+      out.push(Print(self.text))
+      self.text = []
+    }
+  }
+}
+
+/// The most parameters a control sequence keeps.
+const MAX_PARAMS: i64 = 32
+
+/// The longest OSC string kept, in bytes; the rest is dropped. A title or a directory is
+/// far shorter; a program writing megabytes into one is not to be believed.
+const MAX_OSC: i64 = 65536

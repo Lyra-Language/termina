@@ -1,0 +1,321 @@
+module vt
+//! The screen a program draws on: a grid of cells, a cursor, and the lines that have scrolled
+//! off the top. [Screen.apply] carries out the parser's [Action]s; nothing here reads bytes.
+//!
+//! **What M0 models**: text, the cursor movements and erases a shell's line editor uses
+//! (`\r`, backspace, tabs, `\e[K`, `\e[J`, cursor positioning), scrolling with a scroll
+//! region, xterm's deferred wrap at the last column, and the window title. Colours and
+//! attributes, wide characters, the alternate screen and the DEC private modes come next
+//! (`../../todo.md`).
+
+/// The screen, its cursor and its scrollback.
+pub struct Screen {
+  cols: i64,
+  rows: i64,
+  /// `rows` lines of `cols` runes; a blank cell is a space. Each line its own array: see
+  /// [blank_line].
+  lines: [][]rune,
+  /// Lines scrolled off the top, a ring of at most [SCROLLBACK] — the oldest at
+  /// `scrollback_start` once it is full.
+  scrollback: [][]rune,
+  scrollback_start: i64,
+  /// The cursor, 0-based.
+  x: i64,
+  y: i64,
+  /// The cursor has written the last column and the next character starts a new line —
+  /// xterm's deferred wrap, without which a prompt exactly a line wide scrolls one line
+  /// too early.
+  wrap_pending: bool,
+  /// The scroll region's first and last lines, inclusive (`\e[r`).
+  top: i64,
+  bottom: i64,
+  saved_x: i64,
+  saved_y: i64,
+  /// The window title the program last set (OSC 0 or 2).
+  title: string,
+}
+
+/// A blank screen `cols` × `rows`.
+pub let screen = pure (cols: i64, rows: i64) -> Screen => Screen {
+  cols: cols,
+  rows: rows,
+  lines: [row in 0..<rows | blank_line(cols)],
+  scrollback: [],
+  scrollback_start: 0,
+  x: 0,
+  y: 0,
+  wrap_pending: false,
+  top: 0,
+  bottom: rows - 1,
+  saved_x: 0,
+  saved_y: 0,
+  title: "",
+}
+
+/// The most lines kept above the screen.
+pub const SCROLLBACK: i64 = 10000
+
+impl Screen {
+  /// Carry out what the program's output asked for.
+  pub let apply = (self: mut, actions: []Action) -> void => {
+    for a in actions {
+      match a {
+        Print(text) => self.print(text),
+        Execute(c) => self.execute(c),
+        Csi(seq) => self.csi(seq),
+        Esc(seq) => self.esc(seq),
+        Osc(text) => self.osc(text),
+      }
+    }
+  }
+
+  /// How many lines there are above the screen.
+  pub let scrollback_len = pure (self) -> i64 => self.scrollback.len()
+
+  /// Line `i` of everything — the scrollback's, oldest first, then the screen's.
+  pub let line = pure (self, i: i64) -> []rune => {
+    let n = self.scrollback.len()
+    if i < n { self.scrollback[(self.scrollback_start + i) % n] }
+    else { self.lines[i - n] }
+  }
+
+  /// Make the screen `cols` × `rows`, keeping what fits: lines cut or padded on the right,
+  /// and the screen's top lines moved into the scrollback when it loses rows (so the
+  /// cursor's line stays on it). Text is not reflowed.
+  pub let resize = (self: mut, cols: i64, rows: i64) -> void => {
+    if cols == self.cols && rows == self.rows { return }
+    var kept: [][]rune = []
+    for l in self.lines { kept.push(fit(l, cols)) }
+    // Losing rows: push lines off the top while the cursor's line would fall off the bottom.
+    var y = self.y
+    while kept.len() > rows && y > 0 {
+      self.push_scrollback(kept[0])
+      kept = kept.slice(1, kept.len())
+      y -= 1
+    }
+    if kept.len() > rows { kept = kept.slice(0, rows) }
+    while kept.len() < rows { kept.push(blank_line(cols)) }
+    self.lines = kept
+    self.cols = cols
+    self.rows = rows
+    self.y = y.min(rows - 1)
+    self.x = self.x.min(cols - 1)
+    self.wrap_pending = false
+    self.top = 0
+    self.bottom = rows - 1
+  }
+
+  let print = (self: mut, text: []rune) -> void => {
+    for r in text {
+      if self.wrap_pending {
+        self.x = 0
+        self.linefeed()
+        self.wrap_pending = false
+      }
+      self.lines[self.y][self.x] = r
+      if self.x == self.cols - 1 { self.wrap_pending = true } else { self.x += 1 }
+    }
+  }
+
+  let execute = (self: mut, c: u8) -> void => {
+    if c == 8 {
+      if self.x > 0 { self.x -= 1 }
+      self.wrap_pending = false
+    } else if c == 9 {
+      self.x = ((self.x / 8 + 1) * 8).min(self.cols - 1)
+    } else if c == 10 || c == 11 || c == 12 {
+      self.linefeed()
+    } else if c == 13 {
+      self.x = 0
+      self.wrap_pending = false
+    }
+  }
+
+  let csi = (self: mut, seq: CsiSequence) -> void => {
+    if seq.marker != "" || seq.intermediates != "" { return }
+    let f = seq.final
+    let n = seq.param_or(0, 1)
+    if f == 'A' { self.move_to(self.x, (self.y - n).max(self.top.min(self.y))) }
+    else if f == 'B' || f == 'e' { self.move_to(
+      self.x,
+      (self.y + n).min(self.bottom.max(self.y))
+    ) }
+    else if f == 'C' || f == 'a' { self.move_to(self.x + n, self.y) }
+    else if f == 'D' { self.move_to(self.x - n, self.y) }
+    else if f == 'E' { self.move_to(0, self.y + n) }
+    else if f == 'F' { self.move_to(0, self.y - n) }
+    else if f == 'G' || f == '`' { self.move_to(n - 1, self.y) }
+    else if f == 'd' { self.move_to(self.x, n - 1) }
+    else if f == 'H' || f == 'f' { self.move_to(seq.param_or(1, 1) - 1, n - 1) }
+    else if f == 'J' { self.erase_display(seq.param_or(0, 0)) }
+    else if f == 'K' { self.erase_line(seq.param_or(0, 0)) }
+    else if f == 'X' { self.blank(self.y, self.x, (self.x + n).min(self.cols)) }
+    else if f == 'P' { self.delete_chars(n) }
+    else if f == '@' { self.insert_chars(n) }
+    else if f == 'L' { self.insert_lines(n) }
+    else if f == 'M' { self.delete_lines(n) }
+    else if f == 'S' { for _ in 0..<n { self.scroll_up() } }
+    else if f == 'T' { for _ in 0..<n { self.scroll_down() } }
+    else if f == 'r' { self.set_region(
+      seq.param_or(0, 1) - 1,
+      seq.param_or(1, self.rows) - 1
+    ) }
+    else if f == 's' { self.save_cursor() }
+    else if f == 'u' { self.restore_cursor() }
+    // `m` (colours) and everything else: not yet.
+  }
+
+  let esc = (self: mut, seq: EscSequence) -> void => {
+    if seq.intermediates != "" { return }
+    let f = seq.final
+    if f == '7' { self.save_cursor() }
+    else if f == '8' { self.restore_cursor() }
+    else if f == 'D' { self.linefeed() }
+    else if f == 'E' {
+      self.x = 0
+      self.linefeed()
+    } else if f == 'M' { self.reverse_index() }
+    else if f == 'c' { self = screen(self.cols, self.rows) }
+  }
+
+  let osc = (self: mut, text: string) -> void => {
+    if text.starts_with("0;") || text.starts_with("2;") { self.title = text.slice(
+      2,
+      text.len()
+    ) }
+  }
+
+  let move_to = (self: mut, x: i64, y: i64) -> void => {
+    self.x = x.clamp(0, self.cols - 1)
+    self.y = y.clamp(0, self.rows - 1)
+    self.wrap_pending = false
+  }
+
+  // Down a line, scrolling the region when the cursor is on its last line.
+  let linefeed = (self: mut) -> void => {
+    if self.y == self.bottom { self.scroll_up() }
+    else if self.y < self.rows - 1 { self.y += 1 }
+  }
+
+  let reverse_index = (self: mut) -> void => {
+    if self.y == self.top { self.scroll_down() }
+    else if self.y > 0 { self.y -= 1 }
+  }
+
+  // The region's lines up one, a blank at its bottom. A line leaving the top of the whole
+  // screen goes to the scrollback; one leaving a region lower down is gone, as in xterm.
+  let scroll_up = (self: mut) -> void => {
+    if self.top == 0 { self.push_scrollback(self.lines[0]) }
+    for i in self.top..<self.bottom { self.lines[i] = self.lines[i + 1] }
+    self.lines[self.bottom] = blank_line(self.cols)
+  }
+
+  let scroll_down = (self: mut) -> void => {
+    var i = self.bottom
+    while i > self.top {
+      self.lines[i] = self.lines[i - 1]
+      i -= 1
+    }
+    self.lines[self.top] = blank_line(self.cols)
+  }
+
+  let push_scrollback = (self: mut, line: []rune) -> void => {
+    if self.scrollback.len() < SCROLLBACK { self.scrollback.push(line) }
+    else {
+      self.scrollback[self.scrollback_start] = line
+      self.scrollback_start = (self.scrollback_start + 1) % SCROLLBACK
+    }
+  }
+
+  let set_region = (self: mut, top: i64, bottom: i64) -> void => {
+    let t = top.clamp(0, self.rows - 1)
+    let b = bottom.clamp(0, self.rows - 1)
+    if t < b {
+      self.top = t
+      self.bottom = b
+      self.move_to(0, 0)
+    }
+  }
+
+  let erase_display = (self: mut, mode: i64) -> void => {
+    if mode == 0 {
+      self.erase_line(0)
+      for y in (self.y + 1)..<self.rows { self.lines[y] = blank_line(self.cols) }
+    } else if mode == 1 {
+      self.erase_line(1)
+      for y in 0..<self.y { self.lines[y] = blank_line(self.cols) }
+    } else if mode == 2 || mode == 3 {
+      for y in 0..<self.rows { self.lines[y] = blank_line(self.cols) }
+    }
+  }
+
+  let erase_line = (self: mut, mode: i64) -> void => {
+    if mode == 0 { self.blank(self.y, self.x, self.cols) }
+    else if mode == 1 { self.blank(self.y, 0, self.x + 1) }
+    else if mode == 2 { self.blank(self.y, 0, self.cols) }
+  }
+
+  // Cells `from` up to `to` of line `y` made blank.
+  let blank = (self: mut, y: i64, from: i64, to: i64) -> void => {
+    for x in from..<to { self.lines[y][x] = ' ' }
+  }
+
+  let delete_chars = (self: mut, n: i64) -> void => {
+    let k = n.min(self.cols - self.x)
+    for x in self.x..<(self.cols - k) { self.lines[self.y][x] = self.lines[self.y][x + k] }
+    self.blank(self.y, self.cols - k, self.cols)
+  }
+
+  let insert_chars = (self: mut, n: i64) -> void => {
+    let k = n.min(self.cols - self.x)
+    var x = self.cols - 1
+    while x >= self.x + k {
+      self.lines[self.y][x] = self.lines[self.y][x - k]
+      x -= 1
+    }
+    self.blank(self.y, self.x, self.x + k)
+  }
+
+  // Lines inserted or deleted at the cursor, within the scroll region, as if the region
+  // began at the cursor's line.
+  let insert_lines = (self: mut, n: i64) -> void => {
+    if self.y < self.top || self.y > self.bottom { return }
+    let top = self.top
+    self.top = self.y
+    for _ in 0..<n.min(self.bottom - self.y + 1) { self.scroll_down() }
+    self.top = top
+    self.x = 0
+  }
+
+  let delete_lines = (self: mut, n: i64) -> void => {
+    if self.y < self.top || self.y > self.bottom { return }
+    let top = self.top
+    self.top = self.y
+    // Deleted lines are not scrollback, even when the region starts at the top.
+    for _ in 0..<n.min(self.bottom - self.y + 1) {
+      for i in self.top..<self.bottom { self.lines[i] = self.lines[i + 1] }
+      self.lines[self.bottom] = blank_line(self.cols)
+    }
+    self.top = top
+    self.x = 0
+  }
+
+  let save_cursor = (self: mut) -> void => {
+    self.saved_x = self.x
+    self.saved_y = self.y
+  }
+
+  let restore_cursor = (self: mut) -> void => self.move_to(self.saved_x, self.saved_y)
+}
+
+/// A line of `cols` blank cells — a new array each call: lines are written in place, so
+/// two lines sharing one array would show each other's text.
+let blank_line = pure (cols: i64) -> []rune => [' '; cols]
+
+/// `line` made `cols` cells long: cut, or padded with blanks.
+let fit = pure (line: []rune, cols: i64) -> []rune => {
+  if line.len() >= cols { return line.slice(0, cols) }
+  var out = line.slice(0, line.len())
+  while out.len() < cols { out.push(' ') }
+  out
+}

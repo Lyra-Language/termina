@@ -1,0 +1,304 @@
+// sulafat — a terminal: the user's shell on a pseudo-terminal, its output drawn in a window
+// and the keyboard sent back to it.
+//
+//   build/sulafat              the login shell ($SHELL, else /bin/sh), in the home directory
+//
+// M0 of the plan in ../CLAUDE.md: a classic terminal, monochrome. The window closes when the
+// shell ends. ⌘V (Ctrl+Shift+V off macOS) pastes; the wheel scrolls back.
+
+import std.env.{ lookup }
+import bindings.pty.{ spawn, close, Pty }
+import bindings.sdl3.{ platform }
+import bindings.imgui.{
+  create_host,
+  begin_frame,
+  end_frame,
+  destroy_host,
+  set_window_title,
+  font_file,
+  push_font_float,
+  pop_font,
+  begin,
+  end,
+  get_main_viewport,
+  set_next_window_pos,
+  set_next_window_size,
+  get_io,
+  push_style_var_vec2,
+  pop_style_var,
+  get_content_region_avail,
+  get_cursor_screen_pos,
+  get_window_draw_list,
+  calc_text_size,
+  get_font_size,
+  request_text_input,
+  typed_text,
+  is_key_pressed,
+  is_window_focused,
+  get_clipboard_text,
+  dummy,
+  get_scroll_y,
+  get_scroll_max_y,
+  set_scroll_y,
+  Vec2,
+  Host,
+  Font,
+  WINDOW_FLAGS_NO_DECORATION,
+  WINDOW_FLAGS_NO_NAV_INPUTS,
+  WINDOW_FLAGS_NO_BACKGROUND,
+  WINDOW_FLAGS_NO_SAVED_SETTINGS,
+  STYLE_VAR_WINDOW_PADDING,
+  CONFIG_FLAGS_NAV_ENABLE_KEYBOARD,
+  KEY_A,
+  KEY_V,
+  KEY_TAB,
+  KEY_LEFT_ARROW,
+  KEY_RIGHT_ARROW,
+  KEY_UP_ARROW,
+  KEY_DOWN_ARROW,
+  KEY_PAGE_UP,
+  KEY_PAGE_DOWN,
+  KEY_HOME,
+  KEY_END,
+  KEY_INSERT,
+  KEY_DELETE,
+  KEY_BACKSPACE,
+  KEY_SPACE,
+  KEY_ENTER,
+  KEY_ESCAPE,
+}
+import vt.{ parser, screen, Parser, Screen }
+
+let main = () -> void => {
+  let Some(host) = create_host("Sulafat", 960, 600, 0) else { return }
+  // The keyboard is the shell's: ImGui's own navigation would take the arrows and Tab.
+  let io = get_io()
+  io.set_config_flags(io.config_flags() & ~CONFIG_FLAGS_NAV_ENABLE_KEYBOARD)
+  let font = load_font(host)
+  let shell = lookup("SHELL") ?? "/bin/sh"
+  let Some(pty) = spawn([shell, "-l"], 80, 24, lookup("HOME"), [
+    "TERM=xterm-256color",
+    "COLORTERM=truecolor",
+    "TERM_PROGRAM=Sulafat",
+  ]) else {
+    destroy_host(host)
+    return
+  }
+  var parse = parser()
+  var shown = screen(80, 24)
+  var title = ""
+  var running = true
+  while running && begin_frame(host) {
+    let (alive, got_output) = drain(pty, parse, shown)
+    running = alive
+    if shown.title != title {
+      title = shown.title
+      set_window_title(host, if title == "" { "Sulafat" } else { title })
+    }
+    draw(pty, shown, font, got_output)
+    end_frame(host, BACKGROUND.0, BACKGROUND.1, BACKGROUND.2)
+  }
+  close(pty)
+  destroy_host(host)
+}
+
+/// The window's colour behind the text, and the text's.
+const BACKGROUND: (f32, f32, f32) = (0.094, 0.098, 0.118)
+const FOREGROUND: u32 = 0xFFE6E1DC
+const CURSOR: u32 = 0xB0E6E1DC
+
+/// Points between the window's edge and the grid.
+const PADDING: f32 = 10.0
+
+/// The text's size in points, and the line's height as a multiple of it.
+const FONT_SIZE: f32 = 14.0
+const LINE_SPACING: f32 = 1.2
+
+/// The run of characters a cell's width is measured over.
+const MEASURE: string = "MMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMM"
+
+/// Reads per frame at most — a megabyte — so that a program writing without end (`yes`)
+/// cannot stop the window drawing.
+const READS_PER_FRAME: i64 = 16
+
+/// The first monospaced font found among the system's, or ImGui's own (which is one).
+let load_font = (host: Host) -> Maybe<Font> => {
+  let candidates = [
+    "/System/Library/Fonts/SFNSMono.ttf",
+    "/System/Library/Fonts/Menlo.ttc",
+    "/usr/share/fonts/truetype/dejavu/DejaVuSansMono.ttf",
+    "/usr/share/fonts/TTF/DejaVuSansMono.ttf",
+    "/usr/share/fonts/dejavu-sans-mono-fonts/DejaVuSansMono.ttf",
+  ]
+  for path in candidates {
+    match font_file(host, path, FONT_SIZE) {
+      Some(f) => return Some(f),
+      None => {},
+    }
+  }
+  None
+}
+
+/// What the shell has written since the last frame, carried out on `shown`. Answers whether
+/// the shell is still there, and whether anything arrived.
+let drain = (pty: Pty, parse: mut Parser, shown: mut Screen) -> (bool, bool) => {
+  var got = false
+  for _ in 0..<READS_PER_FRAME {
+    match pty.read() {
+      None => return (false, got),
+      Some(bytes) => {
+        if bytes.len() == 0 { return (true, got) }
+        shown.apply(parse.feed(bytes))
+        got = true
+      },
+    }
+  }
+  (true, got)
+}
+
+/// The terminal's window: the grid filling the main window, the scrollback above it, the
+/// cursor, and — while it has the keyboard — the keys sent to the shell.
+let draw = (pty: Pty, shown: mut Screen, font: Maybe<Font>, got_output: bool) -> void => {
+  let viewport = get_main_viewport()
+  set_next_window_pos(viewport.work_pos())
+  set_next_window_size(viewport.work_size())
+  push_style_var_vec2(STYLE_VAR_WINDOW_PADDING, Vec2 { x: PADDING, y: PADDING })
+  let flags = WINDOW_FLAGS_NO_DECORATION | WINDOW_FLAGS_NO_NAV_INPUTS |
+    WINDOW_FLAGS_NO_BACKGROUND | WINDOW_FLAGS_NO_SAVED_SETTINGS
+  let _ = begin("terminal", flags)
+  pop_style_var()
+  match font {
+    Some(f) => push_font_float(f, FONT_SIZE),
+    None => {},
+  }
+  // A cell is one advance wide, measured over a long run: ImGui rounds a measured width up
+  // to a whole pixel, which over one character overstates the advance by up to a pixel and
+  // put the cursor cells to the right of the text it follows.
+  let cell = Vec2 {
+    x: calc_text_size(MEASURE).x / f32(MEASURE.len()),
+    y: f32((get_font_size() * LINE_SPACING).round()),
+  }
+  let text_dy = f32(((cell.y - get_font_size()) / 2.0).floor())
+
+  // The grid is as many whole cells as the window holds.
+  let avail = get_content_region_avail()
+  let cols = (avail.x / cell.x).floor().max(2)
+  let rows = (avail.y / cell.y).floor().max(1)
+  if cols != shown.cols || rows != shown.rows {
+    shown.resize(cols, rows)
+    let _ = pty.resize(cols, rows)
+  }
+
+  // Following the output: the view was at the bottom before this frame's scroll.
+  let at_bottom = get_scroll_y() >= get_scroll_max_y() - 1.0
+  let origin = get_cursor_screen_pos()
+  let total = shown.scrollback_len() + shown.rows
+  let top = (get_scroll_y() / cell.y).floor().clamp(0, total)
+  let bottom = (top + rows + 1).min(total)
+  let list = get_window_draw_list()
+  for i in top..<bottom {
+    let text = text_of(shown.line(i))
+    if text != "" {
+      list.add_text(
+        Vec2 { x: origin.x, y: origin.y + f32(i) * cell.y + text_dy },
+        FOREGROUND,
+        text
+      )
+    }
+  }
+  let cursor = Vec2 {
+    x: origin.x + f32(shown.x) * cell.x,
+    y: origin.y + f32(shown.scrollback_len() + shown.y) * cell.y,
+  }
+  list.add_rect_filled(
+    cursor,
+    Vec2 { x: cursor.x + cell.x, y: cursor.y + cell.y },
+    CURSOR
+  )
+  dummy(Vec2 { x: f32(cols) * cell.x, y: f32(total) * cell.y })
+
+  var typed = false
+  if is_window_focused() {
+    request_text_input(cursor, cell.y)
+    typed = send_keys(pty)
+  }
+  if typed || (got_output && at_bottom) { set_scroll_y(f32(total) * cell.y) }
+  match font {
+    Some(_) => pop_font(),
+    None => {},
+  }
+  end()
+}
+
+/// This frame's keys and typed text, sent to the shell as a terminal sends them. Whether
+/// anything was sent.
+let send_keys = (pty: Pty) -> bool => {
+  let io = get_io()
+  let mac = platform() == "macOS"
+  let ctrl = io.key_ctrl()
+  // A shortcut of the terminal's own: ⌘ on a Mac, Ctrl+Shift elsewhere.
+  let command = if mac { io.key_super() } else { ctrl && io.key_shift() }
+  var out = ""
+  if command {
+    if is_key_pressed(KEY_V) { out = get_clipboard_text() }
+  } else if ctrl {
+    // Ctrl+A … Ctrl+Z are the control characters 1 … 26; Ctrl+Space is NUL.
+    for k in 0..<26 {
+      if is_key_pressed(KEY_A + i32(k)) { out = "${out}${rune(k + 1)}" }
+    }
+    if is_key_pressed(KEY_SPACE) { let _ = pty.write_bytes([0]) }
+  } else {
+    out = typed_text()
+  }
+  let named = [
+    (KEY_ENTER, "\r"),
+    (KEY_BACKSPACE, "\x7f"),
+    (KEY_TAB, if io.key_shift() { "\e[Z" } else { "\t" }),
+    (KEY_ESCAPE, "\e"),
+    (KEY_UP_ARROW, "\e[A"),
+    (KEY_DOWN_ARROW, "\e[B"),
+    (KEY_RIGHT_ARROW, "\e[C"),
+    (KEY_LEFT_ARROW, "\e[D"),
+    (KEY_HOME, "\e[H"),
+    (KEY_END, "\e[F"),
+    (KEY_INSERT, "\e[2~"),
+    (KEY_DELETE, "\e[3~"),
+    (KEY_PAGE_UP, "\e[5~"),
+    (KEY_PAGE_DOWN, "\e[6~"),
+  ]
+  if !command {
+    for (key, bytes) in named {
+      if is_key_pressed(key) { out = "${out}${bytes}" }
+    }
+  }
+  if out == "" { return false }
+  let _ = pty.write(out)
+  true
+}
+
+/// A line's text, its trailing blanks left off.
+let text_of = (line: []rune) -> string => {
+  var n = line.len()
+  while n > 0 && line[n - 1] == ' ' { n -= 1 }
+  var bytes: []u8 = []
+  for i in 0..<n { push_rune(bytes, i64(line[i])) }
+  bytes.decode_utf8()
+}
+
+/// The UTF-8 encoding of code point `c`, pushed onto `bytes`.
+let push_rune = (bytes: mut []u8, c: i64) -> void => {
+  if c < 0x80 { bytes.push(u8(c)) }
+  else if c < 0x800 {
+    bytes.push(u8(0xC0 | (c >> 6)))
+    bytes.push(u8(0x80 | (c & 0x3F)))
+  } else if c < 0x10000 {
+    bytes.push(u8(0xE0 | (c >> 12)))
+    bytes.push(u8(0x80 | ((c >> 6) & 0x3F)))
+    bytes.push(u8(0x80 | (c & 0x3F)))
+  } else {
+    bytes.push(u8(0xF0 | (c >> 18)))
+    bytes.push(u8(0x80 | ((c >> 12) & 0x3F)))
+    bytes.push(u8(0x80 | ((c >> 6) & 0x3F)))
+    bytes.push(u8(0x80 | (c & 0x3F)))
+  }
+}
