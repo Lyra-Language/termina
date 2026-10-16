@@ -1,0 +1,497 @@
+module editor
+//! The command line's editor: text edited as in a text editor rather than a shell's line
+//! editor — several lines, a selection, motions by character, word and line, undo — and
+//! nothing else. It knows no keys, no mouse and no window (`../ui/command_line.lyra` turns
+//! those into these calls), so every behaviour is tested on text alone (`../vttest.lyra`).
+//!
+//! **Positions are rune offsets** into the text, 0 to its length: a position is *between*
+//! runes, as a caret is. The selection is the runes between the anchor and the cursor; with
+//! no selection the two are equal.
+//!
+//! **Edits build new arrays.** An undo snapshot holds the text it saw, and arrays share
+//! their buffer, so writing a rune in place would rewrite history too.
+
+/// The text being edited, the caret, the selection and the history of edits.
+pub struct Editor {
+  text: []rune,
+  cursor: i64,
+  /// The selection's other end; equal to `cursor` when nothing is selected.
+  anchor: i64,
+  /// The column vertical motion keeps returning to, or -1: moving down through a short
+  /// line and on to a long one lands in the column the motion started from.
+  goal: i64,
+  undo_stack: []Snapshot,
+  redo_stack: []Snapshot,
+  /// What the last edit was, so that a run of typing is undone as one.
+  last: EditKind,
+}
+
+/// The text and selection before an edit.
+struct Snapshot {
+  text: []rune,
+  cursor: i64,
+  anchor: i64,
+}
+
+data EditKind = Moved | Typed | DeletedRune | Deleted | Other
+
+/// How the text is laid out, for the motions and hit tests that depend on it: its first row
+/// begins `first` columns in (after the prompt), and a row is `cols` wide — a longer one
+/// wraps.
+pub struct Wrap {
+  first: i64,
+  cols: i64,
+}
+
+/// An empty editor.
+pub let editor = pure () -> Editor => Editor {
+  text: [],
+  cursor: 0,
+  anchor: 0,
+  goal: -1,
+  undo_stack: [],
+  redo_stack: [],
+  last: Moved,
+}
+
+/// Undo snapshots kept at most.
+const UNDO_LIMIT: i64 = 200
+
+impl Editor {
+  // ── Reading ──────────────────────────────────────────────────────────────
+
+  /// The text.
+  pub let content = pure (self) -> string => text_of(self.text)
+
+  pub let is_empty = pure (self) -> bool => self.text.len() == 0
+
+  pub let has_selection = pure (self) -> bool => self.cursor != self.anchor
+
+  /// The selection as `(start, end)`, start first.
+  pub let selection = pure (self) -> (i64, i64) =>
+    (self.cursor.min(self.anchor), self.cursor.max(self.anchor))
+
+  /// The selected text, `""` when there is none.
+  pub let selected_text = pure (self) -> string => {
+    let (a, b) = self.selection()
+    text_of(self.text.slice(a, b))
+  }
+
+  // ── Editing ──────────────────────────────────────────────────────────────
+
+  /// Type `s` at the caret, over the selection. A run of typing undoes as one, broken where
+  /// a word ends (a space typed after a letter), as a Mac's text fields do.
+  pub let type_text = (self: mut, s: string) -> void => {
+    if s == "" { return }
+    let runes = s.to_runes()
+    let joins = match self.last {
+      Typed => !self.has_selection() && !(is_space(runes[0]) && self.cursor > 0 && !is_space(self.text[self.cursor - 1])),
+      _ => false,
+    }
+    if !joins { self.save() }
+    self.replace_selection(runes)
+    self.last = Typed
+  }
+
+  /// Insert `s` as one edit — a paste, a history entry. Line ends become `\n`.
+  pub let paste = (self: mut, s: string) -> void => {
+    let clean = s.replace("\r\n", "\n").replace("\r", "\n")
+    self.save()
+    self.replace_selection(clean.to_runes())
+    self.last = Other
+  }
+
+  /// A new line at the caret.
+  pub let newline = (self: mut) -> void => self.paste("\n")
+
+  /// Replace everything with `s`, the caret at its end — a history entry recalled.
+  pub let set_content = (self: mut, s: string) -> void => {
+    self.save()
+    self.text = s.to_runes()
+    self.cursor = self.text.len()
+    self.anchor = self.cursor
+    self.goal = -1
+    self.last = Other
+  }
+
+  /// Delete the selection, or the rune before the caret.
+  pub let backspace = (self: mut) -> void => {
+    if self.has_selection() { self.delete_selection() } else { self.delete_to(
+      self.cursor - 1,
+      true
+    ) }
+  }
+
+  /// Delete the selection, or the rune after the caret.
+  pub let delete_forward = (self: mut) -> void => {
+    if self.has_selection() { self.delete_selection() } else { self.delete_to(
+      self.cursor + 1,
+      true
+    ) }
+  }
+
+  /// Delete the selection, or back to the start of the word before the caret.
+  pub let delete_word_back = (self: mut) -> void => {
+    if self.has_selection() { self.delete_selection() } else { self.delete_to(
+      word_left_of(self.text, self.cursor),
+      false
+    ) }
+  }
+
+  /// Delete the selection, or on to the end of the word after the caret.
+  pub let delete_word_forward = (self: mut) -> void => {
+    if self.has_selection() { self.delete_selection() } else { self.delete_to(
+      word_right_of(self.text, self.cursor),
+      false
+    ) }
+  }
+
+  /// Delete back to the start of the caret's line (or, at it, the line break before).
+  pub let delete_to_line_start = (self: mut) -> void => {
+    if self.has_selection() { return self.delete_selection() }
+    let start = line_start_of(self.text, self.cursor)
+    self.delete_to(if start == self.cursor { self.cursor - 1 } else { start }, false)
+  }
+
+  /// Delete on to the end of the caret's line (or, at it, the line break after).
+  pub let delete_to_line_end = (self: mut) -> void => {
+    if self.has_selection() { return self.delete_selection() }
+    let end = line_end_of(self.text, self.cursor)
+    self.delete_to(if end == self.cursor { self.cursor + 1 } else { end }, false)
+  }
+
+  /// Delete the selection and answer its text — a cut. `""` with no selection.
+  pub let cut = (self: mut) -> string => {
+    let s = self.selected_text()
+    if s != "" { self.delete_selection() }
+    s
+  }
+
+  /// Empty the editor (undoably).
+  pub let clear = (self: mut) -> void => {
+    if self.is_empty() { return }
+    self.set_content("")
+  }
+
+  /// Undo the last edit; whether there was one.
+  pub let undo = (self: mut) -> bool => {
+    if self.undo_stack.len() == 0 { return false }
+    let s = self.undo_stack[self.undo_stack.len() - 1]
+    self.undo_stack = self.undo_stack.slice(0, self.undo_stack.len() - 1)
+    self.redo_stack.push(self.snapshot())
+    self.restore(s)
+    true
+  }
+
+  /// Redo the last edit undone; whether there was one.
+  pub let redo = (self: mut) -> bool => {
+    if self.redo_stack.len() == 0 { return false }
+    let s = self.redo_stack[self.redo_stack.len() - 1]
+    self.redo_stack = self.redo_stack.slice(0, self.redo_stack.len() - 1)
+    self.undo_stack.push(self.snapshot())
+    self.restore(s)
+    true
+  }
+
+  // ── Moving ───────────────────────────────────────────────────────────────
+  //
+  // Each motion moves the caret; with `select` the anchor stays, extending the selection,
+  // and without it a selection collapses — to its start or end for a move left or right by
+  // a rune, as editors do, rather than moving one rune from the caret.
+
+  pub let left = (self: mut, select: bool) -> void => {
+    if self.has_selection() && !select { self.move_to(self.selection().0, false) }
+    else { self.move_to(self.cursor - 1, select) }
+  }
+
+  pub let right = (self: mut, select: bool) -> void => {
+    if self.has_selection() && !select { self.move_to(self.selection().1, false) }
+    else { self.move_to(self.cursor + 1, select) }
+  }
+
+  pub let word_left = (self: mut, select: bool) -> void =>
+    self.move_to(word_left_of(self.text, self.cursor), select)
+
+  pub let word_right = (self: mut, select: bool) -> void =>
+    self.move_to(word_right_of(self.text, self.cursor), select)
+
+  pub let line_start = (self: mut, select: bool) -> void =>
+    self.move_to(line_start_of(self.text, self.cursor), select)
+
+  pub let line_end = (self: mut, select: bool) -> void =>
+    self.move_to(line_end_of(self.text, self.cursor), select)
+
+  pub let text_start = (self: mut, select: bool) -> void => self.move_to(0, select)
+
+  pub let text_end = (self: mut, select: bool) -> void =>
+    self.move_to(self.text.len(), select)
+
+  /// Up (`rows` < 0) or down a row as laid out by `wrap`, keeping to the goal column.
+  /// `false`, and nothing moves, when there is no row there — the caller's cue for history.
+  pub let vertical = (self: mut, wrap: Wrap, rows: i64, select: bool) -> bool => {
+    let (row, col) = position(self.text, wrap, self.cursor)
+    let target = row + rows
+    if target < 0 || target > row_count(self.text, wrap) - 1 { return false }
+    let goal = if self.goal >= 0 { self.goal } else { col }
+    self.move_to(index_at(self.text, wrap, target, goal), select)
+    self.goal = goal
+    true
+  }
+
+  pub let select_all = (self: mut) -> void => {
+    self.anchor = 0
+    self.cursor = self.text.len()
+    self.goal = -1
+    self.last = Moved
+  }
+
+  /// Put the caret at `i` — a click; with `select`, extend the selection there (a
+  /// shift-click, or a drag).
+  pub let click = (self: mut, i: i64, select: bool) -> void => self.move_to(i, select)
+
+  /// Select the word containing the rune at `i` — a double-click on it. A word is a run of
+  /// letters, digits and `_`; a double-click on punctuation or on spaces selects that run
+  /// instead, as editors do. Past the end, the last rune's run.
+  pub let select_word = (self: mut, i: i64) -> void => {
+    let (a, b) = word_at(self.text, i)
+    self.anchor = a
+    self.cursor = b
+    self.goal = -1
+    self.last = Moved
+  }
+
+  /// Select from the word `(start, end)` a double-click chose to the word at `i`, whole
+  /// words at both ends — a drag after a double-click.
+  pub let select_words = (self: mut, start: i64, end: i64, i: i64) -> void => {
+    let (a, b) = word_at(self.text, i)
+    if a < start {
+      self.anchor = end
+      self.cursor = a
+    } else {
+      self.anchor = start
+      self.cursor = b.max(end)
+    }
+    self.goal = -1
+    self.last = Moved
+  }
+
+  /// Select the line containing position `i` — a triple-click.
+  pub let select_line = (self: mut, i: i64) -> void => {
+    let p = i.clamp(0, self.text.len())
+    self.anchor = line_start_of(self.text, p)
+    self.cursor = line_end_of(self.text, p)
+    self.goal = -1
+    self.last = Moved
+  }
+
+  // ── Private ──────────────────────────────────────────────────────────────
+
+  let move_to = (self: mut, i: i64, select: bool) -> void => {
+    self.cursor = i.clamp(0, self.text.len())
+    if !select { self.anchor = self.cursor }
+    self.goal = -1
+    self.last = Moved
+  }
+
+  let replace_selection = (self: mut, runes: []rune) -> void => {
+    let (a, b) = self.selection()
+    self.text = [
+      ...self.text.slice(0, a),
+      ...runes,
+      ...self.text.slice(b, self.text.len())
+    ]
+    self.cursor = a + runes.len()
+    self.anchor = self.cursor
+    self.goal = -1
+  }
+
+  let delete_selection = (self: mut) -> void => {
+    self.save()
+    self.replace_selection([])
+    self.last = Deleted
+  }
+
+  // Delete between the caret and `to` (either side of it, clamped). A run of rune deletes
+  // (`joins`) undoes as one, as a run of typing does; a word or line deleted is an edit of
+  // its own.
+  let delete_to = (self: mut, to: i64, joins: bool) -> void => {
+    let t = to.clamp(0, self.text.len())
+    if t == self.cursor { return }
+    let after_rune_delete = match self.last {
+      DeletedRune => true,
+      _ => false,
+    }
+    if !(joins && after_rune_delete) { self.save() }
+    self.anchor = t
+    self.replace_selection([])
+    self.last = if joins { DeletedRune } else { Deleted }
+  }
+
+  let snapshot = pure (self) -> Snapshot => Snapshot {
+    text: self.text,
+    cursor: self.cursor,
+    anchor: self.anchor,
+  }
+
+  // Record the state before an edit; a new edit forgets what was undone.
+  let save = (self: mut) -> void => {
+    self.undo_stack.push(self.snapshot())
+    if self.undo_stack.len() > UNDO_LIMIT { self.undo_stack = self.undo_stack.slice(
+      1,
+      self.undo_stack.len()
+    ) }
+    self.redo_stack = []
+  }
+
+  let restore = (self: mut, s: Snapshot) -> void => {
+    self.text = s.text
+    self.cursor = s.cursor
+    self.anchor = s.anchor
+    self.goal = -1
+    self.last = Other
+  }
+}
+
+// ── Layout ───────────────────────────────────────────────────────────────────
+
+/// The row and column of position `i` laid out by `wrap`: a `\n` starts a row, and so does a
+/// row that is full. Row 0 begins at `wrap.first`.
+pub let position = pure (text: []rune, wrap: Wrap, i: i64) -> (i64, i64) => {
+  var row = 0
+  var col = wrap.first
+  for k in 0..<i.min(text.len()) {
+    if text[k] == '\n' {
+      row += 1
+      col = 0
+    } else {
+      col += 1
+      if col >= wrap.cols {
+        row += 1
+        col = 0
+      }
+    }
+  }
+  (row, col)
+}
+
+/// How many rows the text takes.
+pub let row_count = pure (text: []rune, wrap: Wrap) -> i64 =>
+  position(text, wrap, text.len()).0 + 1
+
+/// The position nearest the left of row `row`, column `col` — where a click there puts the
+/// caret: the row's end when the column is past it, the start or end of the text when the
+/// row is above or below it.
+pub let index_at = pure (text: []rune, wrap: Wrap, row: i64, col: i64) -> i64 => {
+  if row < 0 { return 0 }
+  var best = -1
+  var r = 0
+  var c = wrap.first
+  for k in 0..<=text.len() {
+    if r == row && c <= col { best = k }
+    if r > row { return if best < 0 { k - 1 } else { best } }
+    if k < text.len() {
+      if text[k] == '\n' {
+        r += 1
+        c = 0
+      } else {
+        c += 1
+        if c >= wrap.cols {
+          r += 1
+          c = 0
+        }
+      }
+    }
+  }
+  if best < 0 { text.len() } else { best }
+}
+
+/// The rune in the cell at row `row`, column `col`, or the nearest position when no rune is
+/// there (past a line's end): what a double-click on that cell is on.
+pub let rune_at = pure (text: []rune, wrap: Wrap, row: i64, col: i64) -> i64 => {
+  var r = 0
+  var c = wrap.first
+  for k in 0..<text.len() {
+    if r == row && c == col && text[k] != '\n' { return k }
+    if text[k] == '\n' {
+      r += 1
+      c = 0
+    } else {
+      c += 1
+      if c >= wrap.cols {
+        r += 1
+        c = 0
+      }
+    }
+  }
+  index_at(text, wrap, row, col)
+}
+
+// ── Words and lines ──────────────────────────────────────────────────────────
+
+/// A rune's class for word motions: a space, part of a word, or punctuation.
+data Class = Space | Word | Punct
+
+let class_of = pure (r: rune) -> Class =>
+  if is_space(r) { Space }
+  else if r.is_ascii_alpha() || r.is_ascii_digit() || r == '_' || i64(r) >= 0x80 { Word }
+  else { Punct }
+
+let is_space = pure (r: rune) -> bool => r == ' ' || r == '\t' || r == '\n'
+
+let same_class = pure (a: Class, b: Class) -> bool => match (a, b) {
+  (Space, Space) => true,
+  (Word, Word) => true,
+  (Punct, Punct) => true,
+  _ => false,
+}
+
+/// The run of one class around the rune at `i`: the word double-clicking it selects. A line
+/// break is a run of its own, so a double-click never selects across lines.
+let word_at = pure (text: []rune, i: i64) -> (i64, i64) => {
+  if text.len() == 0 { return (0, 0) }
+  let k = i.clamp(0, text.len() - 1)
+  if text[k] == '\n' { return (k, k) }
+  let c = class_of(text[k])
+  var a = k
+  while a > 0 && text[a - 1] != '\n' && same_class(class_of(text[a - 1]), c) { a -= 1 }
+  var b = k + 1
+  while b < text.len() && text[b] != '\n' && same_class(class_of(text[b]), c) { b += 1 }
+  (a, b)
+}
+
+/// Where a word motion left from `i` stops: back over spaces and punctuation, then over the
+/// word before them — the start of that word. A line break counts as a space.
+let word_left_of = pure (text: []rune, i: i64) -> i64 => {
+  var k = i
+  while k > 0 && !is_word(text[k - 1]) { k -= 1 }
+  while k > 0 && is_word(text[k - 1]) { k -= 1 }
+  k
+}
+
+/// Where a word motion right from `i` stops: the end of the next word.
+let word_right_of = pure (text: []rune, i: i64) -> i64 => {
+  var k = i
+  while k < text.len() && !is_word(text[k]) { k += 1 }
+  while k < text.len() && is_word(text[k]) { k += 1 }
+  k
+}
+
+let is_word = pure (r: rune) -> bool => match class_of(r) {
+  Word => true,
+  _ => false,
+}
+
+let line_start_of = pure (text: []rune, i: i64) -> i64 => {
+  var k = i
+  while k > 0 && text[k - 1] != '\n' { k -= 1 }
+  k
+}
+
+let line_end_of = pure (text: []rune, i: i64) -> i64 => {
+  var k = i
+  while k < text.len() && text[k] != '\n' { k += 1 }
+  k
+}
+
+/// Runes as a string, built once.
+pub let text_of = pure (runes: []rune) -> string => [r in runes | "${r}"].join("")

@@ -1,0 +1,143 @@
+module shell
+//! Shell integration: what a shell is given at start so that it tells the terminal where its
+//! prompts and commands are. With it, Sulafat knows when the shell is waiting for a command —
+//! and the command line is Sulafat's editor — and when a program is running and the keys are
+//! that program's.
+//!
+//! The shell reports through OSC 133 (FinalTerm's marks, as iTerm2, kitty and WezTerm use
+//! them): `A` a prompt begins, `B` the prompt has been drawn and input begins, `C` a command
+//! is running and its output begins, `D;status` it ended. OSC 7 reports the directory.
+//!
+//! **zsh** is reached through `ZDOTDIR`: zsh reads `$ZDOTDIR/.zshenv` first, and Sulafat's
+//! puts the user's `ZDOTDIR` back, reads their `.zshenv`, and adds two hooks — so their
+//! `.zprofile`, `.zshrc` and `.zlogin` are read from their own directory as always. Other
+//! shells run without integration: a classic terminal, keys to the shell.
+
+import std.env.{ lookup }
+import std.io.{ write_file, create_dir_all, read_bytes }
+import std.path
+
+/// The environment that gives `shell` (a path, as `$SHELL` holds it) Sulafat's integration,
+/// as `NAME=value` entries for `bindings.pty`'s `spawn`; empty for a shell it has none for,
+/// or when its files could not be written.
+pub let integration_env = (shell: string) -> []string => {
+  if shell.base() != "zsh" { return [] }
+  let Some(dir) = zsh_dir() else { return [] }
+  [
+    "ZDOTDIR=${dir}",
+    "SULAFAT_ORIG_ZDOTDIR=${lookup("ZDOTDIR") ?? ""}",
+    "SULAFAT_SHELL_INTEGRATION=1",
+  ]
+}
+
+/// What the shell is sent to run `command`. Through bracketed paste when the shell has it
+/// on (zsh does at its prompt), so that a command of several lines reaches the shell's line
+/// editor as one, its line breaks literal; then Return. The paste's own end marker cannot
+/// be in it: ESC is dropped.
+pub let submission = (command: string, bracketed: bool) -> string => {
+  if command == "" { return "\r" }
+  if bracketed { "\e[200~${command.replace("\e", "")}\e[201~\r" } else { "${command}\r" }
+}
+
+/// The shell's saved history, oldest first, for the command line's ↑: zsh's `$HISTFILE`, or
+/// `.zsh_history` in `ZDOTDIR` or the home directory. At most [HISTORY_LIMIT] entries, a
+/// command repeated in a row kept once; empty for another shell or no file.
+pub let load_history = (shell: string) -> []string => {
+  if shell.base() != "zsh" { return [] }
+  let home = lookup("ZDOTDIR") ?? lookup("HOME") ?? ""
+  let file = lookup("HISTFILE") ?? home.join(".zsh_history")
+  let Some(bytes) = read_bytes(file) else { return [] }
+  parse_zsh_history(bytes)
+}
+
+/// History entries kept at most.
+pub const HISTORY_LIMIT: i64 = 2000
+
+/// zsh's history file as entries. Each is a line, extended (`: <time>:<duration>;<command>`)
+/// or plain; a command of several lines has each line but the last ending in `\`. zsh
+/// writes it *metafied*: a byte zsh treats specially is written as 0x83 then the byte with
+/// bit 5 flipped, which is undone before the bytes are read as UTF-8.
+pub let parse_zsh_history = pure (bytes: []u8) -> []string => {
+  var raw: []u8 = []
+  var i = 0
+  while i < bytes.len() {
+    if bytes[i] == 0x83 && i + 1 < bytes.len() {
+      raw.push(bytes[i + 1] ~ 32)
+      i += 2
+    } else {
+      raw.push(bytes[i])
+      i += 1
+    }
+  }
+  var out: []string = []
+  var pending = ""
+  for line in raw.decode_utf8().split("\n") {
+    if line.ends_with("\\") {
+      pending = "${pending}${line.slice(0, line.len() - 1)}\n"
+    } else {
+      let whole = strip_extended("${pending}${line}")
+      pending = ""
+      if whole != "" && (out.len() == 0 || out[out.len() - 1] != whole) { out.push(whole) }
+    }
+  }
+  if out.len() > HISTORY_LIMIT { out.slice(
+    out.len() - HISTORY_LIMIT,
+    out.len()
+  ) } else { out }
+}
+
+/// A history line without the extended format's `: <time>:<duration>;` in front.
+let strip_extended = pure (line: string) -> string => {
+  if !line.starts_with(": ") { return line }
+  match line.index(";") {
+    Some(k) => line.slice(k + 1, line.len()),
+    None => line,
+  }
+}
+
+/// The directory holding Sulafat's `.zshenv`, written there now (each start, so that a newer
+/// Sulafat's replaces an older one's): `$XDG_CACHE_HOME/sulafat/zsh`, else `~/.cache/…`.
+let zsh_dir = () -> Maybe<string> => {
+  let cache = match lookup("XDG_CACHE_HOME") {
+    Some(d) => if d == "" { "${lookup("HOME") ?? "/tmp"}/.cache" } else { d },
+    None => "${lookup("HOME") ?? "/tmp"}/.cache",
+  }
+  let dir = cache.join("sulafat").join("zsh")
+  if !create_dir_all(dir) { return None }
+  if !write_file(dir.join(".zshenv"), ZSHENV) { return None }
+  Some(dir)
+}
+
+/// zsh's integration. The `B` mark goes at the end of `PS1` rather than in a `zle-line-init`
+/// widget, because a widget runs before the prompt is drawn on some versions, and the mark
+/// must sit where input begins. Its precmd hook moves itself last, so that a theme that
+/// rebuilds `PS1` in its own hook (powerlevel10k, starship) has done so before the mark is
+/// added — from the second prompt on; the first may lack the mark under such a theme, and
+/// is then a classic prompt.
+const ZSHENV: string = ##`# Sulafat's shell integration, loaded through ZDOTDIR, which is put back first.
+# Written by Sulafat at each start; edits here are lost.
+if [[ -n "$SULAFAT_ORIG_ZDOTDIR" ]]; then ZDOTDIR="$SULAFAT_ORIG_ZDOTDIR"; else builtin unset ZDOTDIR; fi
+builtin unset SULAFAT_ORIG_ZDOTDIR
+[[ -f "${ZDOTDIR:-$HOME}/.zshenv" ]] && builtin source "${ZDOTDIR:-$HOME}/.zshenv"
+if [[ -o interactive ]]; then
+  builtin autoload -Uz add-zsh-hook
+  typeset -g _sulafat_ran=
+  _sulafat_precmd() {
+    local s=$?
+    [[ -n $_sulafat_ran ]] && builtin printf '\e]133;D;%s\a' $s
+    _sulafat_ran=
+    builtin printf '\e]7;file://%s%s\a' "${HOST}" "${PWD}"
+    builtin printf '\e]133;A\a'
+    if [[ ${precmd_functions[-1]} != _sulafat_precmd ]]; then
+      precmd_functions=(${precmd_functions:#_sulafat_precmd} _sulafat_precmd)
+    fi
+    [[ $PS1 == *$'\e]133;B\a'* ]] || PS1="${PS1}%{"$'\e]133;B\a'"%}"
+  }
+  _sulafat_preexec() {
+    _sulafat_ran=1
+    builtin printf '\e]133;C\a'
+  }
+  add-zsh-hook precmd _sulafat_precmd
+  add-zsh-hook preexec _sulafat_preexec
+fi
+`##

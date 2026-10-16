@@ -5,7 +5,23 @@
 //   build/vttest               every check; exits 1 naming each that failed
 
 import bindings.pty.{ spawn, close }
-import vt.{ parser, screen, Screen, Action, Print, Execute, Csi, Esc, Osc }
+import shell.{ integration_env, submission }
+import editor.{ editor, Editor, Wrap, position, index_at, rune_at }
+import vt.{
+  parser,
+  screen,
+  Screen,
+  Action,
+  Print,
+  Execute,
+  Csi,
+  Esc,
+  Osc,
+  PromptStart,
+  InputStart,
+  OutputStart,
+  CommandEnd,
+}
 
 let main = () -> u8 => {
   var failed = 0
@@ -13,6 +29,9 @@ let main = () -> u8 => {
   failed += check_screen()
   failed += check_pty()
   failed += check_typing()
+  failed += check_editor()
+  failed += check_marks()
+  failed += check_zsh()
   if failed == 0 {
     println("vttest: all passed")
     0
@@ -151,6 +170,194 @@ let check_typing = () -> i64 => {
   )
   failed
 }
+
+// The command line's editor, on text alone.
+let check_editor = () -> i64 => {
+  var failed = 0
+  var e = editor()
+  e.type_text("git commit -m msg")
+  e.word_left(false)
+  failed += check("word left", "${e.cursor}", "14")
+  e.word_left(false)
+  failed += check("word left stops at a word", "${e.cursor}", "12")
+  e.word_left(false)
+  failed += check("word left over punctuation", "${e.cursor}", "4")
+  e.text_end(false)
+  e.delete_word_back()
+  failed += check("delete word back", e.content(), "git commit -m ")
+  e.line_start(false)
+  e.word_right(true)
+  failed += check("select word right", e.selected_text(), "git")
+  e.type_text("jj")
+  failed += check("type over selection", e.content(), "jj commit -m ")
+
+  // Double-click selects the word under the pointer — not the run beside it.
+  var d = with_text("echo hello-world  next")
+  d.select_word(11)
+  failed += check("double-click a word", d.selected_text(), "world")
+  d.select_word(5)
+  failed += check("double-click its first letter", d.selected_text(), "hello")
+  d.select_word(9)
+  failed += check("double-click its last letter", d.selected_text(), "hello")
+  d.select_word(10)
+  failed += check("double-click punctuation", d.selected_text(), "-")
+  d.select_word(16)
+  failed += check("double-click spaces", d.selected_text(), "  ")
+  d.select_word(99)
+  failed += check("double-click past the end", d.selected_text(), "next")
+  var m = with_text("one\ntwo three")
+  m.select_word(4)
+  failed += check("double-click on a second line", m.selected_text(), "two")
+  m.select_word(3)
+  failed += check("double-click a line break", "${m.has_selection()}", "false")
+  var u = with_text("über_cool größe")
+  u.select_word(2)
+  failed += check("double-click non-ASCII", u.selected_text(), "über_cool")
+  var w = with_text("aa bb cc dd")
+  w.select_word(3)
+  w.select_words(3, 5, 7)
+  failed += check("drag by words, right", w.selected_text(), "bb cc")
+  w.select_words(3, 5, 0)
+  failed += check("drag by words, left", w.selected_text(), "aa bb")
+  var l = with_text("first\nsecond")
+  l.select_line(8)
+  failed += check("triple-click a line", l.selected_text(), "second")
+
+  // A double-click past a line's end is on that line's last rune.
+  let wrap = Wrap { first: 0, cols: 80 }
+  let runes = "ab cd\nef".to_runes()
+  failed += check("rune under a cell", "${rune_at(runes, wrap, 0, 3)}", "3")
+  failed += check("rune past a line's end", "${rune_at(runes, wrap, 0, 40)}", "5")
+
+  // Undo takes back a run of typing, split where a word ends.
+  var h = editor()
+  h.type_text("a")
+  h.type_text("b")
+  h.type_text(" ")
+  h.type_text("c")
+  let _ = h.undo()
+  failed += check("undo a word", h.content(), "ab")
+  let _ = h.undo()
+  failed += check("undo the first", h.content(), "")
+  let _ = h.redo()
+  failed += check("redo", h.content(), "ab")
+  h.text_end(false)
+  h.backspace()
+  h.backspace()
+  let _ = h.undo()
+  failed += check("undo deletes together", h.content(), "ab")
+
+  // Rows as laid out after a five-column prompt, ten columns wide.
+  let narrow = Wrap { first: 5, cols: 10 }
+  var v = with_text("abcdefghij")
+  failed += check("wrapped end", pos(position(v.text, narrow, 10)), "1,5")
+  failed += check(
+    "up a wrapped row",
+    "${v.vertical(narrow, -1, false)}:${v.cursor}",
+    "true:0"
+  )
+  failed += check("nothing above", "${v.vertical(narrow, -1, false)}", "false")
+  var g = with_text("ab\ncdef")
+  failed += check(
+    "up to a shorter line",
+    "${g.vertical(wrap, -1, false)}:${g.cursor}",
+    "true:2"
+  )
+  failed += check(
+    "back down to the goal column",
+    "${g.vertical(wrap, 1, false)}:${g.cursor}",
+    "true:7"
+  )
+  failed += check("click past a row's end", "${index_at(g.text, wrap, 0, 50)}", "2")
+  failed += check("click below the text", "${index_at(g.text, wrap, 9, 0)}", "7")
+
+  var p = editor()
+  p.paste("a\r\nb\rc")
+  failed += check("paste line ends", p.content(), "a\nb\nc")
+  p.select_all()
+  failed += check("cut", "${p.cut()}|${p.content()}", "a\nb\nc|")
+  failed
+}
+
+let pos = (p: (i64, i64)) -> string => "${p.0},${p.1}"
+
+let with_text = (s: string) -> Editor => {
+  var e = editor()
+  e.paste(s)
+  e
+}
+
+// zsh with Sulafat's integration: its marks arrive, and input begins after the prompt.
+let check_marks = () -> i64 => {
+  var p = parser()
+  var s = screen(40, 4)
+  s.apply(p.feed("\e]133;A\x07me ~ % \e]133;B\x07\e[?2004h\e]7;file://host/Users/me/a%20b\x07".encode_utf8()))
+  var failed = check("marks", "${describe_marks(s)}", "A B(0,7)")
+  failed += check("cwd", s.cwd, "/Users/me/a b")
+  failed += check("bracketed paste", "${s.bracketed_paste}", "true")
+  s.apply(p.feed("\e]133;C\x07out\r\n\e]133;D;3\x07".encode_utf8()))
+  failed += check("run and end", "${describe_marks(s)}", "C D(3)")
+  failed
+}
+
+// zsh with the integration, end to end: the prompt's mark arrives, a two-line command sent
+// as the command line sends it runs as one, and its end reports the last line's status.
+let check_zsh = () -> i64 => {
+  let env = ["TERM=xterm-256color", ...integration_env("/bin/zsh")]
+  if env.len() == 1 { return check("zsh integration", "not written", "written") }
+  let Some(pty) = spawn(["/bin/zsh", "-i"], 60, 10, None, env) else {
+    return check("spawn zsh", "failed", "spawned")
+  }
+  var p = parser()
+  var s = screen(60, 10)
+  var seen: []string = []
+  var sent = false
+  var at_prompt = false
+  var spins = 0
+  var done = false
+  while !done && spins < 3000000 {
+    // zsh draws the prompt (and its mark) a moment before it turns bracketed paste on; a
+    // person's Return comes long after both, and this waits for the second as they do.
+    if at_prompt && !sent && s.bracketed_paste {
+      let _ = pty.write(submission("echo one\necho two; false", s.bracketed_paste))
+      sent = true
+    }
+    match pty.read() {
+      None => { done = true },
+      Some(bytes) => {
+        if bytes.len() > 0 { s.apply(p.feed(bytes)) }
+        for m in s.take_marks() {
+          match m {
+            InputStart(_, _) => {
+              seen.push("B")
+              if sent { done = true } else { at_prompt = true }
+            },
+            OutputStart => seen.push("C"),
+            CommandEnd(status) => seen.push("D${status}"),
+            _ => {},
+          }
+        }
+        spins += 1
+      },
+    }
+  }
+  close(pty)
+  var output: []string = []
+  for i in 0..<(s.scrollback_len() + s.rows) {
+    let t = text(s.line(i)).trim()
+    if t == "one" || t == "two" { output.push(t) }
+  }
+  var failed = check("zsh marks", seen.join(" "), "B C D1 B")
+  failed += check("zsh ran both lines", output.join(","), "one,two")
+  failed
+}
+
+let describe_marks = (s: mut Screen) -> string => [m in s.take_marks() | match m {
+  PromptStart => "A",
+  InputStart(line, col) => "B(${line},${col})",
+  OutputStart => "C",
+  CommandEnd(status) => "D(${status})",
+}].join(" ")
 
 let check = (name: string, got: string, want: string) -> i64 => {
   if got == want { 0 } else {

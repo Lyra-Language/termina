@@ -33,7 +33,29 @@ pub struct Screen {
   saved_y: i64,
   /// The window title the program last set (OSC 0 or 2).
   title: string,
+  /// The directory the shell last reported (OSC 7), or `""`.
+  cwd: string,
+  /// What the shell's integration has reported since [Screen.take_marks] last asked.
+  marks: []Mark,
+  /// Lines dropped off the top of a full scrollback: what makes an [Screen.absolute] line
+  /// number stay the same line while the ring turns.
+  dropped: i64,
+  /// DEC private modes: bracketed paste (`?2004`) and the cursor shown (`?25`).
+  bracketed_paste: bool,
+  cursor_visible: bool,
 }
+
+/// Where a shell with Sulafat's integration is (OSC 133 — `shell/shell.lyra`).
+pub data Mark =
+  /// A prompt is being drawn (`A`).
+  PromptStart
+  /// The prompt is drawn, and the command typed begins at this absolute line and column
+  /// (`B`): where the command line's editor goes.
+  | InputStart(i64, i64)
+  /// The command is running; its output begins (`C`).
+  | OutputStart
+  /// The command ended, with this exit status (`D`), or -1 when none was reported.
+  | CommandEnd(i64)
 
 /// A blank screen `cols` × `rows`.
 pub let screen = pure (cols: i64, rows: i64) -> Screen => Screen {
@@ -50,6 +72,11 @@ pub let screen = pure (cols: i64, rows: i64) -> Screen => Screen {
   saved_x: 0,
   saved_y: 0,
   title: "",
+  cwd: "",
+  marks: [],
+  dropped: 0,
+  bracketed_paste: false,
+  cursor_visible: true,
 }
 
 /// The most lines kept above the screen.
@@ -68,6 +95,29 @@ impl Screen {
       }
     }
   }
+
+  /// The marks reported since the last call, oldest first; the list is emptied.
+  pub let take_marks = (self: mut) -> []Mark => {
+    let out = self.marks
+    self.marks = []
+    out
+  }
+
+  /// The absolute number of everything's line `i` ([line]'s numbering): it counts lines
+  /// from the first the screen ever had, so it names the same line however much has
+  /// scrolled since — until it leaves the scrollback, when [line_at] answers `None`.
+  pub let absolute = pure (self, i: i64) -> i64 => i + self.dropped
+
+  /// The line whose absolute number is `n`, as an index for [line]; `None` once it has left
+  /// the scrollback.
+  pub let line_at = pure (self, n: i64) -> Maybe<i64> => {
+    let i = n - self.dropped
+    if i < 0 || i >= self.scrollback.len() + self.rows { None } else { Some(i) }
+  }
+
+  /// The cursor's absolute line.
+  pub let cursor_line = pure (self) -> i64 =>
+    self.dropped + self.scrollback.len() + self.y
 
   /// How many lines there are above the screen.
   pub let scrollback_len = pure (self) -> i64 => self.scrollback.len()
@@ -132,6 +182,10 @@ impl Screen {
   }
 
   let csi = (self: mut, seq: CsiSequence) -> void => {
+    if seq.marker == "?" && seq.intermediates == "" && (seq.final == 'h' || seq.final == 'l') {
+      for mode in seq.params { self.set_private_mode(mode, seq.final == 'h') }
+      return
+    }
     if seq.marker != "" || seq.intermediates != "" { return }
     let f = seq.final
     let n = seq.param_or(0, 1)
@@ -179,10 +233,35 @@ impl Screen {
   }
 
   let osc = (self: mut, text: string) -> void => {
-    if text.starts_with("0;") || text.starts_with("2;") { self.title = text.slice(
-      2,
-      text.len()
-    ) }
+    if text.starts_with("0;") || text.starts_with("2;") {
+      self.title = text.slice(2, text.len())
+    } else if text.starts_with("7;") {
+      self.cwd = file_url_path(text.slice(2, text.len()))
+    } else if text.starts_with("133;") {
+      self.shell_mark(text.slice(4, text.len()))
+    }
+  }
+
+  // An OSC 133 mark. Input begins where the cursor is — on the next line when the prompt
+  // filled the last column and the wrap is still pending.
+  let shell_mark = (self: mut, mark: string) -> void => {
+    if mark.starts_with("A") { self.marks.push(PromptStart) }
+    else if mark.starts_with("B") {
+      if self.wrap_pending { self.marks.push(InputStart(self.cursor_line() + 1, 0)) }
+      else { self.marks.push(InputStart(self.cursor_line(), self.x)) }
+    } else if mark.starts_with("C") { self.marks.push(OutputStart) }
+    else if mark.starts_with("D") {
+      let status = if mark.starts_with("D;") { mark.slice(
+        2,
+        mark.len()
+      ).parse_i64() ?? -1 } else { -1 }
+      self.marks.push(CommandEnd(status))
+    }
+  }
+
+  let set_private_mode = (self: mut, mode: i64, on: bool) -> void => {
+    if mode == 2004 { self.bracketed_paste = on }
+    else if mode == 25 { self.cursor_visible = on }
   }
 
   let move_to = (self: mut, x: i64, y: i64) -> void => {
@@ -224,6 +303,7 @@ impl Screen {
     else {
       self.scrollback[self.scrollback_start] = line
       self.scrollback_start = (self.scrollback_start + 1) % SCROLLBACK
+      self.dropped += 1
     }
   }
 
@@ -319,3 +399,38 @@ let fit = pure (line: []rune, cols: i64) -> []rune => {
   while out.len() < cols { out.push(' ') }
   out
 }
+
+/// The path of a `file://host/path` URL (OSC 7's form), its `%XX` escapes decoded; `""`
+/// when it is not one.
+let file_url_path = pure (url: string) -> string => {
+  if !url.starts_with("file://") { return "" }
+  let rest = url.slice(7, url.len())
+  let Some(slash) = rest.index("/") else { return "" }
+  let raw = rest.slice(slash, rest.len()).encode_utf8()
+  var out: []u8 = []
+  var i = 0
+  while i < raw.len() {
+    if raw[i] == 0x25 && i + 2 < raw.len() {
+      match (hex_digit(raw[i + 1]), hex_digit(raw[i + 2])) {
+        (Some(hi), Some(lo)) => {
+          out.push(u8(hi * 16 + lo))
+          i += 3
+        },
+        _ => {
+          out.push(raw[i])
+          i += 1
+        },
+      }
+    } else {
+      out.push(raw[i])
+      i += 1
+    }
+  }
+  out.decode_utf8()
+}
+
+let hex_digit = pure (b: u8) -> Maybe<i64> =>
+  if b >= 0x30 && b <= 0x39 { Some(i64(b - 0x30)) }
+  else if b >= 0x61 && b <= 0x66 { Some(i64(b - 0x61) + 10) }
+  else if b >= 0x41 && b <= 0x46 { Some(i64(b - 0x41) + 10) }
+  else { None }

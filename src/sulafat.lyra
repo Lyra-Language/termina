@@ -3,8 +3,10 @@
 //
 //   build/sulafat              the login shell ($SHELL, else /bin/sh), in the home directory
 //
-// M0 of the plan in ../CLAUDE.md: a classic terminal, monochrome. The window closes when the
-// shell ends. ⌘V (Ctrl+Shift+V off macOS) pastes; the wheel scrolls back.
+// A classic terminal, monochrome so far, whose command line is an editor of its own while
+// zsh is at a prompt (its integration says when — shell/shell.lyra; the keys are in
+// ui/command_line.lyra). The window closes when the shell ends. ⌘V (Ctrl+Shift+V off macOS)
+// pastes; the wheel scrolls back.
 
 import std.env.{ lookup }
 import bindings.pty.{ spawn, close, Pty }
@@ -67,7 +69,10 @@ import bindings.imgui.{
   KEY_ENTER,
   KEY_ESCAPE,
 }
-import vt.{ parser, screen, Parser, Screen }
+import vt.{ parser, screen, Parser, Screen, InputStart }
+import shell.{ integration_env, load_history, submission }
+import ui.{ command_line, CommandLine, Place, Style, Submit, Send, push_rune }
+import editor.{ Wrap }
 
 let main = () -> void => {
   let Some(host) = create_host("Sulafat", 960, 600, 0) else { return }
@@ -76,11 +81,13 @@ let main = () -> void => {
   io.set_config_flags(io.config_flags() & ~CONFIG_FLAGS_NAV_ENABLE_KEYBOARD)
   let font = load_font(host)
   let shell = lookup("SHELL") ?? "/bin/sh"
-  let Some(pty) = spawn([shell, "-l"], 80, 24, lookup("HOME"), [
+  let env = [
     "TERM=xterm-256color",
     "COLORTERM=truecolor",
     "TERM_PROGRAM=Sulafat",
-  ]) else {
+    ...integration_env(shell),
+  ]
+  let Some(pty) = spawn([shell, "-l"], 80, 24, lookup("HOME"), env) else {
     destroy_host(host)
     return
   }
@@ -88,24 +95,46 @@ let main = () -> void => {
   var shown = screen(80, 24)
   var title = ""
   var running = true
+  var mode = Raw
+  var line = command_line(load_history(shell))
   while running && begin_frame(host) {
     let (alive, got_output) = drain(pty, parse, shown)
     running = alive
+    // The last mark says where the shell is: input begins there, or something else has.
+    for m in shown.take_marks() {
+      mode = match m {
+        InputStart(at, col) => AtPrompt(at, col),
+        _ => Raw,
+      }
+    }
     if shown.title != title {
       title = shown.title
       set_window_title(host, if title == "" { "Sulafat" } else { title })
     }
-    draw(pty, shown, font, got_output)
+    draw(pty, shown, font, got_output, mode, line)
     end_frame(host, BACKGROUND.0, BACKGROUND.1, BACKGROUND.2)
   }
   close(pty)
   destroy_host(host)
 }
 
+/// Where the shell is, as far as Sulafat can tell.
+data Mode =
+  /// A program is running, the shell is drawing its prompt, or it has no integration: the
+  /// keys go to it as typed.
+  Raw
+  /// At a prompt whose input begins at this absolute line and column: the command line
+  /// there is Sulafat's editor.
+  | AtPrompt(i64, i64)
+
 /// The window's colour behind the text, and the text's.
 const BACKGROUND: (f32, f32, f32) = (0.094, 0.098, 0.118)
 const FOREGROUND: u32 = 0xFFE6E1DC
 const CURSOR: u32 = 0xB0E6E1DC
+const CARET: u32 = 0xFFFFC66D
+const SELECTION: u32 = 0x66B07A3A
+/// The band behind the command line being edited.
+const INPUT_BAND: u32 = 0x10FFFFFF
 
 /// Points between the window's edge and the grid.
 const PADDING: f32 = 10.0
@@ -156,9 +185,17 @@ let drain = (pty: Pty, parse: mut Parser, shown: mut Screen) -> (bool, bool) => 
   (true, got)
 }
 
-/// The terminal's window: the grid filling the main window, the scrollback above it, the
-/// cursor, and — while it has the keyboard — the keys sent to the shell.
-let draw = (pty: Pty, shown: mut Screen, font: Maybe<Font>, got_output: bool) -> void => {
+/// The terminal's window: the grid filling the main window, the scrollback above it, and
+/// the cursor — or, at a prompt, the command line's editor where input begins. While the
+/// window has the keyboard, the keys go to the editor at a prompt and to the shell otherwise.
+let draw = (
+  pty: Pty,
+  shown: mut Screen,
+  font: Maybe<Font>,
+  got_output: bool,
+  mode: mut Mode,
+  line: mut CommandLine
+) -> void => {
   let viewport = get_main_viewport()
   set_next_window_pos(viewport.work_pos())
   set_next_window_size(viewport.work_size())
@@ -189,15 +226,51 @@ let draw = (pty: Pty, shown: mut Screen, font: Maybe<Font>, got_output: bool) ->
     let _ = pty.resize(cols, rows)
   }
 
+  // At a prompt still on the screen or in the scrollback: its line, and the layout of the
+  // command line after it.
+  let prompt = match mode {
+    AtPrompt(at, col) => match shown.line_at(at) {
+      Some(i) => Some((i, Wrap { first: col.min(cols - 1), cols: cols })),
+      None => None,
+    },
+    Raw => None,
+  }
+  let (input_line, input_rows) = match prompt {
+    Some((i, wrap)) => (i, line.rows(wrap)),
+    None => (-1, 0),
+  }
+
   // Following the output: the view was at the bottom before this frame's scroll.
   let at_bottom = get_scroll_y() >= get_scroll_max_y() - 1.0
   let origin = get_cursor_screen_pos()
-  let total = shown.scrollback_len() + shown.rows
+  let total = (shown.scrollback_len() + shown.rows).max(input_line + input_rows)
   let top = (get_scroll_y() / cell.y).floor().clamp(0, total)
-  let bottom = (top + rows + 1).min(total)
+  let bottom = (top + rows + 1).min(total).min(shown.scrollback_len() + shown.rows)
   let list = get_window_draw_list()
+  if input_line >= 0 {
+    let y = origin.y + f32(input_line) * cell.y
+    list.add_rect_filled(
+      Vec2 { x: origin.x - PADDING / 2.0, y: y },
+      Vec2 { x: origin.x + f32(cols) * cell.x + PADDING / 2.0, y: y + f32(input_rows) * cell.y },
+      INPUT_BAND,
+      4.0
+    )
+  }
   for i in top..<bottom {
-    let text = text_of(shown.line(i))
+    // The command line's rows are the editor's: of the prompt's line only the prompt is
+    // drawn, and the shell's empty input below it not at all.
+    let cells = shown.line(i)
+    let shown_cells = if i == input_line {
+      match prompt {
+        Some((_, wrap)) => cells.slice(0, wrap.first),
+        None => cells,
+      }
+    } else if i > input_line && i < input_line + input_rows {
+      []
+    } else {
+      cells
+    }
+    let text = text_of(shown_cells)
     if text != "" {
       list.add_text(
         Vec2 { x: origin.x, y: origin.y + f32(i) * cell.y + text_dy },
@@ -210,19 +283,50 @@ let draw = (pty: Pty, shown: mut Screen, font: Maybe<Font>, got_output: bool) ->
     x: origin.x + f32(shown.x) * cell.x,
     y: origin.y + f32(shown.scrollback_len() + shown.y) * cell.y,
   }
-  list.add_rect_filled(
-    cursor,
-    Vec2 { x: cursor.x + cell.x, y: cursor.y + cell.y },
-    CURSOR
-  )
   dummy(Vec2 { x: f32(cols) * cell.x, y: f32(total) * cell.y })
 
-  var typed = false
-  if is_window_focused() {
-    request_text_input(cursor, cell.y)
-    typed = send_keys(pty)
+  let focused = is_window_focused()
+  var follow = got_output && at_bottom
+  match prompt {
+    Some((i, wrap)) => {
+      let before = "${line.edit.cursor}:${line.edit.anchor}:${line.edit.content()}"
+      let place = Place {
+        origin: Vec2 { x: origin.x, y: origin.y + f32(i) * cell.y },
+        cell: cell,
+        text_dy: text_dy,
+        wrap: wrap,
+      }
+      let style = Style { text: FOREGROUND, caret: CARET, selection: SELECTION }
+      match line.update(place, list, style, focused) {
+        Submit(command) => {
+          let _ = pty.write(submission(command, shown.bracketed_paste))
+          line.submitted(command)
+          mode = Raw
+          follow = true
+        },
+        Send(bytes) => {
+          let _ = pty.write(bytes)
+        },
+        _ => {},
+      }
+      let after = "${line.edit.cursor}:${line.edit.anchor}:${line.edit.content()}"
+      if before != after { follow = true }
+    },
+    None => {
+      if shown.cursor_visible {
+        list.add_rect_filled(
+          cursor,
+          Vec2 { x: cursor.x + cell.x, y: cursor.y + cell.y },
+          CURSOR
+        )
+      }
+      if focused {
+        request_text_input(cursor, cell.y)
+        if send_keys(pty) { follow = true }
+      }
+    },
   }
-  if typed || (got_output && at_bottom) { set_scroll_y(f32(total) * cell.y) }
+  if follow { set_scroll_y(f32(total) * cell.y) }
   match font {
     Some(_) => pop_font(),
     None => {},
@@ -283,22 +387,4 @@ let text_of = (line: []rune) -> string => {
   var bytes: []u8 = []
   for i in 0..<n { push_rune(bytes, i64(line[i])) }
   bytes.decode_utf8()
-}
-
-/// The UTF-8 encoding of code point `c`, pushed onto `bytes`.
-let push_rune = (bytes: mut []u8, c: i64) -> void => {
-  if c < 0x80 { bytes.push(u8(c)) }
-  else if c < 0x800 {
-    bytes.push(u8(0xC0 | (c >> 6)))
-    bytes.push(u8(0x80 | (c & 0x3F)))
-  } else if c < 0x10000 {
-    bytes.push(u8(0xE0 | (c >> 12)))
-    bytes.push(u8(0x80 | ((c >> 6) & 0x3F)))
-    bytes.push(u8(0x80 | (c & 0x3F)))
-  } else {
-    bytes.push(u8(0xF0 | (c >> 18)))
-    bytes.push(u8(0x80 | ((c >> 12) & 0x3F)))
-    bytes.push(u8(0x80 | ((c >> 6) & 0x3F)))
-    bytes.push(u8(0x80 | (c & 0x3F)))
-  }
 }

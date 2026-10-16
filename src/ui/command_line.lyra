@@ -1,0 +1,352 @@
+module ui
+//! The command line: the [Editor] drawn where the shell's prompt ends, and the keyboard and
+//! mouse turned into its edits. Shown only while the shell is at a prompt (its integration
+//! said so — `../shell/shell.lyra`); otherwise the keys are the running program's.
+//!
+//! **Keys, on a Mac** — ←/→ a rune, ⌥←/→ a word, ⌘←/→ the line's start and end, ↑/↓ a row
+//! (from the first or last row: the history), ⌘↑/↓ the text's start and end; ⇧ with any of
+//! them selects. ⌫, ⌥⌫ a word, ⌘⌫ to the line's start; ⌦ and ⌥⌦ forward. ⌘A, ⌘C, ⌘X, ⌘V,
+//! ⌘Z, ⇧⌘Z. Return runs the command; ⇧Return (or ⌥Return) starts a new line. The shell's
+//! own Ctrl keys still work: Ctrl+A/E the line's ends, Ctrl+K and Ctrl+U delete to them,
+//! Ctrl+W a word back, Ctrl+C clears, Ctrl+D on an empty line ends the shell, Ctrl+L clears
+//! the screen. **Elsewhere** Ctrl takes ⌥'s place for words, and Ctrl+Shift ⌘'s.
+//!
+//! **Mouse** — a click puts the caret; a drag, or a shift-click, selects; a double-click
+//! selects the word under the pointer and a drag after it extends by whole words; a
+//! triple-click selects the line.
+
+import bindings.sdl3.{ platform }
+import bindings.imgui.{
+  get_io,
+  typed_text,
+  is_key_pressed,
+  is_mouse_clicked,
+  is_mouse_down,
+  get_mouse_clicked_count,
+  get_mouse_pos,
+  is_window_hovered,
+  set_mouse_cursor,
+  get_clipboard_text,
+  set_clipboard_text,
+  request_text_input,
+  Vec2,
+  DrawList,
+  MOUSE_CURSOR_TEXT_INPUT,
+  KEY_A,
+  KEY_C,
+  KEY_D,
+  KEY_E,
+  KEY_K,
+  KEY_L,
+  KEY_U,
+  KEY_V,
+  KEY_W,
+  KEY_X,
+  KEY_Z,
+  KEY_LEFT_ARROW,
+  KEY_RIGHT_ARROW,
+  KEY_UP_ARROW,
+  KEY_DOWN_ARROW,
+  KEY_HOME,
+  KEY_END,
+  KEY_DELETE,
+  KEY_BACKSPACE,
+  KEY_ENTER,
+  KEY_KEYPAD_ENTER,
+  KEY_ESCAPE,
+}
+import editor.{ editor, Editor, Wrap, position, row_count, index_at, rune_at }
+
+/// The command line's state between frames: the editor, the history being walked, and a
+/// drag under way.
+pub struct CommandLine {
+  edit: Editor,
+  history: []string,
+  /// The history entry shown, or `history.len()` when none is (the user's own text).
+  browsing: i64,
+  /// The user's own text, kept while ↑ walks the history so that ↓ past the newest entry
+  /// brings it back.
+  draft: string,
+  dragging: bool,
+  /// The word a double-click selected, while the drag after it extends by words.
+  word_drag: Maybe<(i64, i64)>,
+}
+
+/// What the command line asks of the terminal this frame.
+pub data Outcome =
+  Nothing
+  /// Run this command.
+  | Submit string
+  /// Send these bytes to the shell as typed (Ctrl+D, Ctrl+L).
+  | Send string
+
+/// An empty command line over `history` (oldest first).
+pub let command_line = (history: []string) -> CommandLine => CommandLine {
+  edit: editor(),
+  history: history,
+  browsing: history.len(),
+  draft: "",
+  dragging: false,
+  word_drag: None,
+}
+
+/// How the command line looks.
+pub struct Style {
+  text: u32,
+  caret: u32,
+  selection: u32,
+}
+
+/// Where the command line is: the screen position of column 0 of its first row, a cell's
+/// size, and the layout.
+pub struct Place {
+  origin: Vec2,
+  cell: Vec2,
+  /// How far down its cell a line's text is drawn.
+  text_dy: f32,
+  wrap: Wrap,
+}
+
+impl CommandLine {
+  /// How many rows the command line takes laid out by `wrap`.
+  pub let rows = pure (self, wrap: Wrap) -> i64 => row_count(self.edit.text, wrap)
+
+  /// Run a command: remember it, and start an empty line.
+  pub let submitted = (self: mut, command: string) -> void => {
+    if command.trim() != "" && (self.history.len() == 0 || self.history[self.history.len() - 1] != command) {
+      self.history.push(command)
+    }
+    self.edit = editor()
+    self.browsing = self.history.len()
+    self.draft = ""
+    self.dragging = false
+    self.word_drag = None
+  }
+
+  /// This frame's mouse and keys (when `focused`), then the command line drawn into `list`.
+  pub let update = (
+    self: mut,
+    at: Place,
+    list: DrawList,
+    style: Style,
+    focused: bool
+  ) -> Outcome => {
+    self.mouse(at)
+    var outcome = Nothing
+    if focused {
+      outcome = self.keys(at.wrap)
+      let (row, col) = position(self.edit.text, at.wrap, self.edit.cursor)
+      request_text_input(cell_pos(at, row, col), at.cell.y)
+    }
+    self.draw(at, list, style, focused)
+    outcome
+  }
+
+  // ── Mouse ────────────────────────────────────────────────────────────────
+
+  let mouse = (self: mut, at: Place) -> void => {
+    let m = get_mouse_pos()
+    // ImGui's pointer is at -FLT_MAX when it is nowhere (outside the window, or no mouse
+    // yet), which no cell arithmetic survives — floor traps on it.
+    if m.x < -1.0e30 || m.y < -1.0e30 {
+      if !is_mouse_down(0) { self.dragging = false }
+      return
+    }
+    let row = ((m.y - at.origin.y) / at.cell.y).floor()
+    let over = is_window_hovered() && row >= 0
+    if over { set_mouse_cursor(MOUSE_CURSOR_TEXT_INPUT) }
+    let fx = (m.x - at.origin.x) / at.cell.x
+    // A caret goes to the nearer edge of a cell; a word is the rune in the cell.
+    let caret = index_at(self.edit.text, at.wrap, row, (fx + 0.5).floor())
+    let under = rune_at(self.edit.text, at.wrap, row, fx.floor())
+    if over && is_mouse_clicked(0) {
+      let clicks = get_mouse_clicked_count(0)
+      if clicks == 2 {
+        self.edit.select_word(under)
+        self.word_drag = Some(self.edit.selection())
+        self.dragging = true
+      } else if clicks >= 3 {
+        self.edit.select_line(caret)
+        self.word_drag = None
+        self.dragging = false
+      } else {
+        self.edit.click(caret, get_io().key_shift())
+        self.word_drag = None
+        self.dragging = true
+      }
+    } else if self.dragging && is_mouse_down(0) {
+      match self.word_drag {
+        Some((a, b)) => self.edit.select_words(a, b, under),
+        None => self.edit.click(caret, true),
+      }
+    } else if !is_mouse_down(0) {
+      self.dragging = false
+    }
+  }
+
+  // ── Keys ─────────────────────────────────────────────────────────────────
+
+  let keys = (self: mut, wrap: Wrap) -> Outcome => {
+    let io = get_io()
+    let mac = platform() == "macOS"
+    let shift = io.key_shift()
+    let ctrl = io.key_ctrl()
+    // The editor's shortcuts (copy, paste, undo): ⌘ on a Mac, Ctrl+Shift elsewhere.
+    let command = if mac { io.key_super() } else { ctrl && shift }
+    // A word at a time: ⌥ on a Mac, Ctrl elsewhere.
+    let by_word = if mac { io.key_alt() } else { ctrl }
+    if !ctrl && !(mac && command) {
+      let typed = typed_text()
+      if typed != "" { self.type_text(typed) }
+    }
+    if is_key_pressed(KEY_ENTER) || is_key_pressed(KEY_KEYPAD_ENTER) {
+      if shift || io.key_alt() { self.edit.newline() }
+      else { return Submit(self.edit.content()) }
+    }
+    if command {
+      if is_key_pressed(KEY_A) { self.edit.select_all() }
+      if is_key_pressed(KEY_C) && self.edit.has_selection() { set_clipboard_text(self.edit.selected_text()) }
+      if is_key_pressed(KEY_X) && self.edit.has_selection() { set_clipboard_text(self.edit.cut()) }
+      if is_key_pressed(KEY_V) { self.edit.paste(get_clipboard_text()) }
+      if is_key_pressed(KEY_Z) {
+        let _ = if shift { self.edit.redo() } else { self.edit.undo() }
+      }
+    } else if ctrl {
+      // The shell's line-editing keys, as zsh's emacs mode has them.
+      if is_key_pressed(KEY_A) { self.edit.line_start(shift) }
+      if is_key_pressed(KEY_E) { self.edit.line_end(shift) }
+      if is_key_pressed(KEY_K) { self.edit.delete_to_line_end() }
+      if is_key_pressed(KEY_U) { self.edit.delete_to_line_start() }
+      if is_key_pressed(KEY_W) { self.edit.delete_word_back() }
+      if is_key_pressed(KEY_C) { self.edit.clear() }
+      if is_key_pressed(KEY_L) { return Send("\x0c") }
+      if is_key_pressed(KEY_D) {
+        if self.edit.is_empty() { return Send("\x04") }
+        self.edit.delete_forward()
+      }
+      if !mac && is_key_pressed(KEY_Z) { let _ = self.edit.undo() }
+    }
+    let line_mod = mac && io.key_super()
+    if is_key_pressed(KEY_LEFT_ARROW) {
+      if line_mod { self.edit.line_start(shift) }
+      else if by_word { self.edit.word_left(shift) }
+      else { self.edit.left(shift) }
+    }
+    if is_key_pressed(KEY_RIGHT_ARROW) {
+      if line_mod { self.edit.line_end(shift) }
+      else if by_word { self.edit.word_right(shift) }
+      else { self.edit.right(shift) }
+    }
+    if is_key_pressed(KEY_UP_ARROW) {
+      if line_mod { self.edit.text_start(shift) }
+      else if !self.edit.vertical(wrap, -1, shift) && !shift { self.older() }
+    }
+    if is_key_pressed(KEY_DOWN_ARROW) {
+      if line_mod { self.edit.text_end(shift) }
+      else if !self.edit.vertical(wrap, 1, shift) && !shift { self.newer() }
+    }
+    if is_key_pressed(KEY_HOME) { self.edit.line_start(shift) }
+    if is_key_pressed(KEY_END) { self.edit.line_end(shift) }
+    if is_key_pressed(KEY_BACKSPACE) {
+      if line_mod { self.edit.delete_to_line_start() }
+      else if by_word { self.edit.delete_word_back() }
+      else { self.edit.backspace() }
+    }
+    if is_key_pressed(KEY_DELETE) {
+      if by_word { self.edit.delete_word_forward() } else { self.edit.delete_forward() }
+    }
+    if is_key_pressed(KEY_ESCAPE) { self.edit.click(self.edit.cursor, false) }
+    Nothing
+  }
+
+  let type_text = (self: mut, s: string) -> void => self.edit.type_text(s)
+
+  // ↑ from the first row: the entry before the one shown, the user's own text kept.
+  let older = (self: mut) -> void => {
+    if self.browsing == 0 { return }
+    if self.browsing == self.history.len() { self.draft = self.edit.content() }
+    self.browsing -= 1
+    self.edit.set_content(self.history[self.browsing])
+  }
+
+  // ↓ from the last row: the entry after, then the user's own text again.
+  let newer = (self: mut) -> void => {
+    if self.browsing >= self.history.len() { return }
+    self.browsing += 1
+    self.edit.set_content(
+      if self.browsing == self.history.len() { self.draft } else { self.history[self.browsing] }
+    )
+  }
+
+  // ── Drawing ──────────────────────────────────────────────────────────────
+
+  let draw = (self, at: Place, list: DrawList, style: Style, focused: bool) -> void => {
+    let text = self.edit.text
+    let (a, b) = self.edit.selection()
+    var row = 0
+    var col = at.wrap.first
+    var run: []u8 = []
+    var run_col = col
+    for k in 0..<=text.len() {
+      let ends_row = k == text.len() || text[k] == '\n'
+      if k >= a && k < b {
+        // A selected line break shows as a sliver, so the selection visibly spans it.
+        let w = if ends_row { at.cell.x * 0.5 } else { at.cell.x }
+        let p = cell_pos(at, row, col)
+        list.add_rect_filled(p, Vec2 { x: p.x + w, y: p.y + at.cell.y }, style.selection)
+      }
+      if ends_row || col + 1 >= at.wrap.cols {
+        if !ends_row { push_rune(run, i64(text[k])) }
+        flush(list, at, row, run_col, run, style.text)
+        run = []
+        row += 1
+        col = 0
+        run_col = 0
+      } else {
+        push_rune(run, i64(text[k]))
+        col += 1
+      }
+    }
+    if focused {
+      let (r, c) = position(text, at.wrap, self.edit.cursor)
+      let p = cell_pos(at, r, c)
+      list.add_rect_filled(p, Vec2 { x: p.x + 2.0, y: p.y + at.cell.y }, style.caret)
+    }
+  }
+}
+
+let cell_pos = (at: Place, row: i64, col: i64) -> Vec2 => Vec2 {
+  x: at.origin.x + f32(col) * at.cell.x,
+  y: at.origin.y + f32(row) * at.cell.y,
+}
+
+let flush = (
+  list: DrawList,
+  at: Place,
+  row: i64,
+  col: i64,
+  run: []u8,
+  color: u32
+) -> void => {
+  if run.len() == 0 { return }
+  let p = cell_pos(at, row, col)
+  list.add_text(Vec2 { x: p.x, y: p.y + at.text_dy }, color, run.decode_utf8())
+}
+
+/// The UTF-8 encoding of code point `c`, pushed onto `bytes`.
+pub let push_rune = (bytes: mut []u8, c: i64) -> void => {
+  if c < 0x80 { bytes.push(u8(c)) }
+  else if c < 0x800 {
+    bytes.push(u8(0xC0 | (c >> 6)))
+    bytes.push(u8(0x80 | (c & 0x3F)))
+  } else if c < 0x10000 {
+    bytes.push(u8(0xE0 | (c >> 12)))
+    bytes.push(u8(0x80 | ((c >> 6) & 0x3F)))
+    bytes.push(u8(0x80 | (c & 0x3F)))
+  } else {
+    bytes.push(u8(0xF0 | (c >> 18)))
+    bytes.push(u8(0x80 | ((c >> 12) & 0x3F)))
+    bytes.push(u8(0x80 | ((c >> 6) & 0x3F)))
+    bytes.push(u8(0x80 | (c & 0x3F)))
+  }
+}

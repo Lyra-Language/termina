@@ -1,0 +1,264 @@
+// uitest — the command line's widget on a headless ImGui host: typed text, keys and the
+// mouse injected as a person's would arrive (a click is a press and a release, a frame
+// each), and the editor checked afterwards — double-clicking a word among them.
+//
+//   build/uitest               every check; exits 1 naming each that failed
+
+import bindings.sdl3.{ platform }
+import bindings.imgui.{
+  create_headless_host,
+  begin_frame,
+  end_frame,
+  destroy_host,
+  begin,
+  end,
+  get_io,
+  get_window_draw_list,
+  set_next_window_pos,
+  set_next_window_size,
+  Host,
+  Vec2,
+  WINDOW_FLAGS_NO_DECORATION,
+  KEY_LEFT_ARROW,
+  KEY_UP_ARROW,
+  KEY_DOWN_ARROW,
+  KEY_HOME,
+  KEY_END,
+  KEY_BACKSPACE,
+  KEY_ENTER,
+  KEY_A,
+  KEY_Z,
+  MOD_SHIFT,
+  MOD_SUPER,
+  MOD_CTRL,
+  MOD_ALT,
+}
+import ui.{ command_line, CommandLine, Place, Style, Outcome, Nothing, Submit, Send }
+import editor.{ Wrap }
+
+let main = () -> u8 => {
+  let Some(host) = create_headless_host(800, 400, 0) else {
+    println("uitest: no headless host")
+    return 1
+  }
+  var failed = 0
+  failed += check_typing_and_words(host)
+  failed += check_keys(host)
+  failed += check_history(host)
+  destroy_host(host)
+  if failed == 0 {
+    println("uitest: all passed")
+    0
+  } else {
+    println("uitest: ${failed} failed")
+    1
+  }
+}
+
+/// The command line as the checks lay it out: after a five-column prompt, forty columns
+/// wide, ten by twenty points a cell, from (100, 100).
+const PLACE: Place = Place {
+  origin: Vec2 { x: 100.0, y: 100.0 },
+  cell: Vec2 { x: 10.0, y: 20.0 },
+  text_dy: 2.0,
+  wrap: Wrap { first: 5, cols: 40 },
+}
+
+let check_typing_and_words = (host: Host) -> i64 => {
+  var line = command_line([])
+  var failed = 0
+  type_text(host, line, "echo hello-world  next")
+  failed += check("typed", line.edit.content(), "echo hello-world  next")
+
+  // Double-clicking a word selects it, wherever in the word the pointer is.
+  double_click(host, line, 0, 5 + 7)
+  failed += check("double-click inside a word", line.edit.selected_text(), "hello")
+  double_click(host, line, 0, 5 + 11)
+  failed += check("double-click the next word", line.edit.selected_text(), "world")
+  double_click(host, line, 0, 5 + 10)
+  failed += check("double-click punctuation", line.edit.selected_text(), "-")
+  double_click(host, line, 0, 5 + 30)
+  failed += check("double-click past the end", line.edit.selected_text(), "next")
+
+  // A single click after it puts the caret and drops the selection.
+  click(host, line, 0, 5 + 2)
+  failed += check("click", "${line.edit.cursor}:${line.edit.has_selection()}", "2:false")
+
+  // A drag after a double-click extends by whole words.
+  double_click_and_drag(host, line, 5 + 12, 5 + 1)
+  failed += check("double-click and drag", line.edit.selected_text(), "echo hello-world")
+
+  // A plain drag selects rune by rune.
+  drag(host, line, 0, 5 + 5, 5 + 8)
+  failed += check("drag", line.edit.selected_text(), "hel")
+
+  // Three clicks select the line.
+  triple_click(host, line, 0, 5 + 3)
+  failed += check("triple-click", line.edit.selected_text(), "echo hello-world  next")
+
+  // Typing replaces the selection.
+  type_text(host, line, "ls")
+  failed += check("type over a selection", line.edit.content(), "ls")
+  failed
+}
+
+let check_keys = (host: Host) -> i64 => {
+  var line = command_line([])
+  var failed = 0
+  type_text(host, line, "git status")
+  press(host, line, [MOD_SHIFT], KEY_LEFT_ARROW)
+  press(host, line, [MOD_SHIFT], KEY_LEFT_ARROW)
+  failed += check("shift-left selects", line.edit.selected_text(), "us")
+  press(host, line, [], KEY_BACKSPACE)
+  failed += check("backspace the selection", line.edit.content(), "git stat")
+  let word = if platform() == "macOS" { MOD_ALT } else { MOD_CTRL }
+  press(host, line, [word], KEY_BACKSPACE)
+  failed += check("delete a word back", line.edit.content(), "git ")
+  let command = if platform() == "macOS" { [MOD_SUPER] } else { [MOD_CTRL, MOD_SHIFT] }
+  press(host, line, command, KEY_Z)
+  failed += check("undo", line.edit.content(), "git stat")
+  press(host, line, command, KEY_A)
+  failed += check("select all", line.edit.selected_text(), "git stat")
+  press(host, line, [], KEY_HOME)
+  type_text(host, line, "x")
+  failed += check("home, then type", line.edit.content(), "xgit stat")
+  press(host, line, [], KEY_END)
+  press(host, line, [MOD_SHIFT], KEY_ENTER)
+  type_text(host, line, "two")
+  failed += check("shift-return: a new line", line.edit.content(), "xgit stat\ntwo")
+  let outcome = press(host, line, [], KEY_ENTER)
+  failed += check("return runs it", describe(outcome), "submit xgit stat\ntwo")
+  failed
+}
+
+let check_history = (host: Host) -> i64 => {
+  var line = command_line(["make", "make test"])
+  var failed = 0
+  type_text(host, line, "dra")
+  press(host, line, [], KEY_UP_ARROW)
+  failed += check("up: the newest entry", line.edit.content(), "make test")
+  press(host, line, [], KEY_UP_ARROW)
+  press(host, line, [], KEY_UP_ARROW)
+  failed += check("up past the oldest stays", line.edit.content(), "make")
+  press(host, line, [], KEY_DOWN_ARROW)
+  press(host, line, [], KEY_DOWN_ARROW)
+  failed += check("down: back to the draft", line.edit.content(), "dra")
+  line.submitted("echo new")
+  press(host, line, [], KEY_UP_ARROW)
+  failed += check("a run command joins the history", line.edit.content(), "echo new")
+  failed
+}
+
+// ── Driving ──────────────────────────────────────────────────────────────────
+
+/// One frame with the command line in a window covering the host, focused.
+let frame = (host: Host, line: mut CommandLine) -> Outcome => {
+  if !begin_frame(host) { return Nothing }
+  set_next_window_pos(Vec2 { x: 0.0, y: 0.0 })
+  set_next_window_size(Vec2 { x: 800.0, y: 400.0 })
+  let _ = begin("checks", WINDOW_FLAGS_NO_DECORATION)
+  let style = Style { text: 0xFFFFFFFF, caret: 0xFFFFFFFF, selection: 0x80808080 }
+  let outcome = line.update(PLACE, get_window_draw_list(), style, true)
+  end()
+  end_frame(host, 0.0, 0.0, 0.0)
+  outcome
+}
+
+let type_text = (host: Host, line: mut CommandLine, s: string) -> void => {
+  get_io().add_input_characters_utf8(s)
+  let _ = frame(host, line)
+}
+
+/// Press and release `key` with the modifiers `mods` held; what the press frame answered.
+let press = (host: Host, line: mut CommandLine, mods: []i32, key: i32) -> Outcome => {
+  let io = get_io()
+  for m in mods { io.add_key_event(m, true) }
+  io.add_key_event(key, true)
+  let outcome = frame(host, line)
+  io.add_key_event(key, false)
+  for m in mods { io.add_key_event(m, false) }
+  let _ = frame(host, line)
+  outcome
+}
+
+/// The middle of the cell at `row`, `col`.
+let at = (row: i64, col: i64) -> Vec2 => Vec2 {
+  x: PLACE.origin.x + (f32(col) + 0.5) * PLACE.cell.x,
+  y: PLACE.origin.y + (f32(row) + 0.5) * PLACE.cell.y,
+}
+
+let move_to = (host: Host, line: mut CommandLine, p: Vec2) -> void => {
+  get_io().add_mouse_pos_event(p.x, p.y)
+  let _ = frame(host, line)
+}
+
+let button = (host: Host, line: mut CommandLine, down: bool) -> void => {
+  get_io().add_mouse_button_event(0, down)
+  let _ = frame(host, line)
+}
+
+let clicks = (host: Host, line: mut CommandLine, row: i64, col: i64, n: i64) -> void => {
+  // In the cell's left quarter: a caret goes to the nearer of its edges, and a word is the
+  // rune in it, so this is unambiguous for both.
+  let p = at(row, col)
+  move_to(host, line, Vec2 { x: p.x - PLACE.cell.x * 0.25, y: p.y })
+  for _ in 0..<n {
+    button(host, line, true)
+    button(host, line, false)
+  }
+  // Let ImGui's double-click time pass, so the next click starts a count of its own.
+  for _ in 0..<30 { let _ = frame(host, line) }
+}
+
+let click = (host: Host, line: mut CommandLine, row: i64, col: i64) -> void =>
+  clicks(host, line, row, col, 1)
+
+let double_click = (host: Host, line: mut CommandLine, row: i64, col: i64) -> void =>
+  clicks(host, line, row, col, 2)
+
+let triple_click = (host: Host, line: mut CommandLine, row: i64, col: i64) -> void =>
+  clicks(host, line, row, col, 3)
+
+let drag = (host: Host, line: mut CommandLine, row: i64, from: i64, to: i64) -> void => {
+  move_to(
+    host,
+    line,
+    Vec2 { x: PLACE.origin.x + f32(from) * PLACE.cell.x, y: at(row, 0).y }
+  )
+  button(host, line, true)
+  move_to(
+    host,
+    line,
+    Vec2 { x: PLACE.origin.x + f32(to) * PLACE.cell.x, y: at(row, 0).y }
+  )
+  button(host, line, false)
+  for _ in 0..<30 { let _ = frame(host, line) }
+}
+
+let double_click_and_drag = (
+  host: Host,
+  line: mut CommandLine,
+  from: i64,
+  to: i64
+) -> void => {
+  move_to(host, line, at(0, from))
+  button(host, line, true)
+  button(host, line, false)
+  button(host, line, true)
+  move_to(host, line, at(0, to))
+  button(host, line, false)
+  for _ in 0..<30 { let _ = frame(host, line) }
+}
+
+let describe = (o: Outcome) -> string => match o {
+  Nothing => "nothing",
+  Submit(c) => "submit ${c}",
+  Send(b) => "send ${b}",
+}
+
+let check = (name: string, got: string, want: string) -> i64 => {
+  if got == want { 0 } else {
+    println("FAIL ${name}: got «${got}», want «${want}»")
+    1
+  }
+}
