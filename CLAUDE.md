@@ -145,4 +145,4 @@ shell ⇄ bindings.pty ──bytes──▶ vt.Parser ──[]Action──▶ vt
    clipboard, history from `~/.zsh_history`, Tab completion (zsh's own, in a menu). Next:
    syntax colouring, Ctrl+R history search, bash's integration.
 
-Open work is in `todo.md`.
+Open work is in `todo.md`; finished work in `done.md`.
