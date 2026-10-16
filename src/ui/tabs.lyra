@@ -8,7 +8,7 @@ module ui
 //! keys.
 
 import bindings.sdl3.{ platform }
-import bindings.menubar.{ menu, item, separator, window_menu, install, COMMAND }
+import bindings.menubar.{ menu, item, separator, window_menu, install, COMMAND, SHIFT }
 import bindings.imgui.{
   is_key_pressed,
   KEY_T,
@@ -78,7 +78,8 @@ pub let menu_command = pure (tag: i32, active: i64, count: i64) -> TabCommand =>
   else { NoCommand }
 
 /// The menu bar, on a Mac: Shell's tab items — New Tab ⌘T, Close Tab ⌘W, Show Previous and
-/// Next Tab ⌘⇧[ and ⌘⇧] — and the standard Window menu. Whether there is one (`false`
+/// Next Tab ⌘⇧[ and ⌘⇧] — Edit's (Undo, Redo, Cut, Copy, Paste, Select All, read by
+/// [edit_action_of]), and the standard Window menu. Whether there is one (`false`
 /// elsewhere, where the tab keys are read as keys).
 pub let install_menus = () -> bool => {
   menu("Shell")
@@ -89,6 +90,39 @@ pub let install_menus = () -> bool => {
   item("Show Next Tab", "}", COMMAND, MENU_NEXT_TAB)
   separator()
   item("Close Tab", "w", COMMAND, MENU_CLOSE_TAB)
+  menu("Edit")
+  item("Undo", "z", COMMAND, MENU_UNDO)
+  item("Redo", "z", COMMAND | SHIFT, MENU_REDO)
+  separator()
+  item("Cut", "x", COMMAND, MENU_CUT)
+  item("Copy", "c", COMMAND, MENU_COPY)
+  item("Paste", "v", COMMAND, MENU_PASTE)
+  item("Select All", "a", COMMAND, MENU_SELECT_ALL)
   window_menu()
   install("Sulafat")
+}
+
+/// The Edit menu's items, by tag.
+pub const MENU_UNDO: i32 = 10
+pub const MENU_REDO: i32 = 11
+pub const MENU_CUT: i32 = 12
+pub const MENU_COPY: i32 = 13
+pub const MENU_PASTE: i32 = 14
+pub const MENU_SELECT_ALL: i32 = 15
+
+/// The Edit menu's items and what each does, in the menu's order — for greying out those
+/// that would do nothing.
+pub const EDIT_ITEMS: [](i32, EditAction) = [
+  (MENU_UNDO, Undo),
+  (MENU_REDO, Redo),
+  (MENU_CUT, Cut),
+  (MENU_COPY, Copy),
+  (MENU_PASTE, Paste),
+  (MENU_SELECT_ALL, SelectAll),
+]
+
+/// What an Edit menu item does, by its tag; `None` for another menu's.
+pub let edit_action_of = pure (tag: i32) -> Maybe<EditAction> => {
+  for (t, a) in EDIT_ITEMS { if t == tag { return Some(a) } }
+  None
 }

@@ -61,6 +61,12 @@ import ui.{
   abgr,
   typed_lines,
   tab_command,
+  Undo,
+  Redo,
+  Cut,
+  Copy,
+  Paste,
+  SelectAll,
   menu_command,
   MENU_NEW_TAB,
   MENU_CLOSE_TAB,
@@ -72,7 +78,7 @@ import ui.{
   CloseTab,
   ShowTab
 }
-import session.{ open_session, close_session, tab_title, directory }
+import session.{ open_session, close_session, tab_title, directory, pasted }
 import vt.{ Cell, Completion, DEFAULT, INVERSE, DIM, HIDDEN, indexed, rgb }
 
 let main = () -> u8 => {
@@ -90,6 +96,7 @@ let main = () -> u8 => {
   failed += check_typed_ahead()
   failed += check_tab_keys(host)
   failed += check_sessions()
+  failed += check_edit_actions(host)
   destroy_host(host)
   if failed == 0 {
     println("uitest: all passed")
@@ -391,6 +398,60 @@ let check_mac_modifiers = (host: Host) -> i64 => {
   let sent = press(host, line, [MOD_CTRL], KEY_L)
   failed += check("ctrl-l: to the shell", describe(sent), "send \x0c")
   io.set_config_mac_osx_behaviors(false)
+  failed
+}
+
+// The Edit menu's actions on the command line, what each greys out, and its keys left to
+// the menu when there is one.
+let check_edit_actions = (host: Host) -> i64 => {
+  var failed = 0
+  var line = command_line([])
+  failed += check(
+    "nothing to undo, cut or select",
+    "${line.can(Undo)} ${line.can(Cut)} ${line.can(SelectAll)} ${line.can(Paste)}",
+    "false false false true"
+  )
+  type_text(host, line, "echo hello")
+  failed += check(
+    "something to undo and select",
+    "${line.can(Undo)} ${line.can(SelectAll)} ${line.can(Copy)}",
+    "true true false"
+  )
+  line.edit_action(SelectAll)
+  failed += check("select all", line.edit.selected_text(), "echo hello")
+  failed += check(
+    "cut and copy once selected",
+    "${line.can(Cut)} ${line.can(Copy)}",
+    "true true"
+  )
+  line.edit_action(Cut)
+  failed += check("cut", line.edit.content(), "")
+  line.edit_action(Undo)
+  failed += check("undo the cut", line.edit.content(), "echo hello")
+  failed += check("redo once undone", "${line.can(Redo)}", "true")
+  line.edit_action(Redo)
+  failed += check("redo the cut", line.edit.content(), "")
+  line.edit_action(Undo)
+
+  // With the menu bar's Edit menu, ⌘Z is its: pressed, it does nothing here.
+  if platform() == "macOS" {
+    let io = get_io()
+    io.set_config_mac_osx_behaviors(true)
+    var owned = command_line([])
+    owned.menu_keys = true
+    type_text(host, owned, "ls")
+    press(host, owned, [MOD_SUPER], KEY_Z)
+    failed += check("cmd-z is the menu's", owned.edit.content(), "ls")
+    owned.menu_keys = false
+    press(host, owned, [MOD_SUPER], KEY_Z)
+    failed += check("cmd-z without a menu", owned.edit.content(), "")
+    io.set_config_mac_osx_behaviors(false)
+  }
+
+  // A paste to a running program: between bracketed paste's markers when it asked, its own
+  // end marker taken out so the paste cannot end itself early.
+  failed += check("a plain paste", pasted("ls -l", false), "ls -l")
+  failed += check("a bracketed paste", pasted("a\e[201~b", true), "\e[200~ab\e[201~")
   failed
 }
 

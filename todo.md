@@ -18,7 +18,8 @@ milestones are in `CLAUDE.md` § Plan.
 - **[DONE 10/16] Tabs** — a session each, read every frame; ⌘T/⌘W/⌘1–9/⌘⇧[ ⌘⇧], a `+` and close buttons, `•` for unseen output.
 - **[OPEN] Reorder tabs by dragging** — ImGui can (`TAB_BAR_FLAGS_REORDERABLE`) but its order would part from ⌘1–9's; keep one order.
 - **[DONE 10/16] Tabs in the Mac menu bar** — Shell ▸ New Tab, Show Previous/Next Tab, Close Tab; replaces SDL's bar, whose ⌘W closed the app.
-- **[OPEN] An Edit menu** — Copy, Paste, Select All, Undo as menu items; today they are keys only, read by the command line.
+- **[DONE 10/16] An Edit menu** — Undo, Redo, Cut, Copy, Paste, Select All; greyed when they would do nothing.
+- **[OPEN] Copy from the grid** — Copy and Select All have nothing to act on while a program runs, until the grid has a selection (M1).
 
 ## M1 — a classic terminal
 

@@ -69,11 +69,13 @@ import session.{
   Session,
   Look,
 }
-import bindings.menubar.{ poll_menu }
+import bindings.menubar.{ poll_menu, set_enabled }
 import ui.{
   tab_command,
   menu_command,
   install_menus,
+  edit_action_of,
+  EDIT_ITEMS,
   dark_theme,
   Fonts,
   Theme,
@@ -129,9 +131,13 @@ let main = () -> void => {
 
     var command = tab_command(active, sessions.len(), menus)
     while let Some(tag) = poll_menu() {
-      match menu_command(tag, active, sessions.len()) {
-        NoCommand => {},
-        c => { command = c },
+      match edit_action_of(tag) {
+        // Edit's items act on the tab shown.
+        Some(a) => sessions[active].edit_action(a),
+        None => match menu_command(tag, active, sessions.len()) {
+          NoCommand => {},
+          c => { command = c },
+        },
       }
     }
     match command {
@@ -158,7 +164,7 @@ let main = () -> void => {
       shown,
       closing,
       add
-    ) = draw_window(sessions, active, select, fonts, theme, home, command)
+    ) = draw_window(sessions, active, select, fonts, theme, home, command, menus)
     select = None
     if shown != active {
       active = shown
@@ -177,6 +183,10 @@ let main = () -> void => {
         None => {},
       }
       next_id += 1
+    }
+    // Edit's items greyed out while they would do nothing in the tab shown.
+    if menus {
+      for (tag, a) in EDIT_ITEMS { set_enabled(tag, sessions[active].can(a)) }
     }
     let now = tab_title(sessions[active], home)
     if now != title {
@@ -199,7 +209,8 @@ let draw_window = (
   fonts: Fonts,
   theme: Theme,
   home: string,
-  command: TabCommand
+  command: TabCommand,
+  menus: bool
 ) -> (i64, Maybe<i64>, bool) => {
   let viewport = get_main_viewport()
   set_next_window_pos(viewport.work_pos())
@@ -276,7 +287,7 @@ let draw_window = (
     _ => true,
   }
   let focused = is_window_focused(FOCUSED_FLAGS_ROOT_AND_CHILD_WINDOWS) && !keys_taken
-  draw_session(sessions[shown], look, focused)
+  draw_session(sessions[shown], look, focused, menus)
   match fonts.regular {
     Some(_) => pop_font(),
     None => {},

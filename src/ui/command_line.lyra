@@ -101,6 +101,10 @@ pub struct CommandLine {
   menu: []Completion,
   chosen: i64,
   menu_top: i64,
+  /// Whether ⌘Z, ⌘X, ⌘C, ⌘V and ⌘A belong to a menu bar's Edit menu, and come as
+  /// [edit_action]s rather than keys: AppKit hands a menu's key equivalent to SDL too, and
+  /// read both ways every paste would happen twice.
+  menu_keys: bool,
   /// Keys typed ahead and not yet used, as lines (`typeahead.lyra`): each ended line a
   /// command to run at a prompt, in turn, and what follows the last Return for the editor.
   ahead: string,
@@ -138,7 +142,11 @@ pub let command_line = (history: []string) -> CommandLine => CommandLine {
   chosen: 0,
   menu_top: 0,
   ahead: "",
+  menu_keys: false,
 }
+
+/// What the Edit menu does — and ⌘Z, ⇧⌘Z, ⌘X, ⌘C, ⌘V, ⌘A without one.
+pub data EditAction = Undo | Redo | Cut | Copy | Paste | SelectAll
 
 /// How the command line looks.
 pub struct Style {
@@ -263,6 +271,38 @@ impl CommandLine {
     let (start, _) = shell_word_at(self.edit.text, self.edit.cursor)
     let (_, col) = position(self.edit.text, wrap, start)
     (row_count(self.edit.text, wrap), col.min(wrap.cols - width).max(0), width)
+  }
+
+  /// Undo, cut, paste and the rest: the same whether chosen from the Edit menu or pressed.
+  /// An edit narrows (or closes) an open completion menu, as typing does.
+  pub let edit_action = (self: mut, a: EditAction) -> void => {
+    let before = self.edit.content()
+    match a {
+      Undo => {
+        let _ = self.edit.undo()
+      },
+      Redo => {
+        let _ = self.edit.redo()
+      },
+      Cut => if self.edit.has_selection() { set_clipboard_text(self.edit.cut()) },
+      Copy =>
+        if self.edit.has_selection() { set_clipboard_text(self.edit.selected_text()) },
+      Paste => self.edit.paste(get_clipboard_text()),
+      SelectAll => self.edit.select_all(),
+    }
+    if self.menu.len() > 0 {
+      if self.edit.content() != before { self.narrow() } else { self.close_menu() }
+    }
+  }
+
+  /// Whether `a` would do anything now: what the Edit menu greys out when not.
+  pub let can = pure (self, a: EditAction) -> bool => match a {
+    Undo => self.edit.undo_stack.len() > 0,
+    Redo => self.edit.redo_stack.len() > 0,
+    Cut => self.edit.has_selection(),
+    Copy => self.edit.has_selection(),
+    Paste => true,
+    SelectAll => !self.edit.is_empty(),
   }
 
   /// Keys typed ahead, as the shell found them waiting at a new line: kept until a prompt
@@ -436,12 +476,13 @@ impl CommandLine {
       else { return Submit(self.edit.content()) }
     }
     if command {
-      if is_key_pressed(KEY_A) { self.edit.select_all() }
-      if is_key_pressed(KEY_C) && self.edit.has_selection() { set_clipboard_text(self.edit.selected_text()) }
-      if is_key_pressed(KEY_X) && self.edit.has_selection() { set_clipboard_text(self.edit.cut()) }
-      if is_key_pressed(KEY_V) { self.edit.paste(get_clipboard_text()) }
-      if is_key_pressed(KEY_Z) {
-        let _ = if shift { self.edit.redo() } else { self.edit.undo() }
+      // The Edit menu's own when there is one; read here they would act twice.
+      if !self.menu_keys {
+        if is_key_pressed(KEY_A) { self.edit_action(SelectAll) }
+        if is_key_pressed(KEY_C) { self.edit_action(Copy) }
+        if is_key_pressed(KEY_X) { self.edit_action(Cut) }
+        if is_key_pressed(KEY_V) { self.edit_action(Paste) }
+        if is_key_pressed(KEY_Z) { self.edit_action(if shift { Redo } else { Undo }) }
       }
     } else if ctrl {
       // The shell's line-editing keys, as zsh's emacs mode has them.

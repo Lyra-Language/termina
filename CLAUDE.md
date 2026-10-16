@@ -39,7 +39,7 @@ shell ⇄ bindings.pty ──bytes──▶ vt.Parser ──[]Action──▶ vt
 |---|---|
 | `src/sulafat.lyra` | `main`: the ImGui host, the frame loop, the tabs and their bar, fonts |
 | `src/session/session.lyra` | one tab: its PTY, screen, `Mode` and command line; read each frame, drawn and given keys when shown |
-| `src/ui/tabs.lyra` | the tab shortcuts, and the Mac's menu bar (Shell's tab items, the Window menu) |
+| `src/ui/tabs.lyra` | the tab shortcuts, and the Mac's menu bar (Shell's tab items, Edit, the Window menu) |
 | `src/menutest.lyra` | the menu bar installed and read back |
 | `src/shell/shell.lyra` | shell integration (zsh's `.zshenv`, through `ZDOTDIR`): the marks, Tab's completion widget and its request file, the history file, what Return sends |
 | `src/editor/editor.lyra` | the command line's editor — text, caret, selection, motions, words, undo, layout; **pure** |
@@ -71,6 +71,10 @@ shell ⇄ bindings.pty ──bytes──▶ vt.Parser ──[]Action──▶ vt
   matches shifted keys) and Close Tab ⌘W; they arrive through `poll_menu`, and
   `tab_command` leaves those keys alone when the bar is there, since AppKit hands a key
   equivalent to SDL too. ⌘1–⌘9 have no items and stay keys.
+- **Edit's items are one path with their keys** (`EditAction`): `CommandLine.edit_action` at a
+  prompt, and while a program runs only Paste, sent bracketed when the program set
+  `?2004` (`session.pasted`). With the menu bar the command line leaves ⌘Z/⌘X/⌘C/⌘V/⌘A to
+  it (`menu_keys`), and each frame greys what would do nothing (`Session.can`).
 - **Nothing blocks**: `Pty.read` is non-blocking and drained once a frame, at most
   `READS_PER_FRAME` reads, so a program that never stops writing cannot freeze the window.
 - **A colour is one `u32`** (`DEFAULT`, a palette index, or RGB — `vt/style.lyra`): the

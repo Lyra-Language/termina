@@ -1,13 +1,13 @@
-// menutest — Sulafat's menu bar on a Mac, installed and read back: Shell's tab items with
-// their keys, and none of SDL's own Window ▸ Close, whose ⌘W closed the window, and with
+// menutest — Sulafat's menu bar on a Mac, installed and read back: Shell's tab items and
+// Edit's with their keys, greying, and none of SDL's own Window ▸ Close, whose ⌘W closed the window, and with
 // it the app, rather than the tab. Needs SDL's real video driver (AppKit's application),
 // not the dummy one; no window is opened. Elsewhere there is no menu bar, and it passes.
 //
 //   build/menutest             exits 1 naming each check that failed
 
 import bindings.sdl3.{ init, quit, platform, INIT_VIDEO }
-import bindings.menubar.{ describe }
-import ui.{ install_menus }
+import bindings.menubar.{ describe, set_enabled }
+import ui.{ install_menus, MENU_UNDO }
 
 let main = () -> u8 => {
   if platform() != "macOS" {
@@ -30,6 +30,17 @@ let main = () -> u8 => {
     )
     failed += check("no window Close", key_of(bar, "Close") == "missing", bar)
     failed += check("the standard Window menu", key_of(bar, "Minimize") == "Cmd+M", bar)
+    failed += check("Undo", key_of(bar, "Undo") == "Cmd+Z", bar)
+    failed += check("Redo", key_of(bar, "Redo") == "Shift+Cmd+Z", bar)
+    failed += check(
+      "Cut, Copy, Paste",
+      "${key_of(bar, "Cut")} ${key_of(bar, "Copy")} ${key_of(bar, "Paste")}" == "Cmd+X Cmd+C Cmd+V",
+      bar
+    )
+    failed += check("Select All", key_of(bar, "Select All") == "Cmd+A", bar)
+    // An item that would do nothing is greyed.
+    set_enabled(MENU_UNDO, false)
+    failed += check("a greyed item", describe().contains("Undo\tCmd+Z (off)"), describe())
   } else {
     failed += check("the menu bar installs", false, "")
   }
