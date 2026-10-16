@@ -74,6 +74,7 @@ import bindings.imgui.{
 import vt.{ parser, screen, Parser, Screen, InputStart }
 import shell.{ integration, load_history, submission, completion_request, Integration }
 import ui.{
+  held,
   Complete,
   command_line,
   CommandLine,
@@ -428,11 +429,12 @@ let draw = (
 /// This frame's keys and typed text, sent to the shell as a terminal sends them. Whether
 /// anything was sent.
 let send_keys = (pty: Pty) -> bool => {
-  let io = get_io()
+  // The keys as pressed: ImGui swaps Ctrl and ⌘ on macOS, and `held` undoes it.
+  let keys = held()
   let mac = platform() == "macOS"
-  let ctrl = io.key_ctrl()
+  let ctrl = keys.control
   // A shortcut of the terminal's own: ⌘ on a Mac, Ctrl+Shift elsewhere.
-  let command = if mac { io.key_super() } else { ctrl && io.key_shift() }
+  let command = if mac { keys.command } else { ctrl && keys.shift }
   var out = ""
   if command {
     if is_key_pressed(KEY_V) { out = get_clipboard_text() }
@@ -448,7 +450,7 @@ let send_keys = (pty: Pty) -> bool => {
   let named = [
     (KEY_ENTER, "\r"),
     (KEY_BACKSPACE, "\x7f"),
-    (KEY_TAB, if io.key_shift() { "\e[Z" } else { "\t" }),
+    (KEY_TAB, if keys.shift { "\e[Z" } else { "\t" }),
     (KEY_ESCAPE, "\e"),
     (KEY_UP_ARROW, "\e[A"),
     (KEY_DOWN_ARROW, "\e[B"),

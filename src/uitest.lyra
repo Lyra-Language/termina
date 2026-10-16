@@ -30,6 +30,9 @@ import bindings.imgui.{
   KEY_ENTER,
   KEY_A,
   KEY_Z,
+  KEY_E,
+  KEY_K,
+  KEY_L,
   MOD_SHIFT,
   MOD_SUPER,
   MOD_CTRL,
@@ -61,6 +64,7 @@ let main = () -> u8 => {
   failed += check_history(host)
   failed += check_theme()
   failed += check_completion(host)
+  failed += check_mac_modifiers(host)
   destroy_host(host)
   if failed == 0 {
     println("uitest: all passed")
@@ -254,6 +258,38 @@ let offer = (
     shown: shown,
     description: description
   }
+
+// The real window on a Mac: ImGui swaps Ctrl and ⌘ there (`ConfigMacOSXBehaviors`; the
+// headless host turns it off), so the keys are injected as SDL reports them and must
+// still mean what they say — Ctrl+A the line's start, ⌘A everything.
+let check_mac_modifiers = (host: Host) -> i64 => {
+  if platform() != "macOS" { return 0 }
+  let io = get_io()
+  io.set_config_mac_osx_behaviors(true)
+  var line = command_line([])
+  var failed = 0
+  type_text(host, line, "echo one two")
+  press(host, line, [MOD_CTRL], KEY_A)
+  failed += check(
+    "ctrl-a: the line's start",
+    "${line.edit.cursor}:${line.edit.has_selection()}",
+    "0:false"
+  )
+  press(host, line, [MOD_SUPER], KEY_A)
+  failed += check("cmd-a: everything", line.edit.selected_text(), "echo one two")
+  press(host, line, [MOD_CTRL], KEY_E)
+  failed += check("ctrl-e: the line's end", "${line.edit.cursor}", "12")
+  press(host, line, [MOD_SUPER], KEY_LEFT_ARROW)
+  failed += check("cmd-left: the line's start", "${line.edit.cursor}", "0")
+  press(host, line, [MOD_CTRL], KEY_K)
+  failed += check("ctrl-k: delete to the end", line.edit.content(), "")
+  press(host, line, [MOD_SUPER], KEY_Z)
+  failed += check("cmd-z: undo", line.edit.content(), "echo one two")
+  let sent = press(host, line, [MOD_CTRL], KEY_L)
+  failed += check("ctrl-l: to the shell", describe(sent), "send \x0c")
+  io.set_config_mac_osx_behaviors(false)
+  failed
+}
 
 // The theme: what a cell's recorded colours look like.
 let check_theme = () -> i64 => {

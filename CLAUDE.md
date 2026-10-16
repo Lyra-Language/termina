@@ -36,6 +36,7 @@ shell ⇄ bindings.pty ──bytes──▶ vt.Parser ──[]Action──▶ vt
 | `src/sulafat.lyra` | `main`: the ImGui host, the frame loop, `Mode`, drawing the grid, keys → bytes |
 | `src/shell/shell.lyra` | shell integration (zsh's `.zshenv`, through `ZDOTDIR`): the marks, Tab's completion widget and its request file, the history file, what Return sends |
 | `src/editor/editor.lyra` | the command line's editor — text, caret, selection, motions, words, undo, layout; **pure** |
+| `src/ui/modifiers.lyra` | the modifier keys as pressed — ImGui's macOS Ctrl/⌘ swap undone |
 | `src/ui/command_line.lyra` | the editor at the prompt: keys and mouse into editor calls, history, the completion menu, drawing |
 | `src/vt/parser.lyra` | bytes → `Action`s — Paul Williams' DEC parser; **pure**, keeps all state across reads |
 | `src/vt/screen.lyra` | `Action`s → the cell grid, cursor, scroll region, scrollback ring |
@@ -60,6 +61,10 @@ shell ⇄ bindings.pty ──bytes──▶ vt.Parser ──[]Action──▶ vt
   sharing one array show each other's text.
 - **A cell's width is measured over 100 characters**: ImGui's `CalcTextSize` rounds up to a
   whole pixel, which over one character put the cursor cells to the right of the text.
+- **Read modifiers through `ui.held()`, never `io.key_ctrl()`/`key_super()`.** ImGui swaps
+  Ctrl and ⌘ on macOS (`ConfigMacOSXBehaviors`), so its Ctrl is ⌘ there; a terminal needs
+  the keys themselves. The headless host turns the swap off, so `uitest`'s
+  `check_mac_modifiers` turns it back on to test what the real window does.
 - **Keys**: ImGui's keyboard navigation is turned off (the arrows and Tab are the shell's);
   typed text arrives through `bindings.imgui`'s `request_text_input`/`typed_text`. ⌘ (Ctrl+Shift
   off macOS) is the terminal's own; Ctrl+letter is the control character.

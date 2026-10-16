@@ -23,7 +23,6 @@ module ui
 
 import bindings.sdl3.{ platform }
 import bindings.imgui.{
-  get_io,
   typed_text,
   is_key_pressed,
   is_mouse_clicked,
@@ -298,7 +297,7 @@ impl CommandLine {
         self.word_drag = None
         self.dragging = false
       } else {
-        self.edit.click(caret, get_io().key_shift())
+        self.edit.click(caret, held().shift)
         self.word_drag = None
         self.dragging = true
       }
@@ -315,14 +314,15 @@ impl CommandLine {
   // ── Keys ─────────────────────────────────────────────────────────────────
 
   let keys = (self: mut, wrap: Wrap) -> Outcome => {
-    let io = get_io()
+    // The keys as pressed, ImGui's macOS swap of Ctrl and ⌘ undone (`modifiers.lyra`).
+    let mods = held()
     let mac = platform() == "macOS"
-    let shift = io.key_shift()
-    let ctrl = io.key_ctrl()
+    let shift = mods.shift
+    let ctrl = mods.control
     // The editor's shortcuts (copy, paste, undo): ⌘ on a Mac, Ctrl+Shift elsewhere.
-    let command = if mac { io.key_super() } else { ctrl && shift }
+    let command = if mac { mods.command } else { ctrl && shift }
     // A word at a time: ⌥ on a Mac, Ctrl elsewhere.
-    let by_word = if mac { io.key_alt() } else { ctrl }
+    let by_word = if mac { mods.alt } else { ctrl }
     if self.menu.len() > 0 {
       if is_key_pressed(KEY_DOWN_ARROW) || (is_key_pressed(KEY_TAB) && !shift) { self.choose(1); return Nothing }
       if is_key_pressed(KEY_UP_ARROW) || (is_key_pressed(KEY_TAB) && shift) { self.choose(-1); return Nothing }
@@ -356,13 +356,13 @@ impl CommandLine {
     command: bool,
     by_word: bool
   ) -> Outcome => {
-    let io = get_io()
+    let mods = held()
     if !ctrl && !(mac && command) {
       let typed = typed_text()
       if typed != "" { self.type_text(typed) }
     }
     if is_key_pressed(KEY_ENTER) || is_key_pressed(KEY_KEYPAD_ENTER) {
-      if shift || io.key_alt() { self.edit.newline() }
+      if shift || mods.alt { self.edit.newline() }
       else { return Submit(self.edit.content()) }
     }
     if command {
@@ -388,7 +388,7 @@ impl CommandLine {
       }
       if !mac && is_key_pressed(KEY_Z) { let _ = self.edit.undo() }
     }
-    let line_mod = mac && io.key_super()
+    let line_mod = mac && mods.command
     if is_key_pressed(KEY_LEFT_ARROW) {
       if line_mod { self.edit.line_start(shift) }
       else if by_word { self.edit.word_left(shift) }
