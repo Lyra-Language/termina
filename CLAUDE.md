@@ -37,6 +37,7 @@ shell ⇄ bindings.pty ──bytes──▶ vt.Parser ──[]Action──▶ vt
 | `src/shell/shell.lyra` | shell integration (zsh's `.zshenv`, through `ZDOTDIR`): the marks, Tab's completion widget and its request file, the history file, what Return sends |
 | `src/editor/editor.lyra` | the command line's editor — text, caret, selection, motions, words, undo, layout; **pure** |
 | `src/ui/modifiers.lyra` | the modifier keys as pressed — ImGui's macOS Ctrl/⌘ swap undone |
+| `src/ui/typeahead.lyra` | keys typed ahead, raw, made into lines (Backspace, Ctrl+U/W applied; escapes dropped) |
 | `src/ui/command_line.lyra` | the editor at the prompt: keys and mouse into editor calls, history, the completion menu, drawing |
 | `src/vt/parser.lyra` | bytes → `Action`s — Paul Williams' DEC parser; **pure**, keeps all state across reads |
 | `src/vt/screen.lyra` | `Action`s → the cell grid, cursor, scroll region, scrollback ring |
@@ -91,6 +92,12 @@ shell ⇄ bindings.pty ──bytes──▶ vt.Parser ──[]Action──▶ vt
   list zsh gave (`CommandLine.narrow`, by exact start; ⌫ widens it), keeping the choice
   chosen; it closes when nothing is left, the word is typed in full, or the caret moves off. `compinit` is loaded only if the user's
   config has not, its dump in Sulafat's cache.
+- **Keys typed while a command runs go to it; what it leaves unread is Sulafat's.** At each
+  new line zsh's `zle-line-init` (Sulafat's, running the user's first) reads what is waiting
+  — before zsh's own line editor would take it into a buffer hidden under Sulafat's — and
+  reports it raw (OSC 7770 `t`). `ui.typed_lines` makes lines of it; at the prompt the first
+  line ended by Return runs, as in any terminal, the next at the next prompt, and the
+  unended rest goes into the editor.
 - **Editor edits build new arrays** (undo snapshots share buffers); typing joins one undo
   step until a word ends, rune deletes join, word and line deletes stand alone.
 - **ImGui's mouse is at -FLT_MAX when it is nowhere**: test before any cell arithmetic.

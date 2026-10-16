@@ -101,6 +101,9 @@ pub struct CommandLine {
   menu: []Completion,
   chosen: i64,
   menu_top: i64,
+  /// Keys typed ahead and not yet used, as lines (`typeahead.lyra`): each ended line a
+  /// command to run at a prompt, in turn, and what follows the last Return for the editor.
+  ahead: string,
 }
 
 /// Completions a menu shows at once; more scroll.
@@ -134,6 +137,7 @@ pub let command_line = (history: []string) -> CommandLine => CommandLine {
   menu: [],
   chosen: 0,
   menu_top: 0,
+  ahead: "",
 }
 
 /// How the command line looks.
@@ -259,6 +263,31 @@ impl CommandLine {
     let (start, _) = shell_word_at(self.edit.text, self.edit.cursor)
     let (_, col) = position(self.edit.text, wrap, start)
     (row_count(self.edit.text, wrap), col.min(wrap.cols - width).max(0), width)
+  }
+
+  /// Keys typed ahead, as the shell found them waiting at a new line: kept until a prompt
+  /// takes them ([take_typed_ahead]).
+  pub let typed_ahead = (self: mut, keys: string) -> void => {
+    self.ahead = "${self.ahead}${typed_lines(keys)}"
+  }
+
+  /// At a prompt, what typing ahead left for it: the first command ended by a Return, to be
+  /// run — what a terminal would have done — or, with none, the text typed after the last
+  /// Return, put into the editor at the caret.
+  pub let take_typed_ahead = (self: mut) -> Maybe<string> => {
+    if self.ahead == "" { return None }
+    match self.ahead.index("\n") {
+      Some(k) => {
+        let command = self.ahead.slice(0, k)
+        self.ahead = self.ahead.slice(k + 1, self.ahead.len())
+        Some(command)
+      },
+      None => {
+        self.edit.paste(self.ahead)
+        self.ahead = ""
+        None
+      },
+    }
   }
 
   /// Run a command: remember it, and start an empty line.

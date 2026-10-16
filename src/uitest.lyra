@@ -50,7 +50,7 @@ import ui.{
   Complete
 }
 import editor.{ Wrap }
-import ui.{ dark_theme, abgr }
+import ui.{ dark_theme, abgr, typed_lines }
 import vt.{ Cell, Completion, DEFAULT, INVERSE, DIM, HIDDEN, indexed, rgb }
 
 let main = () -> u8 => {
@@ -65,6 +65,7 @@ let main = () -> u8 => {
   failed += check_theme()
   failed += check_completion(host)
   failed += check_mac_modifiers(host)
+  failed += check_typed_ahead()
   destroy_host(host)
   if failed == 0 {
     println("uitest: all passed")
@@ -366,6 +367,36 @@ let check_mac_modifiers = (host: Host) -> i64 => {
   let sent = press(host, line, [MOD_CTRL], KEY_L)
   failed += check("ctrl-l: to the shell", describe(sent), "send \x0c")
   io.set_config_mac_osx_behaviors(false)
+  failed
+}
+
+// Keys typed ahead: raw keys made into lines, and the lines handed to prompts in turn.
+let check_typed_ahead = () -> i64 => {
+  var failed = 0
+  failed += check("text and backspace", typed_lines("git statx\x7fus"), "git status")
+  failed += check("an arrow is dropped", typed_lines("ab\e[Dc"), "abc")
+  failed += check("return ends a line", typed_lines("make\nls -l"), "make\nls -l")
+  failed += check("carriage return too", typed_lines("make\rls"), "make\nls")
+  failed += check("ctrl-u clears the line", typed_lines("oops\x15ls"), "ls")
+  failed += check(
+    "ctrl-w takes a word",
+    typed_lines("git push --force\x17--dry-run"),
+    "git push --dry-run"
+  )
+  failed += check("non-ASCII", typed_lines("echo größe"), "echo größe")
+  failed += check("backspace on nothing", typed_lines("\x7f\x7fx"), "x")
+
+  var line = command_line([])
+  line.typed_ahead("make\nls -l\ngit st")
+  let one = line.take_typed_ahead() ?? "none"
+  let two = line.take_typed_ahead() ?? "none"
+  let three = line.take_typed_ahead() ?? "none"
+  failed += check("commands in turn", "${one}|${two}|${three}", "make|ls -l|none")
+  failed += check("then the rest in the editor", line.edit.content(), "git st")
+  failed += check("and nothing after", "${line.take_typed_ahead() ?? "none"}", "none")
+  line.typed_ahead("us")
+  let _ = line.take_typed_ahead()
+  failed += check("more joins at the caret", line.edit.content(), "git stus")
   failed
 }
 

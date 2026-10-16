@@ -15,6 +15,12 @@ module shell
 //! any. Its messages are `b` (begin), `m;<prefix>;<insert>;<suffix>;<shown>;<description>`
 //! (a match, each field percent-encoded) and `e` (end); `vt.Screen` collects them.
 //!
+//! **Keys typed ahead** — typed while a command ran, and not read by it — are still on the
+//! terminal when zsh starts its next line, and zsh's own line editor would take them into
+//! a buffer hidden under Sulafat's. A `zle-line-init` hook (wrapping the user's own) reads
+//! them first and reports them raw, as OSC 7770 `t;<keys>` (percent-encoded); Sulafat
+//! interprets them (`../ui/typeahead.lyra`).
+//!
 //! **zsh** is reached through `ZDOTDIR`: zsh reads `$ZDOTDIR/.zshenv` first, and Sulafat's
 //! puts the user's `ZDOTDIR` back, reads their `.zshenv`, and adds two hooks — so their
 //! `.zprofile`, `.zshrc` and `.zlogin` are read from their own directory as always. Other
@@ -239,9 +245,31 @@ if [[ -o interactive ]]; then
     BUFFER=
     CURSOR=0
   }
+  # Keys typed ahead: at the start of each line, before zsh's line editor reads them, read
+  # whatever is waiting and report it (OSC 7770 t), controls and `%`/`;` as %XX.
+  _sulafat_line_init() {
+    (( $+widgets[_sulafat_orig_line_init] )) && zle _sulafat_orig_line_init -- "$@"
+    (( PENDING )) || return 0
+    local c h out=
+    while builtin read -k 1 -s -t 0 c; do
+      if [[ $c == [[:cntrl:]] || $c == '%' || $c == ';' ]]; then
+        builtin printf -v h '%%%02X' "'$c"
+        out+=$h
+      else
+        out+=$c
+      fi
+    done
+    [[ -n $out ]] && builtin printf '\e]7770;t;%s\a' "$out"
+    return 0
+  }
   _sulafat_bind() {
     zle -C _sulafat_complete_word complete-word _sulafat_capture
     zle -N _sulafat_complete
+    # The user's own zle-line-init, if their .zshrc made one, still runs — first.
+    if (( $+widgets[zle-line-init] )) && [[ ${widgets[zle-line-init]} != *_sulafat_line_init* ]]; then
+      zle -A zle-line-init _sulafat_orig_line_init
+    fi
+    zle -N zle-line-init _sulafat_line_init
     # Bound once the user's .zshrc has chosen emacs or vi keys, in every keymap.
     local m
     for m in emacs viins vicmd; do builtin bindkey -M $m '\e[9898~' _sulafat_complete; done

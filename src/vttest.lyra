@@ -52,6 +52,7 @@ let main = () -> u8 => {
   failed += check_words()
   failed += check_completion_reports()
   failed += check_zsh_completion()
+  failed += check_zsh_typed_ahead()
   if failed == 0 {
     println("vttest: all passed")
     0
@@ -598,6 +599,65 @@ let check_zsh_completion = () -> i64 => {
     failed += check("a variable", "${answers[4].contains("$HOME ")}", "true")
   }
   failed
+}
+
+// Keys typed while a command runs, unread by it, reach the next line's report and not
+// zsh's hidden buffer.
+let check_zsh_typed_ahead = () -> i64 => {
+  let Some(i) = integration("/bin/zsh", "vttest-ahead") else {
+    return check("zsh integration", "not written", "written")
+  }
+  let Some(pty) = spawn(
+    ["/bin/zsh", "-i"],
+    60,
+    10,
+    None,
+    ["TERM=xterm-256color", ...i.env]
+  ) else {
+    return check("spawn zsh", "failed", "spawned")
+  }
+  var p = parser()
+  var s = screen(60, 10)
+  var prompts = 0
+  var sent = false
+  var reports: []string = []
+  var spins = 0
+  while prompts < 2 && spins < 5000000 {
+    if prompts == 1 && !sent && s.bracketed_paste {
+      // The command, then keys typed while it runs.
+      let _ = pty.write(submission("sleep 1", true))
+      let _ = pty.write("echo ahead\rech")
+      sent = true
+    }
+    match pty.read() {
+      None => { spins = 5000000 },
+      Some(bytes) => {
+        if bytes.len() > 0 { s.apply(p.feed(bytes)) }
+        for m in s.take_marks() {
+          match m {
+            InputStart(_, _) => { prompts += 1 },
+            _ => {},
+          }
+        }
+        for t in s.take_typed_ahead() { reports.push(t) }
+        spins += 1
+      },
+    }
+  }
+  // The report follows the second prompt's mark: read on for it.
+  var more = 0
+  while reports.len() == 0 && more < 2000000 {
+    match pty.read() {
+      None => { more = 2000000 },
+      Some(bytes) => {
+        if bytes.len() > 0 { s.apply(p.feed(bytes)) }
+        for t in s.take_typed_ahead() { reports.push(t) }
+        more += 1
+      },
+    }
+  }
+  close(pty)
+  check("typed ahead, reported", reports.join("|"), "echo ahead\nech")
 }
 
 let describe_marks = (s: mut Screen) -> string => [m in s.take_marks() | match m {

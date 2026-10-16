@@ -139,6 +139,20 @@ let main = () -> void => {
       }
     }
     for offered in shown.take_completions() { line.completed(offered) }
+    // Keys typed ahead while a command ran: at the prompt they wait for, a line ended by
+    // Return runs, as in any terminal, and the rest goes into the editor.
+    for keys in shown.take_typed_ahead() { line.typed_ahead(keys) }
+    match mode {
+      AtPrompt(_, _) => match line.take_typed_ahead() {
+        Some(command) => {
+          let _ = pty.write(submission(command, shown.bracketed_paste))
+          line.submitted(command)
+          mode = Raw
+        },
+        None => {},
+      },
+      Raw => {},
+    }
     if shown.title != title {
       title = shown.title
       set_window_title(host, if title == "" { "Sulafat" } else { title })

@@ -43,6 +43,9 @@ pub struct Screen {
   completing: []Completion,
   /// Lists of completions the shell has finished reporting, since [Screen.take_completions].
   completed: [][]Completion,
+  /// Keys typed ahead that the shell found waiting at a new line (OSC 7770 `t`), raw, since
+  /// [Screen.take_typed_ahead].
+  typed_ahead: []string,
   /// Lines dropped off the top of a full scrollback: what makes an [Screen.absolute] line
   /// number stay the same line while the ring turns.
   dropped: i64,
@@ -96,6 +99,7 @@ pub let screen = pure (cols: i64, rows: i64) -> Screen => Screen {
   marks: [],
   completing: [],
   completed: [],
+  typed_ahead: [],
   dropped: 0,
   bracketed_paste: false,
   cursor_visible: true,
@@ -130,6 +134,14 @@ impl Screen {
   pub let take_completions = (self: mut) -> [][]Completion => {
     let out = self.completed
     self.completed = []
+    out
+  }
+
+  /// The keys typed ahead the shell has reported since the last call, raw, oldest first;
+  /// emptied.
+  pub let take_typed_ahead = (self: mut) -> []string => {
+    let out = self.typed_ahead
+    self.typed_ahead = []
     out
   }
 
@@ -294,7 +306,11 @@ impl Screen {
 
   // OSC 7770, Sulafat's own: the shell reporting completions.
   let completion_report = (self: mut, report: string) -> void => {
-    if report == "b" { self.completing = [] }
+    if report.starts_with("t;") { self.typed_ahead.push(percent_decode(report.slice(
+      2,
+      report.len()
+    ))) }
+    else if report == "b" { self.completing = [] }
     else if report == "e" {
       self.completed.push(self.completing)
       self.completing = []
