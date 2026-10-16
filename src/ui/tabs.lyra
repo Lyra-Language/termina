@@ -1,0 +1,94 @@
+module ui
+//! The tab shortcuts: which, if any, was pressed this frame. The tabs themselves are
+//! `../sulafat.lyra`'s.
+//!
+//! **On a Mac with Sulafat's menu bar, ⌘T, ⌘W, ⌘⇧[ and ⌘⇧] are its menu items'**, and
+//! come as menu choices: AppKit hands a key equivalent to the menu as well as to SDL, so
+//! reading them here too would open two tabs, or close two. ⌘1–⌘9 have no items and stay
+//! keys.
+
+import bindings.sdl3.{ platform }
+import bindings.menubar.{ menu, item, separator, window_menu, install, COMMAND }
+import bindings.imgui.{
+  is_key_pressed,
+  KEY_T,
+  KEY_W,
+  KEY_1,
+  KEY_LEFT_BRACKET,
+  KEY_RIGHT_BRACKET,
+  KEY_PAGE_UP,
+  KEY_PAGE_DOWN,
+}
+
+/// A tab shortcut pressed this frame.
+pub data TabCommand =
+  NoCommand
+  | NewTab
+  | CloseTab
+  /// Show the tab at this index.
+  | ShowTab i64
+
+/// The tab shortcut pressed this frame, if any, with `active` shown of `count`: ⌘T, ⌘W,
+/// ⌘1–⌘9, ⌘⇧[ and ⌘⇧] on a Mac; Ctrl+Shift+T and W, Alt+1–9 and Ctrl+PageUp/PageDown
+/// elsewhere, where Ctrl alone is the shell's.
+pub let tab_command = (active: i64, count: i64, menus: bool) -> TabCommand => {
+  let mods = held()
+  let mac = platform() == "macOS"
+  let chord = if mac { mods.command && !mods.control } else { mods.control && mods.shift }
+  // The menu bar's own, when there is one (a Mac's).
+  let by_menu = mac && menus
+  if chord && !by_menu && is_key_pressed(KEY_T) { return NewTab }
+  if chord && !by_menu && is_key_pressed(KEY_W) { return CloseTab }
+  let numbered = if mac { mods.command && !mods.shift } else { mods.alt && !mods.control }
+  if numbered {
+    for n in 0..<9 {
+      // 1–8 that tab; 9 the last, as browsers have it.
+      if is_key_pressed(KEY_1 + i32(n)) {
+        return ShowTab(if n == 8 { count - 1 } else { n.min(count - 1) })
+      }
+    }
+  }
+  let before = if mac { chord &&
+      mods.shift &&
+      is_key_pressed(KEY_LEFT_BRACKET) } else { mods.control &&
+      !mods.shift &&
+      is_key_pressed(KEY_PAGE_UP) }
+  let after = if mac { chord &&
+      mods.shift &&
+      is_key_pressed(KEY_RIGHT_BRACKET) } else { mods.control &&
+      !mods.shift &&
+      is_key_pressed(KEY_PAGE_DOWN) }
+  if before && !by_menu { return ShowTab((active - 1) %% count) }
+  if after && !by_menu { return ShowTab((active + 1) %% count) }
+  NoCommand
+}
+
+/// The menu bar's items for the tabs, by tag ([menu_command] reads them).
+pub const MENU_NEW_TAB: i32 = 1
+pub const MENU_CLOSE_TAB: i32 = 2
+pub const MENU_PREVIOUS_TAB: i32 = 3
+pub const MENU_NEXT_TAB: i32 = 4
+
+/// The tab command a menu item stands for, with `active` shown of `count`.
+pub let menu_command = pure (tag: i32, active: i64, count: i64) -> TabCommand =>
+  if tag == MENU_NEW_TAB { NewTab }
+  else if tag == MENU_CLOSE_TAB { CloseTab }
+  else if tag == MENU_PREVIOUS_TAB { ShowTab((active - 1) %% count) }
+  else if tag == MENU_NEXT_TAB { ShowTab((active + 1) %% count) }
+  else { NoCommand }
+
+/// The menu bar, on a Mac: Shell's tab items — New Tab ⌘T, Close Tab ⌘W, Show Previous and
+/// Next Tab ⌘⇧[ and ⌘⇧] — and the standard Window menu. Whether there is one (`false`
+/// elsewhere, where the tab keys are read as keys).
+pub let install_menus = () -> bool => {
+  menu("Shell")
+  item("New Tab", "t", COMMAND, MENU_NEW_TAB)
+  separator()
+  // ⌘⇧[ and ⌘⇧] as AppKit spells them: the shifted characters, as Terminal has it.
+  item("Show Previous Tab", "{", COMMAND, MENU_PREVIOUS_TAB)
+  item("Show Next Tab", "}", COMMAND, MENU_NEXT_TAB)
+  separator()
+  item("Close Tab", "w", COMMAND, MENU_CLOSE_TAB)
+  window_menu()
+  install("Sulafat")
+}

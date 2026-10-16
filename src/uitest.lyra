@@ -30,6 +30,12 @@ import bindings.imgui.{
   KEY_ENTER,
   KEY_A,
   KEY_Z,
+  KEY_T,
+  KEY_W,
+  KEY_3,
+  KEY_9,
+  KEY_LEFT_BRACKET,
+  KEY_RIGHT_BRACKET,
   KEY_E,
   KEY_K,
   KEY_L,
@@ -50,7 +56,23 @@ import ui.{
   Complete
 }
 import editor.{ Wrap }
-import ui.{ dark_theme, abgr, typed_lines }
+import ui.{
+  dark_theme,
+  abgr,
+  typed_lines,
+  tab_command,
+  menu_command,
+  MENU_NEW_TAB,
+  MENU_CLOSE_TAB,
+  MENU_PREVIOUS_TAB,
+  MENU_NEXT_TAB,
+  TabCommand,
+  NoCommand,
+  NewTab,
+  CloseTab,
+  ShowTab
+}
+import session.{ open_session, close_session, tab_title, directory }
 import vt.{ Cell, Completion, DEFAULT, INVERSE, DIM, HIDDEN, indexed, rgb }
 
 let main = () -> u8 => {
@@ -66,6 +88,8 @@ let main = () -> u8 => {
   failed += check_completion(host)
   failed += check_mac_modifiers(host)
   failed += check_typed_ahead()
+  failed += check_tab_keys(host)
+  failed += check_sessions()
   destroy_host(host)
   if failed == 0 {
     println("uitest: all passed")
@@ -367,6 +391,182 @@ let check_mac_modifiers = (host: Host) -> i64 => {
   let sent = press(host, line, [MOD_CTRL], KEY_L)
   failed += check("ctrl-l: to the shell", describe(sent), "send \x0c")
   io.set_config_mac_osx_behaviors(false)
+  failed
+}
+
+// The tab shortcuts on a Mac, with ImGui's Ctrl/⌘ swap on as the real window has it.
+let check_tab_keys = (host: Host) -> i64 => {
+  if platform() != "macOS" { return 0 }
+  let io = get_io()
+  io.set_config_mac_osx_behaviors(true)
+  var failed = 0
+  failed += check("cmd-t", tab_key(host, [MOD_SUPER], KEY_T, 0, 3), "new")
+  failed += check("cmd-w", tab_key(host, [MOD_SUPER], KEY_W, 0, 3), "close")
+  failed += check("cmd-3", tab_key(host, [MOD_SUPER], KEY_3, 0, 5), "show 2")
+  failed += check(
+    "cmd-3 of two: the last",
+    tab_key(host, [MOD_SUPER], KEY_3, 0, 2),
+    "show 1"
+  )
+  failed += check("cmd-9: the last", tab_key(host, [MOD_SUPER], KEY_9, 0, 5), "show 4")
+  failed += check(
+    "cmd-shift-]: the next",
+    tab_key(host, [MOD_SUPER, MOD_SHIFT], KEY_RIGHT_BRACKET, 1, 3),
+    "show 2"
+  )
+  failed += check(
+    "cmd-shift-] round the end",
+    tab_key(host, [MOD_SUPER, MOD_SHIFT], KEY_RIGHT_BRACKET, 2, 3),
+    "show 0"
+  )
+  failed += check(
+    "cmd-shift-[ round the start",
+    tab_key(host, [MOD_SUPER, MOD_SHIFT], KEY_LEFT_BRACKET, 0, 3),
+    "show 2"
+  )
+  // Ctrl+T and Ctrl+W are the shell's (transpose, delete a word), not the tabs'.
+  failed += check("ctrl-t is the shell's", tab_key(host, [MOD_CTRL], KEY_T, 0, 3), "none")
+  failed += check("ctrl-w is the shell's", tab_key(host, [MOD_CTRL], KEY_W, 0, 3), "none")
+  // With the menu bar's items, ⌘T, ⌘W and ⌘⇧[ ⌘⇧] are theirs — read here too they would
+  // act twice — and ⌘1–⌘9, which have none, stay keys.
+  failed += check(
+    "cmd-t is the menu's",
+    tab_key_menus(host, [MOD_SUPER], KEY_T, 0, 3),
+    "none"
+  )
+  failed += check(
+    "cmd-w is the menu's",
+    tab_key_menus(host, [MOD_SUPER], KEY_W, 0, 3),
+    "none"
+  )
+  failed += check(
+    "cmd-shift-] is the menu's",
+    tab_key_menus(host, [MOD_SUPER, MOD_SHIFT], KEY_RIGHT_BRACKET, 0, 3),
+    "none"
+  )
+  failed += check(
+    "cmd-3 is still a key",
+    tab_key_menus(host, [MOD_SUPER], KEY_3, 0, 5),
+    "show 2"
+  )
+  failed += check(
+    "the menu's new tab",
+    describe_tab(menu_command(MENU_NEW_TAB, 0, 3)),
+    "new"
+  )
+  failed += check(
+    "the menu's close tab",
+    describe_tab(menu_command(MENU_CLOSE_TAB, 0, 3)),
+    "close"
+  )
+  failed += check(
+    "the menu's previous tab",
+    describe_tab(menu_command(MENU_PREVIOUS_TAB, 0, 3)),
+    "show 2"
+  )
+  failed += check(
+    "the menu's next tab",
+    describe_tab(menu_command(MENU_NEXT_TAB, 2, 3)),
+    "show 0"
+  )
+  io.set_config_mac_osx_behaviors(false)
+  failed
+}
+
+let tab_key_menus = (
+  host: Host,
+  mods: []i32,
+  key: i32,
+  active: i64,
+  count: i64
+) -> string =>
+  tab_key_with(host, mods, key, active, count, true)
+
+let describe_tab = (c: TabCommand) -> string => match c {
+  NoCommand => "none",
+  NewTab => "new",
+  CloseTab => "close",
+  ShowTab(n) => "show ${n}",
+}
+
+/// The tab command for a key pressed with `mods` held, with tab `active` of `count` shown.
+let tab_key = (host: Host, mods: []i32, key: i32, active: i64, count: i64) -> string =>
+  tab_key_with(host, mods, key, active, count, false)
+
+let tab_key_with = (
+  host: Host,
+  mods: []i32,
+  key: i32,
+  active: i64,
+  count: i64,
+  menus: bool
+) -> string => {
+  let io = get_io()
+  for m in mods { io.add_key_event(m, true) }
+  io.add_key_event(key, true)
+  var got = "none"
+  if begin_frame(host) {
+    got = describe_tab(tab_command(active, count, menus))
+    end_frame(host, 0.0, 0.0, 0.0)
+  }
+  io.add_key_event(key, false)
+  for m in mods { io.add_key_event(m, false) }
+  if begin_frame(host) { end_frame(host, 0.0, 0.0, 0.0) }
+  got
+}
+
+// Real tabs: a tab named by its program's title, then by its directory, and one whose
+// program ends found ended.
+let check_sessions = () -> i64 => {
+  var failed = 0
+  let Some(titled) = open_session(
+    ["/bin/sh", "-c", "printf '\\033]0;builds\\007'; sleep 2"],
+    None,
+    1
+  ) else {
+    return check("open a tab", "failed", "opened")
+  }
+  var a = titled
+  failed += check("a program's name first", tab_title(a, "/home/me"), "sh")
+  for _ in 0..<2000000 { if a.shown.title == "" { a.step(true) } }
+  failed += check("its title once set", tab_title(a, "/home/me"), "builds")
+  close_session(a)
+  let Some(placed) = open_session(
+    ["/bin/sh", "-c", "printf '\\033]7;file://host/Users/me/dev%%20box\\007'; sleep 2"],
+    None,
+    2
+  ) else {
+    return check("open a tab", "failed", "opened")
+  }
+  var b = placed
+  for _ in 0..<2000000 { if b.shown.cwd == "" { b.step(false) } }
+  failed += check("named by its directory", tab_title(b, "/Users/me"), "dev box")
+  failed += check(
+    "a tab beside it starts there",
+    "${directory(b) ?? "none"}",
+    "/Users/me/dev box"
+  )
+  failed += check("output unseen while hidden", "${b.unseen}", "true")
+  b.step(true)
+  failed += check("seen once shown", "${b.unseen}", "false")
+  close_session(b)
+  let Some(brief) = open_session(["/bin/sh", "-c", "exit 0"], None, 3) else {
+    return check("open a tab", "failed", "opened")
+  }
+  // A tab the user closes stays closed, though its program is still running.
+  let Some(running) = open_session(["/bin/sh", "-c", "sleep 5"], None, 4) else {
+    return check("open a tab", "failed", "opened")
+  }
+  var d = running
+  d.step(true)
+  d.request_close()
+  for _ in 0..<1000 { d.step(true) }
+  failed += check("a closed tab stays closed", "${d.alive}", "false")
+  close_session(d)
+  var c = brief
+  for _ in 0..<2000000 { if c.alive { c.step(true) } }
+  failed += check("a tab whose program ended", "${c.alive}", "false")
+  close_session(c)
   failed
 }
 

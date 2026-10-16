@@ -12,13 +12,17 @@ workspace's `CLAUDE.md` rules apply here too. **macOS and Linux** — Windows wa
 ```bash
 ../lyra/build.sh            # the compiler, std/, bindings/ and lib/liblyra-{pty,imgui}.a
 ./build.sh                  # -> build/: sulafat (and Sulafat.app on macOS), vttest, uitest
-build/sulafat               # the login shell ($SHELL -l) in a window; closes when it ends
+build/sulafat               # the login shell ($SHELL -l) in a window of tabs: ⌘T new (in the
+                            #    shown tab's directory), ⌘W close, ⌘1–⌘9, ⌘⇧[ ⌘⇧]; a tab
+                            #    closes when its shell ends, the window with the last
 build/sulafat CMD [ARG…]    # that program instead (as xterm -e), no integration — a test
                             #    script's colours, say, seen without typing
 open build/Sulafat.app      # the same, as a Mac app
 build/vttest                # parser, screen, editor, PTY and zsh checks; exit 1 on a failure
 SDL_VIDEODRIVER=dummy build/uitest   # the command line on a headless ImGui host, driven by
                             #    injected keys, typing and clicks (double-click included)
+build/menutest              # the Mac's menu bar, installed and read back (SDL's real video
+                            #    driver, no window)
 ```
 
 ## Architecture
@@ -33,7 +37,10 @@ shell ⇄ bindings.pty ──bytes──▶ vt.Parser ──[]Action──▶ vt
 
 | file | what |
 |---|---|
-| `src/sulafat.lyra` | `main`: the ImGui host, the frame loop, `Mode`, drawing the grid, keys → bytes |
+| `src/sulafat.lyra` | `main`: the ImGui host, the frame loop, the tabs and their bar, fonts |
+| `src/session/session.lyra` | one tab: its PTY, screen, `Mode` and command line; read each frame, drawn and given keys when shown |
+| `src/ui/tabs.lyra` | the tab shortcuts, and the Mac's menu bar (Shell's tab items, the Window menu) |
+| `src/menutest.lyra` | the menu bar installed and read back |
 | `src/shell/shell.lyra` | shell integration (zsh's `.zshenv`, through `ZDOTDIR`): the marks, Tab's completion widget and its request file, the history file, what Return sends |
 | `src/editor/editor.lyra` | the command line's editor — text, caret, selection, motions, words, undo, layout; **pure** |
 | `src/ui/modifiers.lyra` | the modifier keys as pressed — ImGui's macOS Ctrl/⌘ swap undone |
@@ -50,6 +57,20 @@ shell ⇄ bindings.pty ──bytes──▶ vt.Parser ──[]Action──▶ vt
 - **The parser recognises, the screen acts.** Neither reads the other's input: the parser is
   tested on bytes alone, the screen on actions. A new sequence is a `Screen.csi`/`esc`/`osc`
   case and a `vttest` line.
+- **Every tab is read every frame, shown or not** (`Session.step`), so a program writing in a
+  hidden tab never waits on a full terminal; only the shown one is drawn and gets keys.
+  **Reading only ever ends a tab** (`alive` cleared, never set): a tab the user closed
+  (`request_close`) stays closed though its program has not ended yet. A
+  tab's label is `name###tab<id>`: ImGui keys a tab by the part after `###`, which a
+  changing title must not move. The grid is a child window under the bar, so it scrolls
+  alone; focus is asked of root and child (`FOCUSED_FLAGS_ROOT_AND_CHILD_WINDOWS`), and a
+  frame whose keys were a tab shortcut gives the tab none.
+- **On a Mac the menu bar is Sulafat's own** (`ui.install_menus`, through `bindings.menubar`),
+  replacing SDL's, whose Window ▸ Close took ⌘W and closed the window — the app — not the
+  tab. Shell holds New Tab ⌘T, Show Previous/Next Tab ⌘⇧[ ⌘⇧] (spelled `{` `}`, as AppKit
+  matches shifted keys) and Close Tab ⌘W; they arrive through `poll_menu`, and
+  `tab_command` leaves those keys alone when the bar is there, since AppKit hands a key
+  equivalent to SDL too. ⌘1–⌘9 have no items and stay keys.
 - **Nothing blocks**: `Pty.read` is non-blocking and drained once a frame, at most
   `READS_PER_FRAME` reads, so a program that never stops writing cannot freeze the window.
 - **A colour is one `u32`** (`DEFAULT`, a palette index, or RGB — `vt/style.lyra`): the

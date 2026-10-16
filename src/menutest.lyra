@@ -1,0 +1,61 @@
+// menutest — Sulafat's menu bar on a Mac, installed and read back: Shell's tab items with
+// their keys, and none of SDL's own Window ▸ Close, whose ⌘W closed the window, and with
+// it the app, rather than the tab. Needs SDL's real video driver (AppKit's application),
+// not the dummy one; no window is opened. Elsewhere there is no menu bar, and it passes.
+//
+//   build/menutest             exits 1 naming each check that failed
+
+import bindings.sdl3.{ init, quit, platform, INIT_VIDEO }
+import bindings.menubar.{ describe }
+import ui.{ install_menus }
+
+let main = () -> u8 => {
+  if platform() != "macOS" {
+    println("menutest: no menu bar here")
+    return 0
+  }
+  if !init(INIT_VIDEO) {
+    println("menutest: SDL's video did not start")
+    return 1
+  }
+  var failed = 0
+  if install_menus() {
+    let bar = describe()
+    failed += check("New Tab on cmd-t", key_of(bar, "New Tab") == "Cmd+T", bar)
+    failed += check("Close Tab on cmd-w", key_of(bar, "Close Tab") == "Cmd+W", bar)
+    failed += check(
+      "previous and next tab",
+      "${key_of(bar, "Show Previous Tab")} ${key_of(bar, "Show Next Tab")}" == "Cmd+{ Cmd+}",
+      bar
+    )
+    failed += check("no window Close", key_of(bar, "Close") == "missing", bar)
+    failed += check("the standard Window menu", key_of(bar, "Minimize") == "Cmd+M", bar)
+  } else {
+    failed += check("the menu bar installs", false, "")
+  }
+  quit()
+  if failed == 0 {
+    println("menutest: all passed")
+    0
+  } else {
+    println("menutest: ${failed} failed")
+    1
+  }
+}
+
+/// The key equivalent of the bar's item titled exactly `title` — `describe` writes each as
+/// `title<tab>key` — `""` for an item without one, `"missing"` for no such item.
+let key_of = (bar: string, title: string) -> string => {
+  for line in bar.split("\n") {
+    let parts = line.trim().split("\t")
+    if parts[0] == title { return if parts.len() > 1 { parts[1] } else { "" } }
+  }
+  "missing"
+}
+
+let check = (name: string, ok: bool, bar: string) -> i64 => {
+  if ok { 0 } else {
+    println("FAIL ${name}; the bar:\n${bar}")
+    1
+  }
+}

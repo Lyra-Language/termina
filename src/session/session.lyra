@@ -1,0 +1,444 @@
+module session
+//! One tab: a program on a pseudo-terminal (the user's shell, usually), what it has drawn,
+//! where its shell is, and its command line — read every frame whether it is shown or not,
+//! drawn and given the keys when it is the tab shown (`../sulafat.lyra` keeps the tabs).
+
+import std.env.{ lookup }
+import std.io.{ remove_file }
+import bindings.pty.{ spawn, close, Pty }
+import bindings.sdl3.{ platform }
+import bindings.imgui.{
+  get_content_region_avail,
+  get_cursor_screen_pos,
+  get_window_draw_list,
+  request_text_input,
+  typed_text,
+  is_key_pressed,
+  get_clipboard_text,
+  dummy,
+  get_scroll_y,
+  get_scroll_max_y,
+  set_scroll_y,
+  Vec2,
+  KEY_A,
+  KEY_V,
+  KEY_TAB,
+  KEY_LEFT_ARROW,
+  KEY_RIGHT_ARROW,
+  KEY_UP_ARROW,
+  KEY_DOWN_ARROW,
+  KEY_PAGE_UP,
+  KEY_PAGE_DOWN,
+  KEY_HOME,
+  KEY_END,
+  KEY_INSERT,
+  KEY_DELETE,
+  KEY_BACKSPACE,
+  KEY_SPACE,
+  KEY_ENTER,
+  KEY_ESCAPE,
+}
+import vt.{ parser, screen, Parser, Screen, InputStart }
+import shell.{ integration, load_history, submission, completion_request, Integration }
+import ui.{
+  held,
+  Complete,
+  command_line,
+  CommandLine,
+  Place,
+  Style,
+  Submit,
+  Send,
+  draw_line,
+  Theme,
+  Fonts,
+  LineAt,
+}
+import editor.{ Wrap }
+
+/// A tab's program and everything Sulafat keeps for it.
+pub struct Session {
+  pty: Pty,
+  parse: Parser,
+  shown: Screen,
+  mode: Mode,
+  line: CommandLine,
+  integrated: Maybe<Integration>,
+  /// What the tab is called without a title from its program: the program, by name.
+  program: string,
+  /// The command running since Return, or `""` at a prompt: the tab's name meanwhile.
+  running: string,
+  /// Whether output arrived this frame, and since the tab was last shown.
+  got_output: bool,
+  unseen: bool,
+  /// Still running; `false` once its program has ended or the user closed the tab, and it
+  /// is to close.
+  alive: bool,
+  /// A number no other tab of this window has, for the tab bar's identity.
+  id: i64,
+}
+
+/// Start a tab: `program` (the login shell with Sulafat's integration when empty) in `dir`
+/// (the home directory when `None`). `None` when it cannot be started.
+pub let open_session = (
+  program: []string,
+  dir: Maybe<string>,
+  id: i64
+) -> Maybe<Session> => {
+  let shell = lookup("SHELL") ?? "/bin/sh"
+  let own = program.len() > 0
+  let args = if own { program } else { [shell, "-l"] }
+  // The request file is this tab's: named by the time it started, to the nanosecond.
+  let integrated = if own { None } else { integration(shell, "${wall_clock_nanos()}") }
+  let integration_env = match integrated {
+    Some(i) => i.env,
+    None => [],
+  }
+  let env = [
+    "TERM=xterm-256color",
+    "COLORTERM=truecolor",
+    "TERM_PROGRAM=Sulafat",
+    ...integration_env,
+  ]
+  let start_in = match dir {
+    Some(d) => Some(d),
+    None => lookup("HOME"),
+  }
+  let Some(pty) = spawn(args, 80, 24, start_in, env) else { return None }
+  Some(Session {
+    pty: pty,
+    parse: parser(),
+    shown: screen(80, 24),
+    mode: Raw,
+    line: command_line(if own { [] } else { load_history(shell) }),
+    integrated: integrated,
+    program: base_name(args[0]),
+    running: "",
+    got_output: false,
+    unseen: false,
+    alive: true,
+    id: id,
+  })
+}
+
+/// End a tab: its program hung up on, its request file removed.
+pub let close_session = (s: Session) -> void => {
+  close(s.pty)
+  match s.integrated {
+    Some(i) => {
+      let _ = remove_file(i.request)
+    },
+    None => {},
+  }
+}
+
+/// The tab's name: the title its program set, else the command running, else its
+/// directory's last part (`~` for home), else the program.
+pub let tab_title = pure (s: Session, home: string) -> string => {
+  if s.shown.title != "" { return s.shown.title }
+  if s.running != "" { return first_line(s.running) }
+  let cwd = s.shown.cwd
+  if cwd == "" { return s.program }
+  if cwd == home { return "~" }
+  let name = base_name(cwd)
+  if name == "" { "/" } else { name }
+}
+
+/// The directory a tab beside this one starts in: where its shell last said it was.
+pub let directory = pure (s: Session) -> Maybe<string> =>
+  if s.shown.cwd == "" { None } else { Some(s.shown.cwd) }
+
+impl Session {
+  /// Close the tab (⌘W, its close button): it goes at the end of this frame, its program
+  /// hung up on.
+  pub let request_close = (self: mut) -> void => { self.alive = false }
+
+  /// This frame's reading: what the program wrote, carried out; where its shell now is; the
+  /// shell's completions and keys typed ahead handed to the command line; a typed-ahead
+  /// command run at a prompt. `shown` says whether the tab is the one in view.
+  pub let step = (self: mut, shown: bool) -> void => {
+    let (alive, got) = drain(self.pty, self.parse, self.shown)
+    // Reading only ever ends a tab: one closed by the user stays closed though its program
+    // has not ended yet.
+    if !alive { self.alive = false }
+    self.got_output = got
+    if got && !shown { self.unseen = true }
+    if shown { self.unseen = false }
+    // The last mark says where the shell is: input begins there, or something else has.
+    for m in self.shown.take_marks() {
+      self.mode = match m {
+        InputStart(at, col) => AtPrompt(at, col),
+        _ => Raw,
+      }
+      match self.mode {
+        AtPrompt(_, _) => { self.running = "" },
+        Raw => {},
+      }
+    }
+    for offered in self.shown.take_completions() { self.line.completed(offered) }
+    // Keys typed ahead while a command ran: at the prompt they wait for, a line ended by
+    // Return runs, as in any terminal, and the rest goes into the editor.
+    for keys in self.shown.take_typed_ahead() { self.line.typed_ahead(keys) }
+    match self.mode {
+      AtPrompt(_, _) => match self.line.take_typed_ahead() {
+        Some(command) => {
+          let _ = self.pty.write(submission(command, self.shown.bracketed_paste))
+          self.line.submitted(command)
+          self.running = command
+          self.mode = Raw
+        },
+        None => {},
+      },
+      Raw => {},
+    }
+  }
+}
+
+/// How the grid is drawn: a cell's size, how far down its cell text sits, a display pixel
+/// (what a drawn bold is offset by), the faces and the theme.
+pub struct Look {
+  cell: Vec2,
+  text_dy: f32,
+  pixel: f32,
+  fonts: Fonts,
+  theme: Theme,
+}
+
+/// Draw a tab into the current window — its grid filling it, the scrollback above, and the
+/// cursor, or at a prompt the command line's editor where input begins — and, when
+/// `focused`, give it the keys: the editor's at a prompt, the program's otherwise.
+pub let draw_session = (s: mut Session, look: Look, focused: bool) -> void => {
+  let cell = look.cell
+  let text_dy = look.text_dy
+  let pixel = look.pixel
+  let fonts = look.fonts
+  let theme = look.theme
+  // The grid is as many whole cells as the window holds.
+  let avail = get_content_region_avail()
+  let cols = (avail.x / cell.x).floor().max(2)
+  let rows = (avail.y / cell.y).floor().max(1)
+  if cols != s.shown.cols || rows != s.shown.rows {
+    s.shown.resize(cols, rows)
+    let _ = s.pty.resize(cols, rows)
+  }
+
+  // At a prompt still on the screen or in the scrollback: its line, and the layout of the
+  // command line after it.
+  let prompt = match s.mode {
+    AtPrompt(at, col) => match s.shown.line_at(at) {
+      Some(i) => Some((i, Wrap { first: col.min(cols - 1), cols: cols })),
+      None => None,
+    },
+    Raw => None,
+  }
+  // The command line's rows, and with the completion menu's below them those the grid
+  // leaves to it.
+  let (input_line, edit_rows, input_rows) = match prompt {
+    Some((i, wrap)) => (i, s.line.rows(wrap), s.line.rows(wrap) + s.line.menu_rows()),
+    None => (-1, 0, 0),
+  }
+
+  // Following the output: the view was at the bottom before this frame's scroll.
+  let at_bottom = get_scroll_y() >= get_scroll_max_y() - 1.0
+  let origin = get_cursor_screen_pos()
+  let total = (s.shown.scrollback_len() + s.shown.rows).max(input_line + input_rows)
+  let top = (get_scroll_y() / cell.y).floor().clamp(0, total)
+  let bottom = (top + rows + 1).min(total).min(s.shown.scrollback_len() + s.shown.rows)
+  let list = get_window_draw_list()
+  if input_line >= 0 {
+    let y = origin.y + f32(input_line) * cell.y
+    list.add_rect_filled(
+      Vec2 { x: origin.x - BAND_MARGIN, y: y },
+      Vec2 { x: origin.x + f32(cols) * cell.x + BAND_MARGIN, y: y + f32(edit_rows) * cell.y },
+      INPUT_BAND,
+      4.0
+    )
+  }
+  for i in top..<bottom {
+    // The command line's rows are the editor's: of the prompt's line only the prompt is
+    // drawn, and the shell's empty input below it not at all.
+    let upto = if i == input_line {
+      match prompt {
+        Some((_, wrap)) => wrap.first,
+        None => s.shown.cols,
+      }
+    } else if i > input_line && i < input_line + input_rows {
+      0
+    } else {
+      s.shown.cols
+    }
+    let at = LineAt {
+      origin: Vec2 { x: origin.x, y: origin.y + f32(i) * cell.y },
+      cell: cell,
+      text_dy: text_dy,
+      pixel: pixel,
+    }
+    draw_line(list, theme, fonts, at, s.shown.line(i), upto)
+  }
+  let cursor = Vec2 {
+    x: origin.x + f32(s.shown.x) * cell.x,
+    y: origin.y + f32(s.shown.scrollback_len() + s.shown.y) * cell.y,
+  }
+  dummy(Vec2 { x: f32(cols) * cell.x, y: f32(total) * cell.y })
+
+  var follow = s.got_output && at_bottom
+  match prompt {
+    Some((i, wrap)) => {
+      let before = "${s.line.edit.cursor}:${s.line.edit.anchor}:${s.line.edit.content()}"
+      let place = Place {
+        origin: Vec2 { x: origin.x, y: origin.y + f32(i) * cell.y },
+        cell: cell,
+        text_dy: text_dy,
+        wrap: wrap,
+      }
+      let style = Style {
+        text: theme.fg,
+        caret: CARET,
+        selection: SELECTION,
+        menu: MENU,
+        menu_chosen: MENU_CHOSEN,
+        faint: theme.palette[8],
+      }
+      match s.line.update(place, list, style, focused) {
+        Submit(command) => {
+          let _ = s.pty.write(submission(command, s.shown.bracketed_paste))
+          s.line.submitted(command)
+          s.running = command
+          s.mode = Raw
+          follow = true
+        },
+        Send(bytes) => {
+          let _ = s.pty.write(bytes)
+        },
+        Complete(text, cursor) => {
+          match s.integrated {
+            Some(i) => match completion_request(i, text, cursor) {
+              Some(key) => {
+                let _ = s.pty.write(key)
+              },
+              None => {},
+            },
+            None => {},
+          }
+        },
+        _ => {},
+      }
+      let after = "${s.line.edit.cursor}:${s.line.edit.anchor}:${s.line.edit.content()}"
+      if before != after { follow = true }
+    },
+    None => {
+      if s.shown.cursor_visible {
+        list.add_rect_filled(
+          cursor,
+          Vec2 { x: cursor.x + cell.x, y: cursor.y + cell.y },
+          CURSOR
+        )
+      }
+      if focused {
+        request_text_input(cursor, cell.y)
+        if send_keys(s.pty) { follow = true }
+      }
+    },
+  }
+  if follow { set_scroll_y(f32(total) * cell.y) }
+}
+
+/// Where the shell is, as far as Sulafat can tell.
+data Mode =
+  /// A program is running, the shell is drawing its prompt, or it has no integration: the
+  /// keys go to it as typed.
+  Raw
+  /// At a prompt whose input begins at this absolute line and column: the command line
+  /// there is Sulafat's editor.
+  | AtPrompt(i64, i64)
+
+/// The colours drawn over the grid: the cursor, the command line's caret and selection,
+/// the band behind the command line, and the completion menu and its chosen row.
+const CURSOR: u32 = 0xB0E6E1DC
+const CARET: u32 = 0xFFFFC66D
+const SELECTION: u32 = 0x66B07A3A
+const INPUT_BAND: u32 = 0x10FFFFFF
+const MENU: u32 = 0xFF2E2A25
+const MENU_CHOSEN: u32 = 0xFF4A4038
+
+/// How far the command line's band reaches past the grid on each side, in points.
+const BAND_MARGIN: f32 = 5.0
+
+/// Reads per frame at most — a megabyte — so that a program writing without end (`yes`)
+/// cannot stop the window drawing.
+const READS_PER_FRAME: i64 = 16
+
+/// What the shell has written since the last frame, carried out on `shown`. Answers whether
+/// the shell is still there, and whether anything arrived.
+let drain = (pty: Pty, parse: mut Parser, shown: mut Screen) -> (bool, bool) => {
+  var got = false
+  for _ in 0..<READS_PER_FRAME {
+    match pty.read() {
+      None => return (false, got),
+      Some(bytes) => {
+        if bytes.len() == 0 { return (true, got) }
+        shown.apply(parse.feed(bytes))
+        got = true
+      },
+    }
+  }
+  (true, got)
+}
+
+/// This frame's keys and typed text, sent to the shell as a terminal sends them. Whether
+/// anything was sent.
+let send_keys = (pty: Pty) -> bool => {
+  // The keys as pressed: ImGui swaps Ctrl and ⌘ on macOS, and `held` undoes it.
+  let keys = held()
+  let mac = platform() == "macOS"
+  let ctrl = keys.control
+  // A shortcut of the terminal's own: ⌘ on a Mac, Ctrl+Shift elsewhere.
+  let command = if mac { keys.command } else { ctrl && keys.shift }
+  var out = ""
+  if command {
+    if is_key_pressed(KEY_V) { out = get_clipboard_text() }
+  } else if ctrl {
+    // Ctrl+A … Ctrl+Z are the control characters 1 … 26; Ctrl+Space is NUL.
+    for k in 0..<26 {
+      if is_key_pressed(KEY_A + i32(k)) { out = "${out}${rune(k + 1)}" }
+    }
+    if is_key_pressed(KEY_SPACE) { let _ = pty.write_bytes([0]) }
+  } else {
+    out = typed_text()
+  }
+  let named = [
+    (KEY_ENTER, "\r"),
+    (KEY_BACKSPACE, "\x7f"),
+    (KEY_TAB, if keys.shift { "\e[Z" } else { "\t" }),
+    (KEY_ESCAPE, "\e"),
+    (KEY_UP_ARROW, "\e[A"),
+    (KEY_DOWN_ARROW, "\e[B"),
+    (KEY_RIGHT_ARROW, "\e[C"),
+    (KEY_LEFT_ARROW, "\e[D"),
+    (KEY_HOME, "\e[H"),
+    (KEY_END, "\e[F"),
+    (KEY_INSERT, "\e[2~"),
+    (KEY_DELETE, "\e[3~"),
+    (KEY_PAGE_UP, "\e[5~"),
+    (KEY_PAGE_DOWN, "\e[6~"),
+  ]
+  if !command {
+    for (key, bytes) in named {
+      if is_key_pressed(key) { out = "${out}${bytes}" }
+    }
+  }
+  if out == "" { return false }
+  let _ = pty.write(out)
+  true
+}
+
+/// The last part of a path.
+let base_name = pure (path: string) -> string => {
+  var k = path.len()
+  while k > 0 && path.slice(k - 1, k) == "/" { k -= 1 }
+  let parts = path.slice(0, k).split("/")
+  parts[parts.len() - 1]
+}
+
+/// A command's first line, for a tab's name.
+let first_line = pure (command: string) -> string => command.split("\n")[0]
