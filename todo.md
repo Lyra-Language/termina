@@ -6,7 +6,8 @@ milestones are in `CLAUDE.md` § Plan.
 ## The command line (M3)
 
 - **[DONE 10/16] Tab completion** — zsh's own, captured by a widget and offered in a menu (`CLAUDE.md`, Tab completion).
-- **[OPEN] Filter the menu as you type** — typing closes it today; narrowing it by the word as it grows would save a Tab.
+- **[DONE 10/16] Filter the menu as you type** — typing narrows it from zsh's list and ⌫ widens it; it closes when nothing is left or the caret leaves the word.
+- **[OPEN] Narrowing is literal** — a case-insensitive or substring `matcher-list` in the user's zsh shapes Tab's list, but typing then narrows by exact start; asking zsh again would honour it.
 - **[OPEN] A completion's own suffix rules** — zsh removes an auto-added space or `/` when the next key is `/` or `)`; Sulafat keeps it.
 - **[OPEN] Type-ahead** — keys typed between Return and the next prompt go to the shell's own line editor, and would reach the next command unseen.
 - **[OPEN] Right prompts** — zsh's `RPROMPT` sits under the editor's band and is hidden by nothing; text typed past it overlaps.

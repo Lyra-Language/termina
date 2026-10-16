@@ -87,7 +87,9 @@ shell ⇄ bindings.pty ──bytes──▶ vt.Parser ──[]Action──▶ vt
   `m;prefix;insert;suffix;shown;description` percent-encoded, `e`) — none inserted, none
   listed. **Sulafat finds the word itself** (`editor.shell_word_at`, quotes and escapes
   included): inside quotes zsh measures positions with the quote removed. The answer for a
-  line edited since the request is dropped. `compinit` is loaded only if the user's
+  line edited since the request is dropped. **Typing narrows the menu locally** from the
+  list zsh gave (`CommandLine.narrow`, by exact start; ⌫ widens it), keeping the choice
+  chosen; it closes when nothing is left, the word is typed in full, or the caret moves off. `compinit` is loaded only if the user's
   config has not, its dump in Sulafat's cache.
 - **Editor edits build new arrays** (undo snapshots share buffers); typing joins one undo
   step until a word ends, rune deletes join, word and line deletes stand alone.

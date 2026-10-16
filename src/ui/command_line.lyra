@@ -14,8 +14,10 @@ module ui
 //! **Tab** asks the shell for the completions of the word at the caret (zsh's own, through
 //! its integration — `../shell/shell.lyra`). One is put in at once; of several, the start
 //! they share is, and a menu opens under the word: ↑/↓ or Tab/⇧Tab choose, Return or a
-//! click puts the chosen one in, Escape closes it, and anything else closes it and is
-//! itself.
+//! click puts the chosen one in, Escape closes it. **Typing narrows it** to the matches
+//! that start with the word as it now stands, and ⌫ widens it again — from the list zsh
+//! gave, without asking again; it closes when nothing is left to offer or the caret leaves
+//! the word's end.
 //!
 //! **Mouse** — a click puts the caret; a drag, or a shift-click, selects; a double-click
 //! selects the word under the pointer and a drag after it extends by whole words; a
@@ -90,8 +92,12 @@ pub struct CommandLine {
   /// The text and caret completions were asked for, while the shell works on them: an
   /// answer for anything else (the user went on typing) is dropped.
   pending: Maybe<(string, i64)>,
-  /// The completions offered, while their menu is open (empty: closed), the one chosen, and
-  /// the first the menu shows.
+  /// The completions zsh offered, while their menu is open, and the column their word
+  /// begins at: what typing narrows the menu from, and widens it back to.
+  offered: []Completion,
+  menu_word: i64,
+  /// The completions the menu shows (empty: closed) — those of `offered` that start with
+  /// the word as typed — the one chosen, and the first shown.
   menu: []Completion,
   chosen: i64,
   menu_top: i64,
@@ -123,6 +129,8 @@ pub let command_line = (history: []string) -> CommandLine => CommandLine {
   dragging: false,
   word_drag: None,
   pending: None,
+  offered: [],
+  menu_word: 0,
   menu: [],
   chosen: 0,
   menu_top: 0,
@@ -181,9 +189,38 @@ impl CommandLine {
       end,
       shared
     ) }
-    self.menu = unique
+    let (word_start, _) = shell_word_at(self.edit.text, self.edit.cursor)
+    self.offered = unique
+    self.menu_word = word_start
     self.chosen = 0
     self.menu_top = 0
+    self.narrow()
+  }
+
+  // The menu as the word now stands: the offered completions it is the start of, the one
+  // chosen kept chosen while it is among them. Closed when the caret has left the end of
+  // the word the completions were for, when none is left, or when the one left is the word
+  // already, complete.
+  let narrow = (self: mut) -> void => {
+    let (start, end) = shell_word_at(self.edit.text, self.edit.cursor)
+    if start != self.menu_word || self.edit.cursor != end || self.edit.has_selection() {
+      return self.close_menu()
+    }
+    let typed = text_of(self.edit.text.slice(start, self.edit.cursor))
+    var kept: []Completion = []
+    for c in self.offered { if key_of(c).starts_with(typed) { kept.push(c) } }
+    if kept.len() == 0 || (kept.len() == 1 && key_of(kept[0]) == typed) { return self.close_menu() }
+    let was = if self.chosen < self.menu.len() { key_of(self.menu[self.chosen]) } else { "" }
+    self.chosen = 0
+    for k in 0..<kept.len() { if key_of(kept[k]) == was { self.chosen = k } }
+    self.menu = kept
+    // Scrolled no further than a shorter list allows, with the choice in view.
+    let last_top = (kept.len() - MENU_ROWS).max(0)
+    self.menu_top = self.menu_top
+      .min(last_top)
+      .min(self.chosen)
+      .max(self.chosen - MENU_ROWS + 1)
+      .max(0)
   }
 
   // Put completion `c` in place of the word at the caret, and close the menu.
@@ -194,6 +231,7 @@ impl CommandLine {
   }
 
   let close_menu = (self: mut) -> void => {
+    self.offered = []
     self.menu = []
     self.chosen = 0
     self.menu_top = 0
@@ -334,10 +372,13 @@ impl CommandLine {
         self.close_menu()
         return Nothing
       }
-      // Anything else closes the menu and is itself.
-      let before = "${self.edit.cursor}:${self.edit.content()}"
+      // Anything else is itself: an edit narrows the menu (or widens it), and a move alone
+      // — the caret leaving the word — closes it.
+      let text_before = self.edit.content()
+      let cursor_before = self.edit.cursor
       let outcome = self.edit_keys(wrap, mac, shift, ctrl, command, by_word)
-      if "${self.edit.cursor}:${self.edit.content()}" != before { self.close_menu() }
+      if self.edit.content() != text_before { self.narrow() }
+      else if self.edit.cursor != cursor_before { self.close_menu() }
       return outcome
     }
     if is_key_pressed(KEY_TAB) && !ctrl && !command {
@@ -560,6 +601,9 @@ pub let push_rune = (bytes: mut []u8, c: i64) -> void => {
     bytes.push(u8(0x80 | (c & 0x3F)))
   }
 }
+
+/// What a completion makes of its word, before its suffix: what typing is compared with.
+let key_of = pure (c: Completion) -> string => "${c.prefix}${c.insert}"
 
 /// The longest start every one of `words` shares.
 let common_start = pure (words: []string) -> string => {

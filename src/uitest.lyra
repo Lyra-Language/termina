@@ -234,6 +234,77 @@ let check_completion = (host: Host) -> i64 => {
     "0|xy"
   )
 
+  // Typing narrows the menu from the list zsh gave; backspace widens it again; the choice
+  // stays chosen while it is there.
+  var narrowing = command_line([])
+  type_text(host, narrowing, "git ch")
+  let _ = press(host, narrowing, [], KEY_TAB)
+  narrowing.completed([
+    offer("", "checkout", " ", "checkout", ""),
+    offer("", "cherry-pick", " ", "cherry-pick", ""),
+    offer("", "cherry", " ", "cherry", ""),
+    offer("", "check-attr", " ", "check-attr", ""),
+  ])
+  failed += check(
+    "opens on the shared start",
+    "${narrowing.edit.content()}|${shown(narrowing)}",
+    "git che|checkout cherry-pick cherry check-attr"
+  )
+  type_text(host, narrowing, "r")
+  failed += check("r narrows", shown(narrowing), "cherry-pick cherry")
+  press(host, narrowing, [], KEY_DOWN_ARROW)
+  failed += check("choose the second", chosen(narrowing), "cherry")
+  press(host, narrowing, [], KEY_BACKSPACE)
+  failed += check(
+    "backspace widens",
+    shown(narrowing),
+    "checkout cherry-pick cherry check-attr"
+  )
+  failed += check("the choice stays chosen", chosen(narrowing), "cherry")
+  type_text(host, narrowing, "ck")
+  failed += check("ck narrows", shown(narrowing), "checkout check-attr")
+  failed += check("a choice gone goes to the first", chosen(narrowing), "checkout")
+  press(host, narrowing, [], KEY_ENTER)
+  failed += check("return puts it in", narrowing.edit.content(), "git checkout ")
+
+  // Nothing left, the word typed in full, or the caret moving away: the menu closes.
+  var gone = command_line([])
+  type_text(host, gone, "ls s")
+  let _ = press(host, gone, [], KEY_TAB)
+  gone.completed([offer("", "src", "/", "src", ""), offer("", "sub", "/", "sub", "")])
+  type_text(host, gone, "q")
+  failed += check(
+    "nothing left closes",
+    "${gone.menu_rows()}|${gone.edit.content()}",
+    "0|ls sq"
+  )
+  var full = command_line([])
+  type_text(host, full, "ls s")
+  let _ = press(host, full, [], KEY_TAB)
+  full.completed([offer("", "src", "/", "src", ""), offer("", "sub", "/", "sub", "")])
+  type_text(host, full, "rc")
+  failed += check(
+    "typed in full closes",
+    "${full.menu_rows()}|${full.edit.content()}",
+    "0|ls src"
+  )
+  var moved = command_line([])
+  type_text(host, moved, "ls s")
+  let _ = press(host, moved, [], KEY_TAB)
+  moved.completed([offer("", "src", "/", "src", ""), offer("", "sub", "/", "sub", "")])
+  press(host, moved, [], KEY_LEFT_ARROW)
+  failed += check("moving off the word closes", "${moved.menu_rows()}", "0")
+  var spaced = command_line([])
+  type_text(host, spaced, "ls s")
+  let _ = press(host, spaced, [], KEY_TAB)
+  spaced.completed([offer("", "src", "/", "src", ""), offer("", "sub", "/", "sub", "")])
+  type_text(host, spaced, " ")
+  failed += check(
+    "a space ends the word, and the menu",
+    "${spaced.menu_rows()}|${spaced.edit.content()}",
+    "0|ls s "
+  )
+
   // An answer for a line edited since is dropped.
   var stale = command_line([])
   type_text(host, stale, "ec")
@@ -243,6 +314,13 @@ let check_completion = (host: Host) -> i64 => {
   failed += check("a stale answer", stale.edit.content(), "ech")
   failed
 }
+
+/// The completions a menu shows, in order.
+let shown = (line: CommandLine) -> string => [c in line.menu | c.shown].join(" ")
+
+/// The one chosen.
+let chosen = (line: CommandLine) -> string =>
+  if line.menu.len() == 0 { "" } else { line.menu[line.chosen].shown }
 
 let offer = (
   prefix: string,
