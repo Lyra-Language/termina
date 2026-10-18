@@ -12,6 +12,8 @@ import vt.{
   DIM,
   INVERSE,
   HIDDEN,
+  BOLD,
+  indexed,
   palette_index,
   rgb_of,
 }
@@ -21,6 +23,9 @@ pub struct Theme {
   fg: u32,
   bg: u32,
   palette: []u32,
+  /// Draw bold text in colours 0–7 as their bright versions (8–15), as older programs that
+  /// used bold *for* brightness expect. Off: bold is a heavier face, the colour as asked.
+  bold_is_bright: bool,
 }
 
 /// Sulafat's dark theme: the window's own `#181A1E` behind `#E6E1DC`, and an ANSI set in
@@ -33,6 +38,7 @@ pub let dark_theme = pure () -> Theme => Theme {
     0x3B3F4A, 0xE06C75, 0x98C379, 0xE5C07B, 0x61AFEF, 0xC678DD, 0x56B6C2, 0xABB2BF,
     0x5C6370, 0xF08A93, 0xB5E08F, 0xF2D49B, 0x84C3F5, 0xD79BE8, 0x7FCBD5, 0xF5F2EE,
   ]),
+  bold_is_bright: false,
 }
 
 impl Theme {
@@ -40,7 +46,12 @@ impl Theme {
   /// own, which the window is already. Inverse swaps the two (the theme's own included), a
   /// hidden cell's text is its background, and dim text is half-way to the background.
   pub let colours = pure (self, cell: Cell) -> (u32, Maybe<u32>) => {
-    var fg = self.colour(cell.fg, self.fg)
+    // Bold as bright, when the theme has it: one of the first eight colours, brightened.
+    let asked = match palette_index(cell.fg) {
+      Some(i) => if self.bold_is_bright && cell.attrs & BOLD != 0 && i < 8 { indexed(i + 8) } else { cell.fg },
+      None => cell.fg,
+    }
+    var fg = self.colour(asked, self.fg)
     var bg = if cell.bg == DEFAULT { None } else { Some(self.colour(cell.bg, self.bg)) }
     if cell.attrs & INVERSE != 0 {
       let was = fg

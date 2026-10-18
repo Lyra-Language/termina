@@ -8,10 +8,16 @@ import bindings.pty.{ spawn, close }
 import shell.{ integration, submission, completion_request }
 import editor.{ editor, Editor, Wrap, position, index_at, rune_at, shell_word_at }
 import std.env.{ lookup }
-import std.io.{ create_dir_all, write_file, remove_file }
+import std.io.{ create_dir_all, write_file, remove_file, is_executable }
 import std.path
 import vt.{
   runes_of,
+  Spot,
+  selected_on,
+  selection_text,
+  word_span,
+  width_of,
+  SPACER,
   indexed,
   rgb,
   DEFAULT,
@@ -44,6 +50,10 @@ let main = () -> u8 => {
   failed += check_parser()
   failed += check_screen()
   failed += check_style()
+  failed += check_modes()
+  failed += check_reports()
+  failed += check_wide()
+  failed += check_selection()
   failed += check_pty()
   failed += check_typing()
   failed += check_editor()
@@ -53,6 +63,7 @@ let main = () -> u8 => {
   failed += check_completion_reports()
   failed += check_zsh_completion()
   failed += check_zsh_typed_ahead()
+  failed += check_full_screen()
   if failed == 0 {
     println("vttest: all passed")
     0
@@ -213,6 +224,153 @@ let check_style = () -> i64 => {
     "save and restore the pen",
     style_at("\e[31m\e7\e[32m\e8x", 0),
     style(indexed(1), DEFAULT, 0)
+  )
+  failed
+}
+
+// A selection's text and words, on the screen and its scrollback.
+let check_selection = () -> i64 => {
+  var failed = 0
+  let s = run(8, 3, "one two\r\nfoo.bar\r\n中x  end")
+  failed += check("within a line", selection_text(s, at(0, 4), at(0, 7)), "two")
+  failed += check(
+    "across lines, blanks dropped",
+    selection_text(s, at(0, 4), at(1, 3)),
+    "two\nfoo"
+  )
+  failed += check(
+    "backwards is the same",
+    selection_text(s, at(1, 3), at(0, 4)),
+    "two\nfoo"
+  )
+  failed += check("a wide rune once", selection_text(s, at(2, 0), at(2, 3)), "中x")
+  failed += check(
+    "whole lines",
+    selection_text(s, at(0, 0), at(2, 8)),
+    "one two\nfoo.bar\n中x  end"
+  )
+  failed += check("a word", span(word_span(s, 0, 5)), "4,7")
+  failed += check("punctuation", span(word_span(s, 1, 3)), "3,4")
+  failed += check("a word beside it", span(word_span(s, 1, 5)), "4,7")
+  failed += check("blanks", span(word_span(s, 2, 4)), "3,5")
+  failed += check("the second half of a wide rune", span(word_span(s, 2, 1)), "0,3")
+  failed += check(
+    "selected on a middle line",
+    span(selected_on(at(0, 4), at(2, 2), 1, 8)),
+    "0,8"
+  )
+  failed += check(
+    "selected on another line",
+    span(selected_on(at(0, 4), at(0, 6), 1, 8)),
+    "0,0"
+  )
+  // Lines that have left the scrollback are skipped.
+  var small = run(4, 1, "a\r\nb\r\nc")
+  failed += check("lines gone", selection_text(small, at(-5, 0), at(2, 4)), "a\nb\nc")
+  failed
+}
+
+let at = (line: i64, col: i64) -> Spot => Spot { line: line, col: col }
+
+let span = (p: (i64, i64)) -> string => "${p.0},${p.1}"
+
+// Wide runes take two cells; zero-width ones none.
+let check_wide = () -> i64 => {
+  var failed = 0
+  failed += check(
+    "widths",
+    "${width_of('a')} ${width_of('中')} ${width_of('😀')} ${width_of(rune(0x301))} ${width_of('é')}",
+    "1 2 2 0 1"
+  )
+  let s = run(6, 2, "a中b")
+  failed += check(
+    "a wide rune and a spacer",
+    "${s.line(0)[1].ch == '中'} ${s.line(0)[2].ch == SPACER}",
+    "true true"
+  )
+  failed += check("the cursor past both cells", "${s.x}", "4")
+  failed += check("its text, spacer unseen", line_text(s.line(0)), "a中b  ")
+  failed += check(
+    "one column left: on to the next line",
+    rows(run(3, 2, "ab中")),
+    "ab |中 "
+  )
+  failed += check("filling the last two columns", rows(run(4, 2, "ab中x")), "ab中|x   ")
+  // Writing over half a wide rune blanks the other half.
+  failed += check("over its first half", rows(run(4, 1, "中\rx")), "x   ")
+  failed += check("over its second half", rows(run(4, 1, "中\e[2Gx")), " x  ")
+  failed += check("a combining mark is dropped", rows(run(4, 1, "e\u0301x")), "ex  ")
+  failed
+}
+
+// The program's questions, answered.
+let check_reports = () -> i64 => {
+  var failed = 0
+  failed += check("DA1", replies("\e[c"), "\\e[?62;22c")
+  failed += check("DA1 with a 0", replies("\e[0c"), "\\e[?62;22c")
+  failed += check("DA2", replies("\e[>c"), "\\e[>1;1;0c")
+  failed += check("XTVERSION", replies("\e[>q"), "\\eP>|Sulafat 0.1\\e\\")
+  failed += check("DSR status", replies("\e[5n"), "\\e[0n")
+  failed += check("cursor position", replies("ab\r\nc\e[6n"), "\\e[2;2R")
+  failed += check("DECRQM set", replies("\e[?2004h\e[?2004$p"), "\\e[?2004;1$y")
+  failed += check("DECRQM reset", replies("\e[?1$p"), "\\e[?1;2$y")
+  failed += check("DECRQM unknown", replies("\e[?9999$p"), "\\e[?9999;0$y")
+  failed += check(
+    "background colour",
+    replies("\e]11;?\x07"),
+    "\\e]11;rgb:1818/1a1a/1e1e\\e\\"
+  )
+  failed += check("text colour", replies("\e]10;?\e\\"), "\\e]10;rgb:e6e6/e1e1/dcdc\\e\\")
+  failed += check("several, in order", replies("\e[c\e[5n"), "\\e[?62;22c|\\e[0n")
+  failed += check("no question, no answer", replies("hello\e[m"), "")
+  failed
+}
+
+/// The answers to `input`, joined by `|`, with ESC shown as `\e`.
+let replies = (input: string) -> string => {
+  var s = run(10, 3, input)
+  [r in s.take_replies() | r.replace("\e", "\\e")].join("|")
+}
+
+// The DEC private modes full-screen programs set.
+let check_modes = () -> i64 => {
+  var failed = 0
+  // The alternate screen: blank, the main one kept with its cursor, no scrollback while on.
+  var p = parser()
+  var s = screen(6, 2)
+  s.apply(p.feed("main\r\nhere".encode_utf8()))
+  s.apply(p.feed("\e[?1049h".encode_utf8()))
+  failed += check("alt is blank", rows(s), "      |      ")
+  failed += check("alt keeps the cursor's place", "${s.x},${s.y}", "4,1")
+  s.apply(p.feed("\e[HALT\r\n1\r\n2\r\n3".encode_utf8()))
+  failed += check("alt scrolls without scrollback", "${s.scrollback_len()}", "0")
+  s.resize(4, 2)
+  s.apply(p.feed("\e[?1049l".encode_utf8()))
+  failed += check("main comes back, fitted", rows(s), "main|here")
+  failed += check("and its cursor", "${s.x},${s.y}", "3,1")
+  failed += check("alt flag", "${s.alt}", "false")
+  // ?47 switches without the cursor; entering twice is entering once.
+  var q = parser()
+  var t = screen(4, 1)
+  t.apply(q.feed("ab\e[?47h\e[?47hx\e[?47l".encode_utf8()))
+  failed += check("?47 back to the main screen", rows(t), "ab  ")
+  // Autowrap off: the last column is written over.
+  failed += check("no autowrap", rows(run(3, 2, "\e[?7labcde")), "abe|   ")
+  failed += check("autowrap back on", rows(run(3, 2, "\e[?7l\e[?7habcd")), "abc|d  ")
+  // Keys, cursor shape, mouse.
+  let m = run(4, 1, "\e[?1h\e=\e[5 q\e[?1002h\e[?1006h\e[?1004h")
+  failed += check("cursor keys, keypad", "${m.cursor_keys} ${m.keypad}", "true true")
+  failed += check("cursor shape", "${m.cursor_shape}", "5")
+  failed += check(
+    "mouse modes",
+    "${m.mouse_mode} ${m.mouse_sgr} ${m.focus_events}",
+    "1002 true true"
+  )
+  let n = run(4, 1, "\e[?1h\e=\e[?1002h\e[?1l\e>\e[?1002l")
+  failed += check(
+    "and off again",
+    "${n.cursor_keys} ${n.keypad} ${n.mouse_mode}",
+    "false false 0"
   )
   failed
 }
@@ -659,6 +817,119 @@ let check_zsh_typed_ahead = () -> i64 => {
   close(pty)
   check("typed ahead, reported", reports.join("|"), "echo ahead\nech")
 }
+
+// vim, less and top (htop when there is one) on a pseudo-terminal: each on the alternate
+// screen, drawn as it should be, its questions answered — then quit, and the main screen
+// back.
+let check_full_screen = () -> i64 => {
+  let dir = (lookup("TMPDIR") ?? "/tmp").join("sulafat-full-${wall_clock_nanos()}")
+  if !create_dir_all(dir) { return check("scratch dir", "not made", "made") }
+  let file = dir.join("words.txt")
+  let _ = write_file(file, "alpha\nbeta\ngamma\n")
+  var failed = 0
+
+  let (vim_seen, vim_after, vim_ended) = full_screen(
+    ["vim", "-u", "NONE", "-N", "-i", "NONE", file],
+    dir,
+    (s) => s.alt && screen_row(s, 0) == "alpha",
+    (s) => "${screen_row(s, 0)}|${screen_row(s, 1)}|${screen_row(s, 2)}|${screen_row(s, 3)}|${s.cursor_keys}",
+    ":q!\r"
+  )
+  failed += check(
+    "vim draws the file, and a ~ past its end",
+    vim_seen,
+    "alpha|beta|gamma|~|true"
+  )
+  failed += check(
+    "vim quits back to the main screen",
+    "${vim_ended} ${vim_after.alt}",
+    "true false"
+  )
+
+  let (less_seen, less_after, less_ended) = full_screen(
+    // In the file's directory, so its status line is short: a status exactly as wide as the
+    // screen, then `\e[K` at the pending wrap, loses its last character here as in xterm.
+    ["less", "words.txt"],
+    dir,
+    // A file shorter than the screen is drawn at its foot, above less's own status line,
+    // as in any terminal: less moves to the last row and lets the lines scroll up.
+    (s) => s.alt && screen_row(s, s.rows - 1).ends_with("(END)"),
+    (s) => "${screen_row(s, s.rows - 4)}|${screen_row(s, s.rows - 3)}|${screen_row(s, s.rows - 2)}|${screen_row(s, 0)}",
+    "q"
+  )
+  failed += check("less draws the file above (END)", less_seen, "alpha|beta|gamma|")
+  failed += check(
+    "less quits back to the main screen",
+    "${less_ended} ${less_after.alt}",
+    "true false"
+  )
+
+  let top = if is_executable("/usr/bin/htop") || is_executable("/opt/homebrew/bin/htop") { "htop" } else { "top" }
+  let (top_seen, top_after, top_ended) = full_screen(
+    [top],
+    dir,
+    (s) => s.alt && drawn_rows(s) >= 5,
+    (s) => "${drawn_rows(s) >= 5}",
+    "q"
+  )
+  failed += check("${top} fills its screen", top_seen, "true")
+  failed += check(
+    "${top} quits back to the main screen",
+    "${top_ended} ${top_after.alt}",
+    "true false"
+  )
+  let _ = remove_file(file)
+  failed
+}
+
+/// `args` run in `dir` on a 60 × 12 pseudo-terminal until `ready` says its screen is drawn, `look`
+/// read off the screen then, and `quit` typed; its questions answered throughout, as a tab
+/// answers them. The look, the screen at the end, and whether the program ended — within
+/// ten seconds for each half.
+let full_screen = (
+  args: []string,
+  dir: string,
+  ready: (Screen) -> bool,
+  look: (Screen) -> string,
+  quit: string
+) -> (string, Screen, bool) => {
+  var s = screen(60, 12)
+  let Some(pty) = spawn(args, 60, 12, Some(dir), ["TERM=xterm-256color", "LESS="]) else {
+    return ("could not start", s, false)
+  }
+  var p = parser()
+  var seen = "never ready"
+  var ended = false
+  var quitting = false
+  var deadline = wall_clock_nanos() + 10000000000
+  while !ended && wall_clock_nanos() < deadline {
+    match pty.read() {
+      None => { ended = true },
+      Some(bytes) => {
+        if bytes.len() > 0 { s.apply(p.feed(bytes)) }
+        for reply in s.take_replies() {
+          let _ = pty.write(reply)
+        }
+        if !quitting && ready(s) {
+          seen = look(s)
+          let _ = pty.write(quit)
+          quitting = true
+          deadline = wall_clock_nanos() + 10000000000
+        }
+      },
+    }
+  }
+  close(pty)
+  (seen, s, ended)
+}
+
+/// Row `y` of the screen (not the scrollback), its trailing blanks off.
+let screen_row = (s: Screen, y: i64) -> string =>
+  line_text(s.line(s.scrollback_len() + y)).trim_end()
+
+/// How many of the screen's rows have something on them.
+let drawn_rows = (s: Screen) -> i64 =>
+  [y in 0..<s.rows | screen_row(s, y) != "" | 1].len()
 
 let describe_marks = (s: mut Screen) -> string => [m in s.take_marks() | match m {
   PromptStart => "A",

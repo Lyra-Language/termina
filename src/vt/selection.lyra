@@ -1,0 +1,70 @@
+module vt
+//! A selection on the screen and its scrollback — what the mouse drags out to copy. A
+//! position is an absolute line ([Screen.absolute]) and a column *boundary* (0 to `cols`,
+//! between cells, as a caret is), so a selection stays on its text while output scrolls
+//! it up. The cells selected are those from the earlier position to the later.
+
+/// A place between two cells: an absolute line, and a column from 0 to `cols`.
+pub struct Spot {
+  line: i64,
+  col: i64,
+}
+
+/// `a` and `b`, the earlier first.
+pub let ordered = pure (a: Spot, b: Spot) -> (Spot, Spot) =>
+  if a.line < b.line || (a.line == b.line && a.col <= b.col) { (a, b) } else { (b, a) }
+
+/// The columns of line `line` (absolute) the selection from `a` to `b` covers, as
+/// `(start, end)` — empty (`start == end`) when it covers none of it.
+pub let selected_on = pure (a: Spot, b: Spot, line: i64, cols: i64) -> (i64, i64) => {
+  let (from, to) = ordered(a, b)
+  if line < from.line || line > to.line { return (0, 0) }
+  let start = if line == from.line { from.col } else { 0 }
+  let end = if line == to.line { to.col } else { cols }
+  (start.clamp(0, cols), end.clamp(start.clamp(0, cols), cols))
+}
+
+/// The selected text: each line's selected runes without the blanks after them, a line
+/// break between lines. Lines scrolled out of the scrollback are skipped.
+pub let selection_text = pure (s: Screen, a: Spot, b: Spot) -> string => {
+  let (from, to) = ordered(a, b)
+  var parts: []string = []
+  for n in from.line..<=to.line {
+    match s.line_at(n) {
+      Some(i) => {
+        let (start, end) = selected_on(from, to, n, s.cols)
+        var runes: []rune = []
+        for c in s.line(i).slice(start, end) { if c.ch != SPACER { runes.push(c.ch) } }
+        var kept = runes.len()
+        while kept > 0 && runes[kept - 1] == ' ' { kept -= 1 }
+        parts.push([r in runes.slice(0, kept) | "${r}"].join(""))
+      },
+      None => {},
+    }
+  }
+  parts.join("\n")
+}
+
+/// The word around the cell at column `col` of line `line` (absolute), as columns `(start,
+/// end)`: a run of letters, digits and `_`, or of punctuation, or of blanks — what a
+/// double-click selects. `(col, col)` when the line is gone.
+pub let word_span = pure (s: Screen, line: i64, col: i64) -> (i64, i64) => {
+  let Some(i) = s.line_at(line) else { return (col, col) }
+  let cells = s.line(i)
+  if cells.len() == 0 { return (0, 0) }
+  var k = col.clamp(0, cells.len() - 1)
+  // The second cell of a wide rune belongs to the first.
+  if cells[k].ch == SPACER && k > 0 { k -= 1 }
+  let c = word_kind(cells[k].ch)
+  var a = k
+  while a > 0 && (cells[a - 1].ch == SPACER || word_kind(cells[a - 1].ch) == c) { a -= 1 }
+  var b = k + 1
+  while b < cells.len() && (cells[b].ch == SPACER || word_kind(cells[b].ch) == c) { b += 1 }
+  (a, b)
+}
+
+/// A rune's kind for words: 0 a blank, 1 part of a word, 2 punctuation.
+let word_kind = pure (r: rune) -> i64 =>
+  if r == ' ' { 0 }
+  else if r.is_ascii_alpha() || r.is_ascii_digit() || r == '_' || i64(r) >= 0x80 { 1 }
+  else { 2 }

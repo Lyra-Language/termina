@@ -59,6 +59,7 @@ import editor.{ Wrap }
 import ui.{
   dark_theme,
   abgr,
+  Theme,
   typed_lines,
   tab_command,
   tab_bar,
@@ -82,8 +83,17 @@ import ui.{
   CloseTab,
   ShowTab
 }
-import session.{ open_session, close_session, tab_title, directory, pasted }
-import vt.{ Cell, Completion, DEFAULT, INVERSE, DIM, HIDDEN, indexed, rgb }
+import session.{
+  open_session,
+  close_session,
+  tab_title,
+  directory,
+  pasted,
+  mouse_report,
+  wheel_keys,
+  meta
+}
+import vt.{ Cell, Completion, DEFAULT, INVERSE, DIM, HIDDEN, BOLD, indexed, rgb }
 
 let main = () -> u8 => {
   let Some(host) = create_headless_host(800, 400, 0) else {
@@ -102,6 +112,8 @@ let main = () -> u8 => {
   failed += check_sessions()
   failed += check_edit_actions(host)
   failed += check_tab_drag(host)
+  failed += check_mouse_reports()
+  failed += check_meta_and_bright()
   destroy_host(host)
   if failed == 0 {
     println("uitest: all passed")
@@ -460,6 +472,78 @@ let check_edit_actions = (host: Host) -> i64 => {
   failed
 }
 
+// Alt as Meta, and bold as bright.
+let check_meta_and_bright = () -> i64 => {
+  var failed = 0
+  failed += check("meta", meta("bf").replace("\e", "^"), "^b^f")
+  let off = dark_theme()
+  let on = Theme { fg: off.fg, bg: off.bg, palette: off.palette, bold_is_bright: true }
+  let bold_red = Cell { ch: 'x', fg: indexed(1), bg: DEFAULT, attrs: BOLD }
+  failed += check("bold red, as asked", hex(off.colours(bold_red).0), hex(off.palette[1]))
+  failed += check("bold red, bright", hex(on.colours(bold_red).0), hex(off.palette[9]))
+  let bold_208 = Cell { ch: 'x', fg: indexed(208), bg: DEFAULT, attrs: BOLD }
+  failed += check(
+    "past the first eight, as asked",
+    hex(on.colours(bold_208).0),
+    hex(off.palette[208])
+  )
+  let plain_red = Cell { ch: 'x', fg: indexed(1), bg: DEFAULT, attrs: 0 }
+  failed += check("not bold, as asked", hex(on.colours(plain_red).0), hex(off.palette[1]))
+  failed
+}
+
+// The mouse as a program that asked is told of it.
+let check_mouse_reports = () -> i64 => {
+  var failed = 0
+  failed += check(
+    "SGR press",
+    shown_bytes(mouse_report(0, 4, 9, true, true)),
+    "\\e[<0;5;10M"
+  )
+  failed += check(
+    "SGR release",
+    shown_bytes(mouse_report(2, 0, 0, false, true)),
+    "\\e[<2;1;1m"
+  )
+  failed += check(
+    "SGR wheel down, ctrl",
+    shown_bytes(mouse_report(65 + 16, 1, 1, true, true)),
+    "\\e[<81;2;2M"
+  )
+  failed += check(
+    "SGR drag",
+    shown_bytes(mouse_report(32, 300, 1, true, true)),
+    "\\e[<32;301;2M"
+  )
+  failed += check(
+    "X10 press",
+    shown_bytes(mouse_report(0, 4, 9, true, false)),
+    "\\e[M 32 37 42"
+  )
+  failed += check(
+    "X10 release is button 3",
+    shown_bytes(mouse_report(2, 0, 0, false, false)),
+    "\\e[M 35 33 33"
+  )
+  failed += check(
+    "X10 stops at 223",
+    shown_bytes(mouse_report(0, 400, 0, true, false)),
+    "\\e[M 32 255 33"
+  )
+  failed += check("wheel up as arrows", wheel_keys(1, false), "\e[A\e[A\e[A")
+  failed += check("wheel down, cursor keys", wheel_keys(-1, true), "\eOB\eOB\eOB")
+  failed
+}
+
+/// Bytes as text: an ESC as `\e`, the printable rest as itself, other bytes after `[M` by
+/// their numbers (X10's place bytes).
+let shown_bytes = (bytes: []u8) -> string => {
+  if bytes.len() == 6 && bytes[2] == 0x4D {
+    return "\\e[M ${bytes[3]} ${bytes[4]} ${bytes[5]}"
+  }
+  bytes.decode_utf8().replace("\e", "\\e")
+}
+
 // Tabs dragged into a new order: the bar's order read back, and the list kept in it.
 let check_tab_drag = (host: Host) -> i64 => {
   var failed = 0
@@ -708,6 +792,26 @@ let check_sessions = () -> i64 => {
   for _ in 0..<1000 { d.step(true) }
   failed += check("a closed tab stays closed", "${d.alive}", "false")
   close_session(d)
+  // A tab's grid: Select All takes everything, and Copy is then there to choose.
+  let Some(printing) = open_session(
+    ["/bin/sh", "-c", "printf 'first\\nsecond\\n'; sleep 5"],
+    None,
+    5
+  ) else {
+    return check("open a tab", "failed", "opened")
+  }
+  var e = printing
+  // Read until the second line has arrived.
+  for _ in 0..<2000000 { if e.shown.line(1)[0].ch != 's' { e.step(true) } }
+  failed += check(
+    "nothing selected yet",
+    "${e.has_selection()} ${e.can(Copy)}",
+    "false false"
+  )
+  e.edit_action(SelectAll)
+  failed += check("select all", e.selected_text().trim(), "first\nsecond")
+  failed += check("copy then", "${e.can(Copy)} ${e.can(SelectAll)}", "true true")
+  close_session(e)
   var c = brief
   for _ in 0..<2000000 { if c.alive { c.step(true) } }
   failed += check("a tab whose program ended", "${c.alive}", "false")

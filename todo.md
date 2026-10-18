@@ -12,17 +12,14 @@ milestones are in `CLAUDE.md` § Plan; finished items move to `done.md`.
 
 ## Tabs
 
-- **[OPEN] Copy from the grid** — Copy and Select All have nothing to act on while a program runs, until the grid has a selection (M1).
 
 ## M1 — a classic terminal
 
-- **[OPEN] Bold as bright** — an option to draw bold 0–7 text in the bright colours, as old programs expect; off by default.
-- **[OPEN] Wide characters** — an East Asian Width / emoji table; a wide rune takes two cells.
-- **[OPEN] DEC private modes** — `?1049` alternate screen, `?1` cursor keys, `?2004` paste, `?25` cursor, `?7` autowrap.
-- **[OPEN] Mouse reporting** — `?1000`/`?1002`/`?1006` (SGR) to the program; plain selection otherwise.
-- **[OPEN] Selection and copy** — drag, double-click word, ⌘C.
-- **[OPEN] Device reports** — `\e[c`, `\e[6n` and `\e[>c` answered; some programs wait for them.
-- **[OPEN] Alt as Meta off macOS** — Alt+key sends `\e` then the key.
+- **[OPEN] Copying keeps soft wraps as line breaks** — the screen does not record which lines wrapped, so a long line copies as several.
+- **[OPEN] Glyphs for CJK and emoji** — wide runes take their two cells, but SF Mono has no CJK glyphs and stb_truetype no colour emoji; a fallback font is needed.
+- **[OPEN] Combining marks** — dropped; a cell would need a rune and its marks.
+- **[OPEN] Wide runes in the command line** — the editor lays out a rune a column.
+- **[OPEN] A setting for bold as bright** — the theme has it; nothing turns it on.
 
 ## Found along the way
 

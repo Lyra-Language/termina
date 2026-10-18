@@ -1,7 +1,8 @@
 module ui
 //! A screen line drawn: its backgrounds, its text in runs of one style, and the lines an
 //! underline or a strike adds. A run is as long as the style stays the same, so a line of
-//! plain text is one `add_text`, as it was before colour.
+//! plain text is one `add_text`, as it was before colour. **A wide rune is drawn alone**,
+//! across its two cells: a run's glyphs are spaced a cell apart, which a wide glyph is not.
 //!
 //! **Bold** is the bold face when there is one (Linux's DejaVu has a file for it), else
 //! the text drawn twice a pixel apart: macOS's SF Mono is one variable font, and ImGui
@@ -9,7 +10,17 @@ module ui
 //! one), or upright without it.
 
 import bindings.imgui.{ push_font_float, pop_font, Vec2, DrawList, Font }
-import vt.{ Cell, BOLD, ITALIC, UNDERLINE, DOUBLE_UNDERLINE, CURLY_UNDERLINE, STRIKE }
+import vt.{
+  Cell,
+  BOLD,
+  ITALIC,
+  UNDERLINE,
+  DOUBLE_UNDERLINE,
+  CURLY_UNDERLINE,
+  STRIKE,
+  SPACER,
+  width_of
+}
 
 /// The faces a grid is drawn in; `None` for one not found (the host's default face stands
 /// in for a missing regular one).
@@ -51,12 +62,28 @@ pub let draw_line = (
   while start < end {
     let (fg, _) = theme.colours(cells[start])
     let attrs = cells[start].attrs
-    var stop = start + 1
-    while stop < end && same_run(theme, cells[stop], fg, attrs) { stop += 1 }
-    draw_run(list, fonts, at, cells, start, stop, fg, attrs)
-    start = stop
+    if cells[start].ch == SPACER {
+      // The second cell of a wide rune (or one left alone by an erase): nothing to draw.
+      start += 1
+    } else if width_of(cells[start].ch) == 2 {
+      draw_run(list, fonts, at, cells, start, (start + 2).min(n), fg, attrs)
+      start += 2
+    } else {
+      var stop = start + 1
+      while stop < end && one_cell(cells[stop]) && same_run(
+        theme,
+        cells[stop],
+        fg,
+        attrs
+      ) { stop += 1 }
+      draw_run(list, fonts, at, cells, start, stop, fg, attrs)
+      start = stop
+    }
   }
 }
+
+/// Whether a cell holds a rune one cell wide — one a run may take.
+let one_cell = pure (c: Cell) -> bool => c.ch != SPACER && width_of(c.ch) == 1
 
 /// Every underline's bit.
 const UNDERLINE_ANY: u32 = UNDERLINE | DOUBLE_UNDERLINE | CURLY_UNDERLINE
@@ -110,7 +137,10 @@ let draw_run = (
   attrs: u32
 ) -> void => {
   var bytes: []u8 = []
-  for k in start..<stop { push_rune(bytes, i64(cells[k].ch)) }
+  for k in start..<stop { if cells[k].ch != SPACER { push_rune(
+    bytes,
+    i64(cells[k].ch)
+  ) } }
   let text = bytes.decode_utf8()
   let x0 = at.origin.x + f32(start) * at.cell.x
   let x1 = at.origin.x + f32(stop) * at.cell.x

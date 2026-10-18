@@ -5,8 +5,9 @@ module vt
 //! **What it models**: text in colour with attributes (`style.lyra`), the cursor movements
 //! and erases a shell's line editor uses (`\r`, backspace, tabs, `\e[K`, `\e[J`, cursor
 //! positioning), scrolling with a scroll region, xterm's deferred wrap at the last column,
-//! the window title, the shell's marks, and bracketed paste. Wide characters, the alternate
-//! screen and the other DEC private modes come next (`../../todo.md`).
+//! the window title, the shell's marks, and the DEC private modes full-screen programs use:
+//! the alternate screen, application cursor keys, autowrap, the cursor's shape and
+//! visibility, bracketed paste and the mouse's reporting modes.
 
 /// The screen, its cursor and its scrollback.
 pub struct Screen {
@@ -52,6 +53,40 @@ pub struct Screen {
   /// DEC private modes: bracketed paste (`?2004`) and the cursor shown (`?25`).
   bracketed_paste: bool,
   cursor_visible: bool,
+  /// Application cursor keys (`?1`): arrows send `\eOA` rather than `\e[A`.
+  cursor_keys: bool,
+  /// Autowrap (`?7`): text reaching the last column goes on to the next line; off, the last
+  /// column is written over.
+  autowrap: bool,
+  /// Application keypad (`\e=`, `\e>`).
+  keypad: bool,
+  /// The cursor's shape, as DECSCUSR (`\e[N q`) last set it: 0–2 a block, 3–4 an underline,
+  /// 5–6 a bar (odd numbers blink).
+  cursor_shape: i64,
+  /// The alternate screen (`?1049`, `?1047`, `?47`): a full-screen program's, with no
+  /// scrollback, the main screen kept to come back to — its lines, and for `?1049` the
+  /// cursor and pen.
+  alt: bool,
+  main_lines: [][]Cell,
+  main_x: i64,
+  main_y: i64,
+  main_pen: Pen,
+  /// The mouse reports a program asked for: 0 none, 1000 presses, 1002 drags too, 1003 all
+  /// motion; in SGR's encoding (`?1006`) or X10's; the wheel as arrow keys on the alternate
+  /// screen when unreported (`?1007`, on by default as in most terminals); and focus
+  /// reports (`?1004`).
+  mouse_mode: i64,
+  mouse_sgr: bool,
+  alternate_scroll: bool,
+  focus_events: bool,
+  /// Answers to the program's questions — what terminal this is, where the cursor is,
+  /// which colours — waiting to be written to it ([Screen.take_replies]).
+  replies: []string,
+  /// The colours reported to a program that asks (OSC 10, 11, 12), as `rgb:` triples of
+  /// 16-bit hex: the theme's text and background. vim and neovim ask, to choose a dark or a
+  /// light scheme.
+  fg_report: string,
+  bg_report: string,
 }
 
 /// One completion the shell offered for the word at the caret (`../shell/shell.lyra`): the
@@ -103,6 +138,22 @@ pub let screen = pure (cols: i64, rows: i64) -> Screen => Screen {
   dropped: 0,
   bracketed_paste: false,
   cursor_visible: true,
+  cursor_keys: false,
+  autowrap: true,
+  keypad: false,
+  cursor_shape: 0,
+  alt: false,
+  main_lines: [],
+  main_x: 0,
+  main_y: 0,
+  main_pen: plain_pen(),
+  mouse_mode: 0,
+  mouse_sgr: false,
+  alternate_scroll: true,
+  focus_events: false,
+  replies: [],
+  fg_report: "e6e6/e1e1/dcdc",
+  bg_report: "1818/1a1a/1e1e",
 }
 
 /// The most lines kept above the screen.
@@ -126,6 +177,13 @@ impl Screen {
   pub let take_marks = (self: mut) -> []Mark => {
     let out = self.marks
     self.marks = []
+    out
+  }
+
+  /// The answers waiting for the program, oldest first; emptied. Written to it as typed.
+  pub let take_replies = (self: mut) -> []string => {
+    let out = self.replies
+    self.replies = []
     out
   }
 
@@ -188,6 +246,16 @@ impl Screen {
     if kept.len() > rows { kept = kept.slice(0, rows) }
     while kept.len() < rows { kept.push(blank_line(cols, DEFAULT)) }
     self.lines = kept
+    // The main screen kept behind the alternate one is fitted too, to come back to.
+    if self.alt {
+      var main: [][]Cell = []
+      for l in self.main_lines { main.push(fit(l, cols)) }
+      if main.len() > rows { main = main.slice(main.len() - rows, main.len()) }
+      while main.len() < rows { main.push(blank_line(cols, DEFAULT)) }
+      self.main_lines = main
+      self.main_x = self.main_x.min(cols - 1)
+      self.main_y = self.main_y.min(rows - 1)
+    }
     self.cols = cols
     self.rows = rows
     self.y = y.min(rows - 1)
@@ -197,15 +265,61 @@ impl Screen {
     self.bottom = rows - 1
   }
 
+  // Text at the cursor, a cell a rune — two for a wide one (`width.lyra`), its second a
+  // [SPACER]; a zero-width rune is dropped, having no cell of its own.
   let print = (self: mut, text: []rune) -> void => {
     for r in text {
-      if self.wrap_pending {
-        self.x = 0
-        self.linefeed()
-        self.wrap_pending = false
+      let w = width_of(r)
+      if w > 0 {
+        if self.wrap_pending {
+          self.x = 0
+          self.linefeed()
+          self.wrap_pending = false
+        }
+        // A wide rune with one column left: on to the next line, the column left blank.
+        var fits = true
+        if w == 2 && self.x == self.cols - 1 {
+          if self.autowrap && self.cols > 1 {
+            self.clear_wide_at(self.y, self.x)
+            self.lines[self.y][self.x] = blank_cell(self.pen.bg)
+            self.x = 0
+            self.linefeed()
+          } else {
+            fits = false
+          }
+        }
+        if fits { self.put(r, w) }
       }
-      self.lines[self.y][self.x] = self.pen.cell(r)
-      if self.x == self.cols - 1 { self.wrap_pending = true } else { self.x += 1 }
+    }
+  }
+
+  // `r`, `w` cells wide, at the cursor, which moves past it — or, at the last column, stays
+  // there with the wrap pending (without autowrap, to be written over).
+  let put = (self: mut, r: rune, w: i64) -> void => {
+    self.clear_wide_at(self.y, self.x)
+    self.lines[self.y][self.x] = self.pen.cell(r)
+    if w == 2 {
+      self.clear_wide_at(self.y, self.x + 1)
+      self.lines[self.y][self.x + 1] = self.pen.cell(SPACER)
+    }
+    let last = self.x + w - 1
+    if last >= self.cols - 1 {
+      self.x = self.cols - 1
+      self.wrap_pending = self.autowrap
+    } else {
+      self.x = last + 1
+    }
+  }
+
+  // Before cell `x` of line `y` is written: if it is half of a wide rune, the other half
+  // made blank, so that no half rune is left.
+  let clear_wide_at = (self: mut, y: i64, x: i64) -> void => {
+    if x < 0 || x >= self.cols { return }
+    if self.lines[y][x].ch == SPACER && x > 0 {
+      self.lines[y][x - 1] = blank_cell(self.lines[y][x - 1].bg)
+    }
+    if x + 1 < self.cols && self.lines[y][x + 1].ch == SPACER {
+      self.lines[y][x + 1] = blank_cell(self.lines[y][x + 1].bg)
     }
   }
 
@@ -226,6 +340,12 @@ impl Screen {
   let csi = (self: mut, seq: CsiSequence) -> void => {
     if seq.marker == "?" && seq.intermediates == "" && (seq.final == 'h' || seq.final == 'l') {
       for mode in seq.params { self.set_private_mode(mode, seq.final == 'h') }
+      return
+    }
+    if self.report(seq) { return }
+    // DECSCUSR, the cursor's shape: `\e[N q`.
+    if seq.marker == "" && seq.intermediates == " " && seq.final == 'q' {
+      self.cursor_shape = seq.param_or(0, 0)
       return
     }
     if seq.marker != "" || seq.intermediates != "" { return }
@@ -273,6 +393,8 @@ impl Screen {
       self.linefeed()
     } else if f == 'M' { self.reverse_index() }
     else if f == 'c' { self = screen(self.cols, self.rows) }
+    else if f == '=' { self.keypad = true }
+    else if f == '>' { self.keypad = false }
   }
 
   let osc = (self: mut, text: string) -> void => {
@@ -282,6 +404,10 @@ impl Screen {
       self.cwd = file_url_path(text.slice(2, text.len()))
     } else if text.starts_with("133;") {
       self.shell_mark(text.slice(4, text.len()))
+    } else if text == "10;?" || text == "11;?" || text == "12;?" {
+      // A colour asked for: the text's (10, and the cursor's, 12) or the background's (11).
+      let triple = if text == "11;?" { self.bg_report } else { self.fg_report }
+      self.replies.push("\e]${text.slice(0, 2)};rgb:${triple}\e\\")
     } else if text.starts_with("7770;") {
       self.completion_report(text.slice(5, text.len()))
     }
@@ -328,9 +454,103 @@ impl Screen {
     }
   }
 
+  // A question the program asks the terminal, answered; whether `seq` was one.
+  let report = (self: mut, seq: CsiSequence) -> bool => {
+    let f = seq.final
+    let plain = seq.intermediates == ""
+    // DA1 — what this is: a VT220 with ANSI colour, as most terminals answer.
+    if seq.marker == "" && plain && f == 'c' && seq.param_or(0, 0) == 0 {
+      self.replies.push("\e[?62;22c")
+    } else if seq.marker == ">" && plain && f == 'c' {
+      // DA2 — which terminal and version: a VT220, version 1.
+      self.replies.push("\e[>1;1;0c")
+    } else if seq.marker == ">" && plain && f == 'q' {
+      // XTVERSION — its name and version.
+      self.replies.push("\eP>|Sulafat 0.1\e\\")
+    } else if seq.marker == "" && plain && f == 'n' && seq.param_or(0, 0) == 5 {
+      // DSR — all is well.
+      self.replies.push("\e[0n")
+    } else if plain && f == 'n' && seq.param_or(
+      0,
+      0
+    ) == 6 && (seq.marker == "" || seq.marker == "?") {
+      // DSR — the cursor's place, 1-based, row first.
+      self.replies.push("\e[${seq.marker}${self.y + 1};${self.x + 1}R")
+    } else if seq.marker == "?" && seq.intermediates == "$" && f == 'p' {
+      // DECRQM — whether a private mode is set (1), reset (2), or not known here (0).
+      let mode = seq.param_or(0, 0)
+      self.replies.push("\e[?${mode};${self.mode_state(mode)}$y")
+    } else {
+      return false
+    }
+    true
+  }
+
+  // A private mode's state for DECRQM: 1 set, 2 reset, 0 a mode this terminal does not have.
+  let mode_state = pure (self, mode: i64) -> i64 => {
+    let set = if mode == 1 { Some(self.cursor_keys) }
+    else if mode == 7 { Some(self.autowrap) }
+    else if mode == 25 { Some(self.cursor_visible) }
+    else if mode == 1049 || mode == 1047 || mode == 47 { Some(self.alt) }
+    else if mode == 1000 || mode == 1002 || mode == 1003 { Some(self.mouse_mode == mode) }
+    else if mode == 1004 { Some(self.focus_events) }
+    else if mode == 1006 { Some(self.mouse_sgr) }
+    else if mode == 1007 { Some(self.alternate_scroll) }
+    else if mode == 2004 { Some(self.bracketed_paste) }
+    else { None }
+    match set {
+      Some(on) => if on { 1 } else { 2 },
+      None => 0,
+    }
+  }
+
   let set_private_mode = (self: mut, mode: i64, on: bool) -> void => {
     if mode == 2004 { self.bracketed_paste = on }
     else if mode == 25 { self.cursor_visible = on }
+    else if mode == 1 { self.cursor_keys = on }
+    else if mode == 7 { self.autowrap = on }
+    else if mode == 1049 {
+      if on {
+        self.main_x = self.x
+        self.main_y = self.y
+        self.main_pen = self.pen
+        self.enter_alt()
+      } else {
+        self.leave_alt()
+        self.move_to(self.main_x, self.main_y)
+        self.pen = self.main_pen
+      }
+    } else if mode == 47 || mode == 1047 {
+      if on { self.enter_alt() } else { self.leave_alt() }
+    } else if mode == 1048 {
+      if on { self.save_cursor() } else { self.restore_cursor() }
+    } else if mode == 1000 || mode == 1002 || mode == 1003 {
+      self.mouse_mode = if on { mode } else { 0 }
+    } else if mode == 1006 { self.mouse_sgr = on }
+    else if mode == 1007 { self.alternate_scroll = on }
+    else if mode == 1004 { self.focus_events = on }
+  }
+
+  // To the alternate screen, blank, the main one kept. Twice in a row is once.
+  let enter_alt = (self: mut) -> void => {
+    if self.alt { return }
+    self.main_lines = self.lines
+    self.lines = [row in 0..<self.rows | blank_line(self.cols, DEFAULT)]
+    self.alt = true
+    self.top = 0
+    self.bottom = self.rows - 1
+    self.wrap_pending = false
+  }
+
+  // Back to the main screen, as it was; the alternate one is gone.
+  let leave_alt = (self: mut) -> void => {
+    if !self.alt { return }
+    self.lines = self.main_lines
+    self.main_lines = []
+    self.alt = false
+    self.top = 0
+    self.bottom = self.rows - 1
+    self.wrap_pending = false
   }
 
   let move_to = (self: mut, x: i64, y: i64) -> void => {
@@ -353,7 +573,8 @@ impl Screen {
   // The region's lines up one, a blank at its bottom. A line leaving the top of the whole
   // screen goes to the scrollback; one leaving a region lower down is gone, as in xterm.
   let scroll_up = (self: mut) -> void => {
-    if self.top == 0 { self.push_scrollback(self.lines[0]) }
+    // A full-screen program's lines are not history: the alternate screen keeps none.
+    if self.top == 0 && !self.alt { self.push_scrollback(self.lines[0]) }
     for i in self.top..<self.bottom { self.lines[i] = self.lines[i + 1] }
     self.lines[self.bottom] = blank_line(self.cols, self.pen.bg)
   }
@@ -478,8 +699,15 @@ let fit = pure (line: []Cell, cols: i64) -> []Cell => {
   out
 }
 
-/// A line's runes, its styles left behind.
-pub let runes_of = pure (line: []Cell) -> []rune => [c in line | c.ch]
+/// A line's runes, its styles and the spacers after wide runes left behind.
+pub let runes_of = pure (line: []Cell) -> []rune => {
+  var out: []rune = []
+  for c in line { if c.ch != SPACER { out.push(c.ch) } }
+  out
+}
+
+/// The second cell of a wide rune: no rune of its own, drawn as part of the first.
+pub const SPACER: rune = '\x00'
 
 /// The path of a `file://host/path` URL (OSC 7's form), its `%XX` escapes decoded; `""`
 /// when it is not one.

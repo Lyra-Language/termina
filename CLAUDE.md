@@ -48,6 +48,8 @@ shell ⇄ bindings.pty ──bytes──▶ vt.Parser ──[]Action──▶ vt
 | `src/ui/command_line.lyra` | the editor at the prompt: keys and mouse into editor calls, history, the completion menu, drawing |
 | `src/vt/parser.lyra` | bytes → `Action`s — Paul Williams' DEC parser; **pure**, keeps all state across reads |
 | `src/vt/screen.lyra` | `Action`s → the cell grid, cursor, scroll region, scrollback ring |
+| `src/vt/width.lyra` | how many cells a rune takes: 2 wide (CJK, emoji), 0 combining, 1 the rest |
+| `src/vt/selection.lyra` | a selection on the screen and scrollback: its text, a word's span; **pure** |
 | `src/vt/style.lyra` | a `Cell`'s colours and attributes, and SGR on the `Pen` that writes them; **pure** |
 | `src/ui/theme.lyra` | recorded colours → pixels: the theme's own pair, ANSI 16, xterm's 256; inverse, dim, hidden |
 | `src/ui/grid.lyra` | a screen line drawn: background runs, text runs of one style, faces, underlines, strike |
@@ -78,6 +80,22 @@ shell ⇄ bindings.pty ──bytes──▶ vt.Parser ──[]Action──▶ vt
   prompt, and while a program runs only Paste, sent bracketed when the program set
   `?2004` (`session.pasted`). With the menu bar the command line leaves ⌘Z/⌘X/⌘C/⌘V/⌘A to
   it (`menu_keys`), and each frame greys what would do nothing (`Session.can`).
+- **The screen answers questions through `replies`** (DA1, DA2, XTVERSION, DSR, DECRQM, the
+  colour queries OSC 10/11/12), which a session writes to the program each frame; a check
+  running a program on a PTY must answer them too (`vttest`'s `full_screen`).
+- **The alternate screen keeps no scrollback and shows none**: lines leaving it are not
+  history, and a session draws from the screen's first row while it is on (`base`). The main
+  screen behind it is fitted on resize.
+- **A wide rune is a cell and a `SPACER`**; writing over either half blanks the other, a wide
+  rune with one column left wraps first, and a zero-width rune is dropped. Drawing puts a
+  wide glyph on its two cells alone.
+- **The grid's selection is absolute lines and column boundaries** (`vt.Spot`), so it stays
+  on its text as output scrolls. The mouse selects above the command line at a prompt, and
+  with Shift when a program has asked for the mouse (`?1000`/`?1002`/`?1003`, SGR `?1006` or
+  X10), which is otherwise told of it; on the alternate screen an unreporting program gets
+  the wheel as arrows (`?1007`).
+- **Erase at a pending wrap erases the last column**, as xterm does: a line exactly as wide as
+  the screen followed by `\e[K` loses its last character (less's status on a long path).
 - **Nothing blocks**: `Pty.read` is non-blocking and drained once a frame, at most
   `READS_PER_FRAME` reads, so a program that never stops writing cannot freeze the window.
 - **A colour is one `u32`** (`DEFAULT`, a palette index, or RGB — `vt/style.lyra`): the
@@ -134,10 +152,10 @@ shell ⇄ bindings.pty ──bytes──▶ vt.Parser ──[]Action──▶ vt
 ## Plan
 
 1. **M0 — a terminal (done 10/16)**: PTY, parser, monochrome grid, scrollback, keys, paste.
-2. **M1 — a classic terminal**: SGR colours (16, 256, 24-bit) and attributes (done 10/16); wide characters
-   (a width table); the alternate screen (`?1049`), application cursor keys (`?1`), bracketed
-   paste (`?2004`), mouse reporting (`?1000`/`?1006`), DECSCUSR; selection and copy. Done
-   when vim, htop and less run correctly.
+2. **M1 — a classic terminal (done 10/16)**: SGR colours and attributes, wide characters, the
+   DEC private modes (alternate screen, cursor keys, autowrap, DECSCUSR, bracketed paste,
+   mouse reporting, focus), device reports, selection and copy, Alt as Meta. vim, less and
+   top run correctly (`vttest`'s `check_full_screen`).
 3. **M2 — blocks**: the shell integration's marks (zsh's is in, with M3; bash's goes
    through `--rcfile`) — OSC 133 (`A` prompt, `B` command, `C` output, `D;status` end) and
    OSC 7 (directory). Each command becomes a block — command, directory, status, duration,

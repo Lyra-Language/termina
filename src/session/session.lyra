@@ -8,6 +8,15 @@ import std.io.{ remove_file }
 import bindings.pty.{ spawn, close, Pty }
 import bindings.sdl3.{ platform }
 import bindings.imgui.{
+  is_mouse_released,
+  get_io,
+  set_clipboard_text,
+  is_mouse_clicked,
+  is_mouse_down,
+  get_mouse_clicked_count,
+  get_mouse_pos,
+  is_window_hovered,
+  KEY_C,
   get_content_region_avail,
   get_cursor_screen_pos,
   get_window_draw_list,
@@ -38,7 +47,17 @@ import bindings.imgui.{
   KEY_ENTER,
   KEY_ESCAPE,
 }
-import vt.{ parser, screen, Parser, Screen, InputStart }
+import vt.{
+  parser,
+  screen,
+  Parser,
+  Screen,
+  InputStart,
+  Spot,
+  selected_on,
+  selection_text,
+  word_span,
+}
 import shell.{ integration, load_history, submission, completion_request, Integration }
 import ui.{
   EditAction,
@@ -78,6 +97,21 @@ pub struct Session {
   alive: bool,
   /// A number no other tab of this window has, for the tab bar's identity.
   id: i64,
+  /// A selection on the grid, from `sel_a` to `sel_b` (`vt.selection`); none while the two
+  /// are the same place. While a drag goes on, `sel_unit` says what it extends by — 1
+  /// cells, 2 words (after a double-click), 3 lines (after a triple-click) — and
+  /// `sel_origin` is the word or line the click chose.
+  sel_a: Spot,
+  sel_b: Spot,
+  sel_dragging: bool,
+  sel_unit: i64,
+  sel_origin: (Spot, Spot),
+  /// The mouse as last reported to a program that asked: the cell (so motion is reported a
+  /// cell at a time), wheel travel not yet a whole notch, and whether the window had the
+  /// keyboard (for focus reports).
+  mouse_cell: (i64, i64),
+  wheel_left: f32,
+  had_focus: bool,
 }
 
 /// Start a tab: `program` (the login shell with Sulafat's integration when empty) in `dir`
@@ -120,6 +154,14 @@ pub let open_session = (
     unseen: false,
     alive: true,
     id: id,
+    sel_a: Spot { line: 0, col: 0 },
+    sel_b: Spot { line: 0, col: 0 },
+    sel_dragging: false,
+    sel_unit: 1,
+    sel_origin: (Spot { line: 0, col: 0 }, Spot { line: 0, col: 0 }),
+    mouse_cell: (-1, -1),
+    wheel_left: 0.0,
+    had_focus: false,
   })
 }
 
@@ -152,27 +194,59 @@ pub let directory = pure (s: Session) -> Maybe<string> =>
 
 impl Session {
   /// Carry out an Edit menu item (or its key, without a menu bar): on the command line at a
-  /// prompt; while a program runs, Paste is the program's — a bracketed paste when it asked
-  /// for one — and the rest wait on a selection the grid does not have yet.
+  /// prompt — Copy there taking the grid's selection when the command line has none; while a
+  /// program runs, Paste is the program's (a bracketed paste when it asked for one), Copy
+  /// the grid's selection, and Select All the whole screen and its scrollback.
   pub let edit_action = (self: mut, a: EditAction) -> void => {
-    match self.mode {
-      AtPrompt(_, _) => self.line.edit_action(a),
-      Raw => match a {
-        Paste => {
-          let _ = self.pty.write(pasted(get_clipboard_text(), self.shown.bracketed_paste))
-        },
-        _ => {},
+    let at_prompt = match self.mode {
+      AtPrompt(_, _) => true,
+      Raw => false,
+    }
+    match a {
+      Copy => {
+        if at_prompt && self.line.can(Copy) { self.line.edit_action(Copy) }
+        else if self.has_selection() { set_clipboard_text(self.selected_text()) }
       },
+      SelectAll => {
+        if at_prompt { self.line.edit_action(SelectAll) } else { self.select_everything() }
+      },
+      Paste => {
+        if at_prompt { self.line.edit_action(Paste) }
+        else {
+          let _ = self.pty.write(pasted(get_clipboard_text(), self.shown.bracketed_paste))
+        }
+      },
+      _ => if at_prompt { self.line.edit_action(a) },
     }
   }
 
   /// Whether Edit menu item `a` would do anything now.
-  pub let can = pure (self, a: EditAction) -> bool => match self.mode {
-    AtPrompt(_, _) => self.line.can(a),
-    Raw => match a {
+  pub let can = pure (self, a: EditAction) -> bool => {
+    let at_prompt = match self.mode {
+      AtPrompt(_, _) => true,
+      Raw => false,
+    }
+    match a {
+      Copy => (at_prompt && self.line.can(Copy)) || self.has_selection(),
+      SelectAll => if at_prompt { self.line.can(SelectAll) } else { true },
       Paste => true,
-      _ => false,
-    },
+      _ => at_prompt && self.line.can(a),
+    }
+  }
+
+  /// Whether the grid has a selection.
+  pub let has_selection = pure (self) -> bool =>
+    self.sel_a.line != self.sel_b.line || self.sel_a.col != self.sel_b.col
+
+  /// The grid's selected text.
+  pub let selected_text = pure (self) -> string =>
+    selection_text(self.shown, self.sel_a, self.sel_b)
+
+  /// Select the whole screen and its scrollback.
+  pub let select_everything = (self: mut) -> void => {
+    let last = self.shown.scrollback_len() + self.shown.rows - 1
+    self.sel_a = Spot { line: self.shown.absolute(0), col: 0 }
+    self.sel_b = Spot { line: self.shown.absolute(last), col: self.shown.cols }
   }
 
   /// Close the tab (⌘W, its close button): it goes at the end of this frame, its program
@@ -200,6 +274,10 @@ impl Session {
         AtPrompt(_, _) => { self.running = "" },
         Raw => {},
       }
+    }
+    // The program's questions answered (what terminal, where the cursor is, which colours).
+    for reply in self.shown.take_replies() {
+      let _ = self.pty.write(reply)
     }
     for offered in self.shown.take_completions() { self.line.completed(offered) }
     // Keys typed ahead while a command ran: at the prompt they wait for, a line ended by
@@ -275,12 +353,16 @@ pub let draw_session = (
   // Following the output: the view was at the bottom before this frame's scroll.
   let at_bottom = get_scroll_y() >= get_scroll_max_y() - 1.0
   let origin = get_cursor_screen_pos()
-  let total = (s.shown.scrollback_len() + s.shown.rows).max(input_line + input_rows)
-  let top = (get_scroll_y() / cell.y).floor().clamp(0, total)
-  let bottom = (top + rows + 1).min(total).min(s.shown.scrollback_len() + s.shown.rows)
+  // The first line drawn: on the alternate screen a full-screen program has the window, and
+  // the scrollback above its screen is not shown.
+  let base = if s.shown.alt { s.shown.scrollback_len() } else { 0 }
+  let line_count = s.shown.scrollback_len() + s.shown.rows
+  let total = line_count.max(input_line + input_rows) - base
+  let top = base + (get_scroll_y() / cell.y).floor().clamp(0, total)
+  let bottom = (top + rows + 1).min(base + total).min(line_count)
   let list = get_window_draw_list()
   if input_line >= 0 {
-    let y = origin.y + f32(input_line) * cell.y
+    let y = origin.y + f32(input_line - base) * cell.y
     list.add_rect_filled(
       Vec2 { x: origin.x - BAND_MARGIN, y: y },
       Vec2 { x: origin.x + f32(cols) * cell.x + BAND_MARGIN, y: y + f32(edit_rows) * cell.y },
@@ -302,7 +384,7 @@ pub let draw_session = (
       s.shown.cols
     }
     let at = LineAt {
-      origin: Vec2 { x: origin.x, y: origin.y + f32(i) * cell.y },
+      origin: Vec2 { x: origin.x, y: origin.y + f32(i - base) * cell.y },
       cell: cell,
       text_dy: text_dy,
       pixel: pixel,
@@ -311,8 +393,44 @@ pub let draw_session = (
   }
   let cursor = Vec2 {
     x: origin.x + f32(s.shown.x) * cell.x,
-    y: origin.y + f32(s.shown.scrollback_len() + s.shown.y) * cell.y,
+    y: origin.y + f32(s.shown.scrollback_len() + s.shown.y - base) * cell.y,
   }
+  // The grid's selection, over the text.
+  if s.has_selection() {
+    for i in top..<bottom {
+      let (a, b) = selected_on(s.sel_a, s.sel_b, s.shown.absolute(i), cols)
+      if b > a {
+        let y = origin.y + f32(i - base) * cell.y
+        list.add_rect_filled(
+          Vec2 { x: origin.x + f32(a) * cell.x, y: y },
+          Vec2 { x: origin.x + f32(b) * cell.x, y: y + cell.y },
+          SELECTION
+        )
+      }
+    }
+  }
+  // The mouse selects on the grid — above the command line at a prompt (which has its own
+  // mouse), and with Shift held when a program has asked for the mouse; otherwise the
+  // program is told of it. A program on the alternate screen that has not asked is sent
+  // the wheel as arrow keys, so that less and man scroll.
+  let grid_rows = if input_line >= 0 { input_line } else { line_count }
+  let raw = input_line < 0
+  if raw && s.shown.mouse_mode != 0 && !held().shift {
+    report_mouse(s, origin, cell, base)
+  } else {
+    grid_mouse(s, origin, cell, base, grid_rows)
+    if raw && s.shown.alt && s.shown.alternate_scroll && s.shown.mouse_mode == 0 && is_window_hovered() {
+      let notches = wheel_notches(s, get_io().mouse_wheel())
+      if notches != 0 {
+        let _ = s.pty.write(wheel_keys(notches, s.shown.cursor_keys))
+      }
+    }
+  }
+  // Focus reports (`?1004`): the window gaining or losing the keyboard.
+  if s.shown.focus_events && focused != s.had_focus {
+    let _ = s.pty.write(if focused { "\e[I" } else { "\e[O" })
+  }
+  s.had_focus = focused
   dummy(Vec2 { x: f32(cols) * cell.x, y: f32(total) * cell.y })
 
   var follow = s.got_output && at_bottom
@@ -320,7 +438,7 @@ pub let draw_session = (
     Some((i, wrap)) => {
       let before = "${s.line.edit.cursor}:${s.line.edit.anchor}:${s.line.edit.content()}"
       let place = Place {
-        origin: Vec2 { x: origin.x, y: origin.y + f32(i) * cell.y },
+        origin: Vec2 { x: origin.x, y: origin.y + f32(i - base) * cell.y },
         cell: cell,
         text_dy: text_dy,
         wrap: wrap,
@@ -362,15 +480,33 @@ pub let draw_session = (
     },
     None => {
       if s.shown.cursor_visible {
-        list.add_rect_filled(
-          cursor,
-          Vec2 { x: cursor.x + cell.x, y: cursor.y + cell.y },
-          CURSOR
-        )
+        // The shape the program set (DECSCUSR): a block, an underline or a bar.
+        let shape = s.shown.cursor_shape
+        let (lo, hi) = if shape == 3 || shape == 4 {
+          (
+            Vec2 { x: cursor.x, y: cursor.y + cell.y - 2.0 },
+            Vec2 { x: cursor.x + cell.x, y: cursor.y + cell.y }
+          )
+        } else if shape == 5 || shape == 6 {
+          (cursor, Vec2 { x: cursor.x + 2.0, y: cursor.y + cell.y })
+        } else {
+          (cursor, Vec2 { x: cursor.x + cell.x, y: cursor.y + cell.y })
+        }
+        list.add_rect_filled(lo, hi, CURSOR)
       }
       if focused {
+        // Copy without a menu bar (Ctrl+Shift+C off macOS): the grid's selection.
+        let mods = held()
+        if !menus && mods.control && mods.shift && is_key_pressed(KEY_C) && s.has_selection() {
+          set_clipboard_text(s.selected_text())
+        }
         request_text_input(cursor, cell.y)
-        if send_keys(s.pty, menus, s.shown.bracketed_paste) { follow = true }
+        if send_keys(
+          s.pty,
+          menus,
+          s.shown.bracketed_paste,
+          s.shown.cursor_keys
+        ) { follow = true }
       }
     },
   }
@@ -385,6 +521,167 @@ data Mode =
   /// At a prompt whose input begins at this absolute line and column: the command line
   /// there is Sulafat's editor.
   | AtPrompt(i64, i64)
+
+/// The mouse on the grid: a click sets where a selection starts (and drops one), a drag
+/// selects, a double-click selects a word and a triple-click a line, a drag after either
+/// extending by words or lines. Only lines before `grid_rows` (an index of everything's
+/// lines) take it.
+let grid_mouse = (
+  s: mut Session,
+  origin: Vec2,
+  cell: Vec2,
+  base: i64,
+  grid_rows: i64
+) -> void => {
+  let m = get_mouse_pos()
+  // -FLT_MAX when the pointer is nowhere; no cell arithmetic survives it.
+  if m.x < -1.0e30 || m.y < -1.0e30 {
+    if !is_mouse_down(0) { s.sel_dragging = false }
+    return
+  }
+  let i = (base + ((m.y - origin.y) / cell.y).floor()).clamp(0, (grid_rows - 1).max(0))
+  let line = s.shown.absolute(i)
+  let fx = (m.x - origin.x) / cell.x
+  let edge = (fx + 0.5).floor().clamp(0, s.shown.cols)
+  let under = fx.floor().clamp(0, s.shown.cols - 1)
+  let inside = is_window_hovered() &&
+    m.y >= origin.y &&
+    ((m.y - origin.y) / cell.y).floor() + base < grid_rows
+  if inside && is_mouse_clicked(0) {
+    s.sel_unit = i64(get_mouse_clicked_count(0)).clamp(1, 3)
+    s.sel_origin = unit_span(s.shown, s.sel_unit, line, under, edge)
+    s.sel_a = s.sel_origin.0
+    s.sel_b = s.sel_origin.1
+    s.sel_dragging = true
+  } else if s.sel_dragging && is_mouse_down(0) {
+    // Extended to the pointer — by whole words or lines after a double or triple click.
+    let (here_a, here_b) = unit_span(s.shown, s.sel_unit, line, under, edge)
+    let (o_a, o_b) = s.sel_origin
+    let before = here_a.line < o_a.line || (here_a.line == o_a.line && here_a.col < o_a.col)
+    if before {
+      s.sel_a = o_b
+      s.sel_b = here_a
+    } else {
+      s.sel_a = o_a
+      s.sel_b = here_b
+    }
+  } else if !is_mouse_down(0) {
+    s.sel_dragging = false
+  }
+}
+
+/// The mouse told to a program that asked (`?1000`, `?1002`, `?1003`): presses and releases
+/// of each button, motion a cell at a time — with a button held for 1002, always for 1003 —
+/// and the wheel, with Shift, Alt and Ctrl, in SGR's encoding or X10's.
+let report_mouse = (s: mut Session, origin: Vec2, cell: Vec2, base: i64) -> void => {
+  let m = get_mouse_pos()
+  if m.x < -1.0e30 || m.y < -1.0e30 || !is_window_hovered() { return }
+  let col = ((m.x - origin.x) / cell.x).floor().clamp(0, s.shown.cols - 1)
+  let row = (base + ((m.y - origin.y) / cell.y).floor() - s.shown.scrollback_len()).clamp(
+    0,
+    s.shown.rows - 1
+  )
+  let mods = held()
+  let extra = (if mods.shift { 4 } else { 0 }) + (if mods.alt { 8 } else { 0 }) + (if mods.control { 16 } else { 0 })
+  let sgr = s.shown.mouse_sgr
+  var out: []u8 = []
+  // ImGui's buttons are left, right, middle; a terminal's 0 left, 1 middle, 2 right.
+  let codes = [0, 2, 1]
+  var held_button = -1
+  for k in 0..<3 {
+    let b = codes[k]
+    if is_mouse_clicked(i32(k)) { out = [
+      ...out,
+      ...mouse_report(b + extra, col, row, true, sgr)
+    ] }
+    if is_mouse_released(i32(k)) { out = [
+      ...out,
+      ...mouse_report(b + extra, col, row, false, sgr)
+    ] }
+    if is_mouse_down(i32(k)) && held_button < 0 { held_button = b }
+  }
+  // Motion, when the pointer reaches another cell.
+  let moved = s.mouse_cell.0 != col || s.mouse_cell.1 != row
+  if moved && s.mouse_cell.0 >= 0 {
+    if held_button >= 0 && s.shown.mouse_mode >= 1002 {
+      out = [...out, ...mouse_report(held_button + 32 + extra, col, row, true, sgr)]
+    } else if held_button < 0 && s.shown.mouse_mode == 1003 {
+      out = [...out, ...mouse_report(3 + 32 + extra, col, row, true, sgr)]
+    }
+  }
+  s.mouse_cell = (col, row)
+  // The wheel: 64 up, 65 down, a report a notch.
+  let notches = wheel_notches(s, get_io().mouse_wheel())
+  let wheel = if notches > 0 { 64 } else { 65 }
+  for _ in 0..<notches.abs() { out = [
+    ...out,
+    ...mouse_report(wheel + extra, col, row, true, sgr)
+  ] }
+  if out.len() > 0 {
+    let _ = s.pty.write_bytes(out)
+  }
+}
+
+/// Whole wheel notches from this frame's travel and what was left from before, the rest
+/// kept: up positive. A trackpad's travel comes in fractions.
+let wheel_notches = (s: mut Session, travel: f32) -> i64 => {
+  s.wheel_left += travel
+  let whole = if s.wheel_left >= 0.0 { s.wheel_left.floor() } else { s.wheel_left.ceil() }
+  s.wheel_left -= f32(whole)
+  whole
+}
+
+/// A mouse report: button code `b` (with its modifier and motion bits), at the 0-based cell
+/// `col`, `row`; a press or motion, or a release. SGR's form (`\e[<b;x;yM`, `m` for a
+/// release, any size) or X10's (`\e[M` and three bytes, 32 more than the button and the
+/// 1-based place — so no place past 223, and a release is button 3).
+pub let mouse_report = pure (
+  b: i64,
+  col: i64,
+  row: i64,
+  press: bool,
+  sgr: bool
+) -> []u8 => {
+  if sgr { return "\e[<${b};${col + 1};${row + 1}${if press { "M" } else { "m" }}".encode_utf8() }
+  let code = if press { b } else { (b & ~3) | 3 }
+  [
+    0x1B,
+    0x5B,
+    0x4D,
+    u8(32 + code),
+    u8(32 + (col + 1).min(223)),
+    u8(32 + (row + 1).min(223))
+  ]
+}
+
+/// `notches` of the wheel as arrow keys — three lines a notch, up when positive — for a
+/// program on the alternate screen that has not asked for the mouse.
+pub let wheel_keys = pure (notches: i64, cursor_keys: bool) -> string => {
+  let key = if cursor_keys { if notches > 0 { "\eOA" } else { "\eOB" } } else { if notches > 0 { "\e[A" } else { "\e[B" } }
+  [n in 0..<(notches.abs() * 3) | key].join("")
+}
+
+/// What a click selects on line `line` (absolute): with `unit` 1 the place `edge` (a column
+/// boundary), with 2 the word around cell `under`, with 3 the whole line.
+let unit_span = pure (
+  shown: Screen,
+  unit: i64,
+  line: i64,
+  under: i64,
+  edge: i64
+) -> (Spot, Spot) => {
+  let (
+    a,
+    b
+  ) = if unit == 2 { word_span(
+    shown,
+    line,
+    under
+  ) } else if unit == 3 { (0, shown.cols) } else { (edge, edge) }
+  let from = Spot { line: line, col: a }
+  let to = Spot { line: line, col: b }
+  (from, to)
+}
 
 /// The colours drawn over the grid: the cursor, the command line's caret and selection,
 /// the band behind the command line, and the completion menu and its chosen row.
@@ -420,8 +717,9 @@ let drain = (pty: Pty, parse: mut Parser, shown: mut Screen) -> (bool, bool) => 
 }
 
 /// This frame's keys and typed text, sent to the shell as a terminal sends them. Whether
-/// anything was sent. With `menus`, ⌘V is the Edit menu's Paste and is not read here.
-let send_keys = (pty: Pty, menus: bool, bracketed: bool) -> bool => {
+/// anything was sent. With `menus`, ⌘V is the Edit menu's Paste and is not read here;
+/// `bracketed` and `cursor_keys` are the program's modes for pastes and arrows.
+let send_keys = (pty: Pty, menus: bool, bracketed: bool, cursor_keys: bool) -> bool => {
   // The keys as pressed: ImGui swaps Ctrl and ⌘ on macOS, and `held` undoes it.
   let keys = held()
   let mac = platform() == "macOS"
@@ -437,34 +735,56 @@ let send_keys = (pty: Pty, menus: bool, bracketed: bool) -> bool => {
       if is_key_pressed(KEY_A + i32(k)) { out = "${out}${rune(k + 1)}" }
     }
     if is_key_pressed(KEY_SPACE) { let _ = pty.write_bytes([0]) }
+  } else if !mac && keys.alt {
+    // Alt as Meta, off a Mac: Escape and then the key, as shells and Emacs read it — Alt+B
+    // a word back, Alt+F forward. (On a Mac Option types its own characters, as Terminal
+    // does unless told otherwise.)
+    let typed = typed_text()
+    if typed != "" { out = meta(typed) }
+    else {
+      for k in 0..<26 {
+        if is_key_pressed(KEY_A + i32(k)) {
+          let letter = rune(i64(if keys.shift { 'A' } else { 'a' }) + k)
+          out = "${out}\e${letter}"
+        }
+      }
+    }
+    if is_key_pressed(KEY_BACKSPACE) { out = "${out}\e\x7f" }
   } else {
     out = typed_text()
   }
+  let arrow = if cursor_keys { "\eO" } else { "\e[" }
   let named = [
     (KEY_ENTER, "\r"),
     (KEY_BACKSPACE, "\x7f"),
     (KEY_TAB, if keys.shift { "\e[Z" } else { "\t" }),
     (KEY_ESCAPE, "\e"),
-    (KEY_UP_ARROW, "\e[A"),
-    (KEY_DOWN_ARROW, "\e[B"),
-    (KEY_RIGHT_ARROW, "\e[C"),
-    (KEY_LEFT_ARROW, "\e[D"),
-    (KEY_HOME, "\e[H"),
-    (KEY_END, "\e[F"),
+    // Application cursor keys (`?1`), which full-screen programs turn on, are `\eO…`.
+    (KEY_UP_ARROW, "${arrow}A"),
+    (KEY_DOWN_ARROW, "${arrow}B"),
+    (KEY_RIGHT_ARROW, "${arrow}C"),
+    (KEY_LEFT_ARROW, "${arrow}D"),
+    (KEY_HOME, "${arrow}H"),
+    (KEY_END, "${arrow}F"),
     (KEY_INSERT, "\e[2~"),
     (KEY_DELETE, "\e[3~"),
     (KEY_PAGE_UP, "\e[5~"),
     (KEY_PAGE_DOWN, "\e[6~"),
   ]
+  // Alt+Backspace was sent above, as Meta's.
+  let meta_held = !mac && keys.alt && !ctrl && !command
   if !command {
     for (key, bytes) in named {
-      if is_key_pressed(key) { out = "${out}${bytes}" }
+      if is_key_pressed(key) && !(meta_held && key == KEY_BACKSPACE) { out = "${out}${bytes}" }
     }
   }
   if out == "" { return false }
   let _ = pty.write(out)
   true
 }
+
+/// `text` typed with Alt as Meta: each rune after an Escape.
+pub let meta = pure (text: string) -> string => [r in text | "\e${r}"].join("")
 
 /// `text` as a program is sent it for a paste: between bracketed paste's markers when the
 /// program turned the mode on (so it can tell a paste from typing — an editor does not
