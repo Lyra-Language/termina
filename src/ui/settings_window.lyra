@@ -1,0 +1,179 @@
+module ui
+//! The settings window: the font — its family, size and line spacing — and the colours —
+//! a theme to start from, then the text, background, cursor, selection and the 16 ANSI
+//! colours one by one, and bold as bright. Changes take at once; `../sulafat.lyra` keeps
+//! them (`../settings/settings.lyra`). Opened by Sulafat ▸ Settings… (⌘,), or Ctrl+,
+//! without a menu bar.
+
+import bindings.imgui.{
+  begin_closable,
+  end as end_window,
+  begin_combo,
+  end_combo,
+  selectable,
+  slider_float,
+  color_edit3,
+  checkbox,
+  button,
+  separator_text,
+  same_line,
+  text as label,
+  push_id_int,
+  pop_id,
+  set_next_window_size,
+  set_next_window_pos,
+  get_main_viewport,
+  Vec2,
+  WINDOW_FLAGS_NO_COLLAPSE,
+  WINDOW_FLAGS_NO_SAVED_SETTINGS,
+  COLOR_EDIT_FLAGS_NO_INPUTS,
+  COLOR_EDIT_FLAGS_NO_LABEL,
+  COND_FIRST_USE_EVER,
+  COND_APPEARING,
+}
+import settings.{
+  Settings,
+  FontFamily,
+  defaults,
+  file_family,
+  theme_colours,
+  THEME_NAMES,
+  FONT_SIZE_RANGE,
+  LINE_SPACING_RANGE,
+}
+
+/// What the settings window asks of the program this frame.
+pub struct SettingsAsk {
+  /// Something changed.
+  changed: bool,
+  /// Other Font File… was pressed: the system's file dialog is the program's to show.
+  choose_file: bool,
+}
+
+/// Draw the settings window while `open` (its close button clears it), editing `s`, the
+/// font families on offer being `families`.
+pub let settings_window = (
+  open: mut bool,
+  s: mut Settings,
+  families: []FontFamily
+) -> SettingsAsk => {
+  var choose_file = false
+  if !open { return SettingsAsk { changed: false, choose_file: false } }
+  let centre = get_main_viewport().get_center()
+  set_next_window_pos(centre, COND_APPEARING, Vec2 { x: 0.5, y: 0.5 })
+  set_next_window_size(Vec2 { x: 460.0, y: 560.0 }, COND_FIRST_USE_EVER)
+  var changed = false
+  if begin_closable(
+    "Settings###settings",
+    open,
+    WINDOW_FLAGS_NO_COLLAPSE | WINDOW_FLAGS_NO_SAVED_SETTINGS
+  ) {
+    separator_text("Font")
+    // A chosen file shows as its own name; picking a family goes back to families.
+    let shown = if s.font_file != "" { file_family(s.font_file).name } else { s.font_family }
+    if begin_combo("Family", shown) {
+      for f in families {
+        if selectable(f.name, s.font_file == "" && f.name == s.font_family) {
+          s.font_family = f.name
+          s.font_file = ""
+          changed = true
+        }
+      }
+      end_combo()
+    }
+    if button("Other Font File…") { choose_file = true }
+    if slider_float(
+      "Size",
+      s.font_size,
+      FONT_SIZE_RANGE.0,
+      FONT_SIZE_RANGE.1,
+      "%.0f pt"
+    ) {
+      // Whole points: a fractional size blurs every glyph.
+      s.font_size = f32(s.font_size.round())
+      changed = true
+    }
+    if slider_float(
+      "Line spacing",
+      s.line_spacing,
+      LINE_SPACING_RANGE.0,
+      LINE_SPACING_RANGE.1,
+      "%.2f"
+    ) {
+      changed = true
+    }
+
+    separator_text("Colours")
+    if begin_combo("Theme", s.theme_name) {
+      for name in THEME_NAMES {
+        if selectable(name, name == s.theme_name) {
+          s.theme_name = name
+          s.colours = theme_colours(name)
+          changed = true
+        }
+      }
+      end_combo()
+    }
+    // A colour changed by hand makes the theme the user's own.
+    var edited = false
+    if colour_field("Text", s.colours.fg) { edited = true }
+    if colour_field("Background", s.colours.bg) { edited = true }
+    if colour_field("Cursor", s.colours.cursor) { edited = true }
+    if colour_field("Selection", s.colours.selection) { edited = true }
+    label("ANSI colours")
+    for k in 0..<16 {
+      if k % 8 != 0 { same_line() }
+      push_id_int(i32(k))
+      if colour_swatch(s.colours.ansi, k) { edited = true }
+      pop_id()
+    }
+    if edited {
+      s.theme_name = "Custom"
+      changed = true
+    }
+    if checkbox("Draw bold text in bright colours", s.bold_is_bright) { changed = true }
+
+    separator_text("")
+    if button("Reset to Defaults") {
+      s = defaults()
+      changed = true
+    }
+  }
+  end_window()
+  SettingsAsk { changed: changed, choose_file: choose_file }
+}
+
+/// A colour's swatch and picker, labelled; whether it was changed.
+let colour_field = (label: string, rgb: mut u32) -> bool => {
+  var c = channels(rgb)
+  if color_edit3(label, c, COLOR_EDIT_FLAGS_NO_INPUTS) {
+    rgb = packed(c)
+    return true
+  }
+  false
+}
+
+/// ANSI colour `k`'s swatch, unlabelled; whether it was changed.
+let colour_swatch = (ansi: mut []u32, k: i64) -> bool => {
+  var c = channels(ansi[k])
+  if color_edit3("##ansi", c, COLOR_EDIT_FLAGS_NO_INPUTS | COLOR_EDIT_FLAGS_NO_LABEL) {
+    ansi[k] = packed(c)
+    return true
+  }
+  false
+}
+
+/// `0xRRGGBB` as the three channels a colour picker edits, 0 to 1.
+pub let channels = pure (rgb: u32) -> [3]f32 => #[
+  f32((rgb >> 16) & 0xFF) / 255.0,
+  f32((rgb >> 8) & 0xFF) / 255.0,
+  f32(rgb & 0xFF) / 255.0,
+]
+
+/// Three channels, 0 to 1, as `0xRRGGBB`.
+pub let packed = pure (c: [3]f32) -> u32 => {
+  let r = u32((c[0].clamp(0.0, 1.0) * 255.0).round())
+  let g = u32((c[1].clamp(0.0, 1.0) * 255.0).round())
+  let b = u32((c[2].clamp(0.0, 1.0) * 255.0).round())
+  (r << 16) | (g << 8) | b
+}

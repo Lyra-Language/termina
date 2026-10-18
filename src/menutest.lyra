@@ -38,6 +38,11 @@ let main = () -> u8 => {
       bar
     )
     failed += check("Select All", key_of(bar, "Select All") == "Cmd+A", bar)
+    failed += check(
+      "Settings in the application menu",
+      key_of(bar, "Settings…") == "Cmd+,",
+      bar
+    )
     // An item that would do nothing is greyed.
     set_enabled(MENU_UNDO, false)
     failed += check("a greyed item", describe().contains("Undo\tCmd+Z (off)"), describe())

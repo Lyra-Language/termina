@@ -18,6 +18,8 @@ build/sulafat               # the login shell ($SHELL -l) in a window of tabs: �
 build/sulafat CMD [ARG…]    # that program instead (as xterm -e), no integration — a test
                             #    script's colours, say, seen without typing
 open build/Sulafat.app      # the same, as a Mac app
+                            # Settings… (⌘,; Ctrl+, off macOS): font, size, spacing, colours —
+                            #    kept in ~/.config/sulafat/settings.json ($XDG_CONFIG_HOME)
 build/vttest                # parser, screen, editor, PTY and zsh checks; exit 1 on a failure
 SDL_VIDEODRIVER=dummy build/uitest   # the command line on a headless ImGui host, driven by
                             #    injected keys, typing and clicks (double-click included)
@@ -51,6 +53,8 @@ shell ⇄ bindings.pty ──bytes──▶ vt.Parser ──[]Action──▶ vt
 | `src/vt/width.lyra` | how many cells a rune takes: 2 wide (CJK, emoji), 0 combining, 1 the rest |
 | `src/vt/selection.lyra` | a selection on the screen and scrollback: its text, a word's span; **pure** |
 | `src/vt/style.lyra` | a `Cell`'s colours and attributes, and SGR on the `Pen` that writes them; **pure** |
+| `src/settings/settings.lyra` | the user's settings, the themes offered, the file (read leniently), the monospaced families found |
+| `src/ui/settings_window.lyra` | the settings window: font family or file, size, spacing, theme, every colour, bold as bright |
 | `src/ui/theme.lyra` | recorded colours → pixels: the theme's own pair, ANSI 16, xterm's 256; inverse, dim, hidden |
 | `src/ui/grid.lyra` | a screen line drawn: background runs, text runs of one style, faces, underlines, strike |
 | `src/vttest.lyra` | the checks: byte strings against actions and screens, the editor on text, real programs and zsh on a PTY |
@@ -98,6 +102,15 @@ shell ⇄ bindings.pty ──bytes──▶ vt.Parser ──[]Action──▶ vt
   the screen followed by `\e[K` loses its last character (less's status on a long path).
 - **Nothing blocks**: `Pty.read` is non-blocking and drained once a frame, at most
   `READS_PER_FRAME` reads, so a program that never stops writing cannot freeze the window.
+- **Settings take at once and are kept when the mouse is let go**: a change rebuilds the
+  theme (`ui.theme_of`), reloads the faces only when the family or file changed (ImGui keeps
+  a face per file; its size is chosen as it is pushed), and is written to the file once no
+  button is held, not every frame of a slider's drag. The file is read leniently — a
+  setting missing or wrong keeps its default — and a theme named in it gives the colours a
+  `colours` object does not. Programs asking the colours (OSC 10/11) are told the theme's.
+- **Font families are found by file name** (`Mono`, `Code`, `Courier`, `Consol`, as
+  capitalised; faces by `-Bold`/` Bold`/`Bold` suffixes), after the ones Sulafat knows by path
+  (SF Mono, Menlo, DejaVu Sans Mono), whose files are not offered twice.
 - **A colour is one `u32`** (`DEFAULT`, a palette index, or RGB — `vt/style.lyra`): the
   screen records what the program asked for; the theme decides what it looks like.
 - **Erases and scrolls fill with the pen's background** (xterm's BCE, which
@@ -115,6 +128,14 @@ shell ⇄ bindings.pty ──bytes──▶ vt.Parser ──[]Action──▶ vt
 - **Keys**: ImGui's keyboard navigation is turned off (the arrows and Tab are the shell's);
   typed text arrives through `bindings.imgui`'s `request_text_input`/`typed_text`. ⌘ (Ctrl+Shift
   off macOS) is the terminal's own; Ctrl+letter is the control character.
+- **At a prompt the command line is a box pinned to the window's foot**, as Warp has it: the
+  shell's prompt (the `B` line's cells before the input column) on its first row, the
+  editor from column 0 below, the completion menu opening upward (`Place.menu_above`). The
+  grid draws only the lines above the prompt's, and the page counts the box's height so the
+  last line rests on it at the bottom; the box is drawn opaque at the view's foot
+  (`origin.y + scroll + avail.y`), wherever the view is scrolled, and grid clicks stop at
+  its top. While a program runs there is no box. zsh's echo of the command still lands in
+  the transcript as `prompt command`.
 - **The command line is Sulafat's only between `B` and the next mark.** zsh reports
   `A`/`B`/`C`/`D` (OSC 133) through `shell/shell.lyra`'s hooks; at `B`, `Mode` becomes
   `AtPrompt(line, col)` and the editor is drawn from that cell, the shell's empty input

@@ -4,8 +4,10 @@ module ui
 //! that looks like: its own foreground and background, the 16 ANSI colours, and xterm's
 //! 256-colour palette built from them.
 //!
-//! Colours here are ImGui's: `0xAABBGGRR`, as `IM_COL32` packs them.
+//! Colours here are ImGui's: `0xAABBGGRR`, as `IM_COL32` packs them. A theme is made from
+//! the user's settings ([theme_of]); `../settings/settings.lyra` holds the themes offered.
 
+import settings.{ Settings, defaults }
 import vt.{
   Cell,
   DEFAULT,
@@ -22,24 +24,27 @@ import vt.{
 pub struct Theme {
   fg: u32,
   bg: u32,
+  /// The cursor's colour, and the selection's (drawn over the text, so translucent).
+  cursor: u32,
+  selection: u32,
   palette: []u32,
   /// Draw bold text in colours 0–7 as their bright versions (8–15), as older programs that
   /// used bold *for* brightness expect. Off: bold is a heavier face, the colour as asked.
   bold_is_bright: bool,
 }
 
-/// Sulafat's dark theme: the window's own `#181A1E` behind `#E6E1DC`, and an ANSI set in
-/// the spirit of One Dark — black lifted far enough off the background to be seen, and
-/// each bright colour a lighter step of its normal one.
-pub let dark_theme = pure () -> Theme => Theme {
-  fg: abgr(0xE6E1DC),
-  bg: abgr(0x181A1E),
-  palette: palette_256([
-    0x3B3F4A, 0xE06C75, 0x98C379, 0xE5C07B, 0x61AFEF, 0xC678DD, 0x56B6C2, 0xABB2BF,
-    0x5C6370, 0xF08A93, 0xB5E08F, 0xF2D49B, 0x84C3F5, 0xD79BE8, 0x7FCBD5, 0xF5F2EE,
-  ]),
-  bold_is_bright: false,
+/// The theme the settings describe.
+pub let theme_of = pure (s: Settings) -> Theme => Theme {
+  fg: abgr(s.colours.fg),
+  bg: abgr(s.colours.bg),
+  cursor: abgr(s.colours.cursor),
+  selection: (abgr(s.colours.selection) & 0x00FFFFFF) | 0x99000000,
+  palette: palette_256(s.colours.ansi),
+  bold_is_bright: s.bold_is_bright,
 }
+
+/// Sulafat's own theme, before any settings: Sulafat Dark.
+pub let dark_theme = pure () -> Theme => theme_of(defaults())
 
 impl Theme {
   /// The colours `cell` is drawn in: its text, and its background — `None` for the theme's
@@ -75,6 +80,22 @@ impl Theme {
     }
   }
 }
+
+/// An ImGui colour as a program asking for it (OSC 10, 11) is told it: `rrrr/gggg/bbbb`, each
+/// channel's byte twice, as X11's 16-bit form.
+pub let report_of = pure (c: u32) -> string => {
+  let r = (c & 0xFF).to_hex(2)
+  let g = ((c >> 8) & 0xFF).to_hex(2)
+  let b = ((c >> 16) & 0xFF).to_hex(2)
+  "${r}${r}/${g}${g}/${b}${b}"
+}
+
+/// The theme's background as the window is cleared to it: red, green, blue, 0 to 1.
+pub let clear_colour = pure (t: Theme) -> (f32, f32, f32) => (
+  f32(t.bg & 0xFF) / 255.0,
+  f32((t.bg >> 8) & 0xFF) / 255.0,
+  f32((t.bg >> 16) & 0xFF) / 255.0,
+)
 
 /// `0xRRGGBB` as ImGui's opaque `0xAABBGGRR`.
 pub let abgr = pure (rgb: u32) -> u32 =>

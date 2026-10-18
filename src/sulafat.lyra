@@ -46,6 +46,12 @@ import bindings.imgui.{
   WINDOW_FLAGS_NO_SAVED_SETTINGS,
   WINDOW_FLAGS_NO_SCROLLBAR,
   WINDOW_FLAGS_NO_SCROLL_WITH_MOUSE,
+  WINDOW_FLAGS_NO_BRING_TO_FRONT_ON_FOCUS,
+  is_mouse_down,
+  show_open_dialog,
+  poll_dialog,
+  FileFilter,
+  Chosen,
   STYLE_VAR_WINDOW_PADDING,
   CONFIG_FLAGS_NAV_ENABLE_KEYBOARD,
   FOCUSED_FLAGS_ROOT_AND_CHILD_WINDOWS,
@@ -61,7 +67,21 @@ import session.{
   Look,
 }
 import bindings.menubar.{ poll_menu, set_enabled }
+import settings.{
+  settings_path,
+  load_settings,
+  save_settings,
+  settings_to_json,
+  font_families,
+  family_for,
+  Settings,
+  FontFamily,
+}
 import ui.{
+  settings_window,
+  theme_of,
+  clear_colour,
+  OpenSettings,
   tab_command,
   menu_command,
   install_menus,
@@ -70,7 +90,6 @@ import ui.{
   TabLabel,
   edit_action_of,
   EDIT_ITEMS,
-  dark_theme,
   Fonts,
   Theme,
   TabCommand,
@@ -88,8 +107,14 @@ let main = () -> void => {
   // On a Mac, Sulafat's own menu bar in place of SDL's, whose Window ▸ Close takes ⌘W and
   // would close the window, and so quit, rather than the tab.
   let menus = install_menus()
-  let fonts = load_fonts(host)
-  let theme = dark_theme()
+  // The user's settings, the font families on offer, and the faces and theme made of them.
+  let settings_file = settings_path()
+  var settings = load_settings(settings_file)
+  var saved = settings_to_json(settings)
+  let families = font_families()
+  var fonts = load_fonts(host, families, settings)
+  var theme = theme_of(settings)
+  var settings_open = false
   let home = lookup("HOME") ?? ""
   // A program given on the command line runs in the first tab instead of the shell,
   // without the shell's integration, where Sulafat was started; tabs opened after it run
@@ -151,10 +176,49 @@ let main = () -> void => {
         active = n
         select = Some(n)
       },
+      OpenSettings => { settings_open = true },
       NoCommand => {},
     }
 
-    let bar = draw_window(sessions, active, select, fonts, theme, home, command, menus)
+    let bar = draw_window(
+      sessions,
+      active,
+      select,
+      fonts,
+      theme,
+      settings.line_spacing,
+      home,
+      command,
+      menus
+    )
+    // The settings window, over the terminal: a change takes at once, and is kept once the
+    // mouse is let go (not every frame of a slider's drag).
+    let faces_were = "${settings.font_family}|${settings.font_file}"
+    let ask = settings_window(settings_open, settings, families)
+    if ask.choose_file {
+      let _ = show_open_dialog(
+        host,
+        FONT_DIALOG,
+        [FileFilter { name: "Fonts", extensions: "ttf;otf;ttc" }]
+      )
+    }
+    // A font file chosen in the system's dialog becomes the font.
+    match poll_dialog(host) {
+      Some(Chosen(tag, path)) => if tag == FONT_DIALOG { settings.font_file = path },
+      _ => {},
+    }
+    if ask.changed || "${settings.font_family}|${settings.font_file}" != faces_were {
+      theme = theme_of(settings)
+      if "${settings.font_family}|${settings.font_file}" != faces_were {
+        fonts = load_fonts(host, families, settings)
+      }
+      fonts.size = settings.font_size
+    }
+    let now_json = settings_to_json(settings)
+    if now_json != saved && !is_mouse_down(0) {
+      let _ = save_settings(settings_file, settings)
+      saved = now_json
+    }
     select = None
     active = bar.shown
     match bar.closing {
@@ -192,7 +256,8 @@ let main = () -> void => {
       title = now
       set_window_title(host, title)
     }
-    end_frame(host, BACKGROUND.0, BACKGROUND.1, BACKGROUND.2)
+    let clear = clear_colour(theme)
+    end_frame(host, clear.0, clear.1, clear.2)
   }
   for s in sessions { close_session(s) }
   destroy_host(host)
@@ -206,6 +271,7 @@ let draw_window = (
   select: Maybe<i64>,
   fonts: Fonts,
   theme: Theme,
+  line_spacing: f32,
   home: string,
   command: TabCommand,
   menus: bool
@@ -216,7 +282,7 @@ let draw_window = (
   push_style_var_vec2(STYLE_VAR_WINDOW_PADDING, Vec2 { x: PADDING, y: PADDING / 2.0 })
   let flags = WINDOW_FLAGS_NO_DECORATION | WINDOW_FLAGS_NO_NAV_INPUTS |
     WINDOW_FLAGS_NO_BACKGROUND | WINDOW_FLAGS_NO_SAVED_SETTINGS | WINDOW_FLAGS_NO_SCROLLBAR |
-    WINDOW_FLAGS_NO_SCROLL_WITH_MOUSE
+    WINDOW_FLAGS_NO_SCROLL_WITH_MOUSE | WINDOW_FLAGS_NO_BRING_TO_FRONT_ON_FOCUS
   let _ = begin("terminal", flags)
   pop_style_var()
 
@@ -237,7 +303,7 @@ let draw_window = (
   )
   pop_style_var()
   match fonts.regular {
-    Some(f) => push_font_float(f, FONT_SIZE),
+    Some(f) => push_font_float(f, fonts.size),
     None => {},
   }
   // A cell is one advance wide, measured over a long run: ImGui rounds a measured width up
@@ -245,7 +311,7 @@ let draw_window = (
   // put the cursor cells to the right of the text it follows.
   let cell = Vec2 {
     x: calc_text_size(MEASURE).x / f32(MEASURE.len()),
-    y: f32((get_font_size() * LINE_SPACING).round()),
+    y: f32((get_font_size() * line_spacing).round()),
   }
   let look = Look {
     cell: cell,
@@ -276,16 +342,11 @@ let in_order = pure (order: []i64) -> bool => {
   true
 }
 
-/// The window's own background is the theme's (`ui/theme.lyra`'s `#181A1E`), cleared to
-/// before anything is drawn.
-const BACKGROUND: (f32, f32, f32) = (0.094, 0.102, 0.118)
+/// The tag the font file dialog's answer comes back under.
+const FONT_DIALOG: i32 = 1
 
 /// Points between the window's edge and the grid.
 const PADDING: f32 = 10.0
-
-/// The text's size in points, and the line's height as a multiple of it.
-const FONT_SIZE: f32 = 14.0
-const LINE_SPACING: f32 = 1.2
 
 /// The run of characters a cell's width is measured over.
 const MEASURE: string = "MMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMM"
@@ -294,48 +355,30 @@ const MEASURE: string = "MMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMM
 /// cannot stop the window drawing.
 const READS_PER_FRAME: i64 = 16
 
-/// The first monospaced family found among the system's — its regular face, and the bold,
-/// italic and bold italic ones it has — or ImGui's own face (which is monospaced) alone.
-let load_fonts = (host: Host) -> Fonts => {
-  for family in FAMILIES {
-    match font_file(host, family.0, FONT_SIZE) {
-      Some(regular) => return Fonts {
-        regular: Some(regular),
-        bold: face(host, family.1),
-        italic: face(host, family.2),
-        bold_italic: face(host, family.3),
-        size: FONT_SIZE,
-      },
-      None => {},
-    }
+/// The faces the settings choose (a chosen file's, else the family's — the first family when
+/// it is not installed), at the settings' size; ImGui's own face (monospaced) alone when no family is found.
+let load_fonts = (host: Host, families: []FontFamily, s: Settings) -> Fonts => {
+  let none = Fonts {
+    regular: None,
+    bold: None,
+    italic: None,
+    bold_italic: None,
+    size: s.font_size
   }
-  Fonts { regular: None, bold: None, italic: None, bold_italic: None, size: FONT_SIZE }
+  let Some(family) = family_for(s, families) else { return none }
+  match face(host, family.regular, s.font_size) {
+    Some(regular) => Fonts {
+      regular: Some(regular),
+      bold: face(host, family.bold, s.font_size),
+      italic: face(host, family.italic, s.font_size),
+      bold_italic: face(host, family.bold_italic, s.font_size),
+      size: s.font_size,
+    },
+    None => none,
+  }
 }
 
-/// Monospaced families: regular, bold, italic and bold italic files (`""` for a face the
-/// family has no file of). macOS's SF Mono is one variable font, so its bold is drawn.
-const FAMILIES: [](string, string, string, string) = [
-  ("/System/Library/Fonts/SFNSMono.ttf", "", "/System/Library/Fonts/SFNSMonoItalic.ttf", ""),
-  ("/System/Library/Fonts/Menlo.ttc", "", "", ""),
-  (
-    "/usr/share/fonts/truetype/dejavu/DejaVuSansMono.ttf",
-    "/usr/share/fonts/truetype/dejavu/DejaVuSansMono-Bold.ttf",
-    "/usr/share/fonts/truetype/dejavu/DejaVuSansMono-Oblique.ttf",
-    "/usr/share/fonts/truetype/dejavu/DejaVuSansMono-BoldOblique.ttf",
-  ),
-  (
-    "/usr/share/fonts/TTF/DejaVuSansMono.ttf",
-    "/usr/share/fonts/TTF/DejaVuSansMono-Bold.ttf",
-    "/usr/share/fonts/TTF/DejaVuSansMono-Oblique.ttf",
-    "/usr/share/fonts/TTF/DejaVuSansMono-BoldOblique.ttf",
-  ),
-  (
-    "/usr/share/fonts/dejavu-sans-mono-fonts/DejaVuSansMono.ttf",
-    "/usr/share/fonts/dejavu-sans-mono-fonts/DejaVuSansMono-Bold.ttf",
-    "/usr/share/fonts/dejavu-sans-mono-fonts/DejaVuSansMono-Oblique.ttf",
-    "/usr/share/fonts/dejavu-sans-mono-fonts/DejaVuSansMono-BoldOblique.ttf",
-  ),
-]
-
-let face = (host: Host, path: string) -> Maybe<Font> =>
-  if path == "" { None } else { font_file(host, path, FONT_SIZE) }
+/// A face from `path` (`None` for `""`, or a file that cannot be read). ImGui keeps one per
+/// file, and a size is chosen as it is pushed, so the size here is only its first.
+let face = (host: Host, path: string, size: f32) -> Maybe<Font> =>
+  if path == "" { None } else { font_file(host, path, size) }

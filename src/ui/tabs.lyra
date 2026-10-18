@@ -13,7 +13,16 @@ module ui
 //! keys.
 
 import bindings.sdl3.{ platform }
-import bindings.menubar.{ menu, item, separator, window_menu, install, COMMAND, SHIFT }
+import bindings.menubar.{
+  menu,
+  app_menu,
+  item,
+  separator,
+  window_menu,
+  install,
+  COMMAND,
+  SHIFT
+}
 import bindings.imgui.{
   begin_tab_bar,
   end_tab_bar,
@@ -30,6 +39,7 @@ import bindings.imgui.{
   TAB_ITEM_FLAGS_NO_TOOLTIP,
   is_key_pressed,
   KEY_T,
+  KEY_COMMA,
   KEY_W,
   KEY_1,
   KEY_LEFT_BRACKET,
@@ -132,6 +142,8 @@ pub data TabCommand =
   | CloseTab
   /// Show the tab at this index.
   | ShowTab i64
+  /// Open the settings window (⌘, from the menu bar; Ctrl+, without one).
+  | OpenSettings
 
 /// The tab shortcut pressed this frame, if any, with `active` shown of `count`: ⌘T, ⌘W,
 /// ⌘1–⌘9, ⌘⇧[ and ⌘⇧] on a Mac; Ctrl+Shift+T and W, Alt+1–9 and Ctrl+PageUp/PageDown
@@ -144,6 +156,8 @@ pub let tab_command = (active: i64, count: i64, menus: bool) -> TabCommand => {
   let by_menu = mac && menus
   if chord && !by_menu && is_key_pressed(KEY_T) { return NewTab }
   if chord && !by_menu && is_key_pressed(KEY_W) { return CloseTab }
+  // Settings: the menu's ⌘, on a Mac, Ctrl+, elsewhere (no shell binds it).
+  if !mac && mods.control && !mods.shift && is_key_pressed(KEY_COMMA) { return OpenSettings }
   let numbered = if mac { mods.command && !mods.shift } else { mods.alt && !mods.control }
   if numbered {
     for n in 0..<9 {
@@ -173,6 +187,7 @@ pub const MENU_NEW_TAB: i32 = 1
 pub const MENU_CLOSE_TAB: i32 = 2
 pub const MENU_PREVIOUS_TAB: i32 = 3
 pub const MENU_NEXT_TAB: i32 = 4
+pub const MENU_SETTINGS: i32 = 5
 
 /// The tab command a menu item stands for, with `active` shown of `count`.
 pub let menu_command = pure (tag: i32, active: i64, count: i64) -> TabCommand =>
@@ -180,6 +195,7 @@ pub let menu_command = pure (tag: i32, active: i64, count: i64) -> TabCommand =>
   else if tag == MENU_CLOSE_TAB { CloseTab }
   else if tag == MENU_PREVIOUS_TAB { ShowTab((active - 1) %% count) }
   else if tag == MENU_NEXT_TAB { ShowTab((active + 1) %% count) }
+  else if tag == MENU_SETTINGS { OpenSettings }
   else { NoCommand }
 
 /// The menu bar, on a Mac: Shell's tab items — New Tab ⌘T, Close Tab ⌘W, Show Previous and
@@ -187,6 +203,8 @@ pub let menu_command = pure (tag: i32, active: i64, count: i64) -> TabCommand =>
 /// [edit_action_of]), and the standard Window menu. Whether there is one (`false`
 /// elsewhere, where the tab keys are read as keys).
 pub let install_menus = () -> bool => {
+  app_menu()
+  item("Settings…", ",", COMMAND, MENU_SETTINGS)
   menu("Shell")
   item("New Tab", "t", COMMAND, MENU_NEW_TAB)
   separator()

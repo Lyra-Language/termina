@@ -71,6 +71,7 @@ import ui.{
   Submit,
   Send,
   draw_line,
+  report_of,
   Theme,
   Fonts,
   LineAt,
@@ -320,6 +321,9 @@ pub let draw_session = (
   menus: bool
 ) -> void => {
   s.line.menu_keys = menus
+  // What a program asking (vim) is told the colours are: the theme's.
+  s.shown.fg_report = report_of(look.theme.fg)
+  s.shown.bg_report = report_of(look.theme.bg)
   let cell = look.cell
   let text_dy = look.text_dy
   let pixel = look.pixel
@@ -334,21 +338,24 @@ pub let draw_session = (
     let _ = s.pty.resize(cols, rows)
   }
 
-  // At a prompt still on the screen or in the scrollback: its line, and the layout of the
-  // command line after it.
+  // At a prompt still on the screen or in the scrollback: its line, and the column its
+  // input begins at — the end of the prompt.
   let prompt = match s.mode {
     AtPrompt(at, col) => match s.shown.line_at(at) {
-      Some(i) => Some((i, Wrap { first: col.min(cols - 1), cols: cols })),
+      Some(i) => Some((i, col.min(cols - 1))),
       None => None,
     },
     Raw => None,
   }
-  // The command line's rows, and with the completion menu's below them those the grid
-  // leaves to it.
-  let (input_line, edit_rows, input_rows) = match prompt {
-    Some((i, wrap)) => (i, s.line.rows(wrap), s.line.rows(wrap) + s.line.menu_rows()),
-    None => (-1, 0, 0),
+  let input_line = match prompt {
+    Some((i, _)) => i,
+    None => -1,
   }
+  // At a prompt the command line is a box pinned to the window's foot, as Warp has it: the
+  // prompt's row, then the command's rows from the first column.
+  let wrap = Wrap { first: 0, cols: cols }
+  let box_rows = if input_line >= 0 { 1 + s.line.rows(wrap) } else { 0 }
+  let box_height = if box_rows > 0 { f32(box_rows) * cell.y + 2.0 * BOX_PADDING } else { 0.0 }
 
   // Following the output: the view was at the bottom before this frame's scroll.
   let at_bottom = get_scroll_y() >= get_scroll_max_y() - 1.0
@@ -357,32 +364,21 @@ pub let draw_session = (
   // the scrollback above its screen is not shown.
   let base = if s.shown.alt { s.shown.scrollback_len() } else { 0 }
   let line_count = s.shown.scrollback_len() + s.shown.rows
-  let total = line_count.max(input_line + input_rows) - base
+  // The grid's lines: all of them, or at a prompt those above its line — the prompt is in
+  // the box, and below it is only the shell's empty input.
+  let grid_lines = if input_line >= 0 { input_line } else { line_count }
+  let total = grid_lines - base
+  // The page: the grid's lines, and room under them for the box, so that the last line
+  // rests on the box when the view is at the bottom.
+  let page = f32(total) * cell.y + box_height
   let top = base + (get_scroll_y() / cell.y).floor().clamp(0, total)
-  let bottom = (top + rows + 1).min(base + total).min(line_count)
+  let bottom = (top + rows + 1).min(grid_lines)
+  // The box's top on the screen: the view's foot, wherever it is scrolled to.
+  let view_bottom = origin.y + get_scroll_y() + avail.y
+  let box_top = view_bottom - box_height
   let list = get_window_draw_list()
-  if input_line >= 0 {
-    let y = origin.y + f32(input_line - base) * cell.y
-    list.add_rect_filled(
-      Vec2 { x: origin.x - BAND_MARGIN, y: y },
-      Vec2 { x: origin.x + f32(cols) * cell.x + BAND_MARGIN, y: y + f32(edit_rows) * cell.y },
-      INPUT_BAND,
-      4.0
-    )
-  }
   for i in top..<bottom {
-    // The command line's rows are the editor's: of the prompt's line only the prompt is
-    // drawn, and the shell's empty input below it not at all.
-    let upto = if i == input_line {
-      match prompt {
-        Some((_, wrap)) => wrap.first,
-        None => s.shown.cols,
-      }
-    } else if i > input_line && i < input_line + input_rows {
-      0
-    } else {
-      s.shown.cols
-    }
+    let upto = s.shown.cols
     let at = LineAt {
       origin: Vec2 { x: origin.x, y: origin.y + f32(i - base) * cell.y },
       cell: cell,
@@ -404,7 +400,7 @@ pub let draw_session = (
         list.add_rect_filled(
           Vec2 { x: origin.x + f32(a) * cell.x, y: y },
           Vec2 { x: origin.x + f32(b) * cell.x, y: y + cell.y },
-          SELECTION
+          theme.selection
         )
       }
     }
@@ -413,12 +409,12 @@ pub let draw_session = (
   // mouse), and with Shift held when a program has asked for the mouse; otherwise the
   // program is told of it. A program on the alternate screen that has not asked is sent
   // the wheel as arrow keys, so that less and man scroll.
-  let grid_rows = if input_line >= 0 { input_line } else { line_count }
   let raw = input_line < 0
   if raw && s.shown.mouse_mode != 0 && !held().shift {
     report_mouse(s, origin, cell, base)
   } else {
-    grid_mouse(s, origin, cell, base, grid_rows)
+    // The box's own clicks are the command line's; the grid takes those above it.
+    grid_mouse(s, origin, cell, base, grid_lines, if raw { 1.0e30 } else { box_top })
     if raw && s.shown.alt && s.shown.alternate_scroll && s.shown.mouse_mode == 0 && is_window_hovered() {
       let notches = wheel_notches(s, get_io().mouse_wheel())
       if notches != 0 {
@@ -431,22 +427,47 @@ pub let draw_session = (
     let _ = s.pty.write(if focused { "\e[I" } else { "\e[O" })
   }
   s.had_focus = focused
-  dummy(Vec2 { x: f32(cols) * cell.x, y: f32(total) * cell.y })
+  dummy(Vec2 { x: f32(cols) * cell.x, y: page })
 
   var follow = s.got_output && at_bottom
   match prompt {
-    Some((i, wrap)) => {
+    Some((i, prompt_end)) => {
       let before = "${s.line.edit.cursor}:${s.line.edit.anchor}:${s.line.edit.content()}"
+      // The box: opaque, so the scrolled-back grid never shows through it, tinted, a rule
+      // along its top; the prompt in its first row, as the shell drew it.
+      let x0 = origin.x - BOX_MARGIN
+      let x1 = origin.x + f32(cols) * cell.x + BOX_MARGIN
+      list.add_rect_filled(
+        Vec2 { x: x0, y: box_top },
+        Vec2 { x: x1, y: view_bottom + BOX_MARGIN },
+        theme.bg
+      )
+      list.add_rect_filled(
+        Vec2 { x: x0, y: box_top },
+        Vec2 { x: x1, y: view_bottom + BOX_MARGIN },
+        INPUT_BAND,
+        6.0
+      )
+      list.add_line_h(x0, x1, box_top, BOX_RULE, 1.0)
+      let prompt_at = LineAt {
+        origin: Vec2 { x: origin.x, y: box_top + BOX_PADDING },
+        cell: cell,
+        text_dy: text_dy,
+        pixel: pixel,
+      }
+      draw_line(list, theme, fonts, prompt_at, s.shown.line(i), prompt_end)
       let place = Place {
-        origin: Vec2 { x: origin.x, y: origin.y + f32(i - base) * cell.y },
+        origin: Vec2 { x: origin.x, y: box_top + BOX_PADDING + cell.y },
         cell: cell,
         text_dy: text_dy,
         wrap: wrap,
+        menu_above: true,
+        rows_above: 1,
       }
       let style = Style {
         text: theme.fg,
-        caret: CARET,
-        selection: SELECTION,
+        caret: theme.cursor,
+        selection: theme.selection,
         menu: MENU,
         menu_chosen: MENU_CHOSEN,
         faint: theme.palette[8],
@@ -492,7 +513,7 @@ pub let draw_session = (
         } else {
           (cursor, Vec2 { x: cursor.x + cell.x, y: cursor.y + cell.y })
         }
-        list.add_rect_filled(lo, hi, CURSOR)
+        list.add_rect_filled(lo, hi, (theme.cursor & 0x00FFFFFF) | 0xB0000000)
       }
       if focused {
         // Copy without a menu bar (Ctrl+Shift+C off macOS): the grid's selection.
@@ -510,7 +531,7 @@ pub let draw_session = (
       }
     },
   }
-  if follow { set_scroll_y(f32(total) * cell.y) }
+  if follow { set_scroll_y(page) }
 }
 
 /// Where the shell is, as far as Sulafat can tell.
@@ -525,13 +546,14 @@ data Mode =
 /// The mouse on the grid: a click sets where a selection starts (and drops one), a drag
 /// selects, a double-click selects a word and a triple-click a line, a drag after either
 /// extending by words or lines. Only lines before `grid_rows` (an index of everything's
-/// lines) take it.
+/// lines) take it, and only above `below` on the screen (the command line's box).
 let grid_mouse = (
   s: mut Session,
   origin: Vec2,
   cell: Vec2,
   base: i64,
-  grid_rows: i64
+  grid_rows: i64,
+  below: f32
 ) -> void => {
   let m = get_mouse_pos()
   // -FLT_MAX when the pointer is nowhere; no cell arithmetic survives it.
@@ -546,6 +568,7 @@ let grid_mouse = (
   let under = fx.floor().clamp(0, s.shown.cols - 1)
   let inside = is_window_hovered() &&
     m.y >= origin.y &&
+    m.y < below &&
     ((m.y - origin.y) / cell.y).floor() + base < grid_rows
   if inside && is_mouse_clicked(0) {
     s.sel_unit = i64(get_mouse_clicked_count(0)).clamp(1, 3)
@@ -683,17 +706,17 @@ let unit_span = pure (
   (from, to)
 }
 
-/// The colours drawn over the grid: the cursor, the command line's caret and selection,
-/// the band behind the command line, and the completion menu and its chosen row.
-const CURSOR: u32 = 0xB0E6E1DC
-const CARET: u32 = 0xFFFFC66D
-const SELECTION: u32 = 0x66B07A3A
+/// The colours drawn over the grid besides the theme's: the band behind the command line,
+/// and the completion menu and its chosen row.
 const INPUT_BAND: u32 = 0x10FFFFFF
 const MENU: u32 = 0xFF2E2A25
 const MENU_CHOSEN: u32 = 0xFF4A4038
 
-/// How far the command line's band reaches past the grid on each side, in points.
-const BAND_MARGIN: f32 = 5.0
+/// The command line's box: how far it reaches past the grid on each side, the space inside
+/// it above and below its rows, and the rule along its top.
+const BOX_MARGIN: f32 = 5.0
+const BOX_PADDING: f32 = 6.0
+const BOX_RULE: u32 = 0x30FFFFFF
 
 /// Reads per frame at most — a megabyte — so that a program writing without end (`yes`)
 /// cannot stop the window drawing.

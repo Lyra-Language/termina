@@ -7,7 +7,8 @@ milestones are in `CLAUDE.md` § Plan; finished items move to `done.md`.
 
 - **[OPEN] Narrowing is literal** — a case-insensitive or substring `matcher-list` in the user's zsh shapes Tab's list, but typing then narrows by exact start; asking zsh again would honour it.
 - **[OPEN] A completion's own suffix rules** — zsh removes an auto-added space or `/` when the next key is `/` or `)`; Sulafat keeps it.
-- **[OPEN] Right prompts** — zsh's `RPROMPT` sits under the editor's band and is hidden by nothing; text typed past it overlaps.
+- **[OPEN] Right prompts and two-line prompts** — the box shows the prompt's last line before the input column; an `RPROMPT`, or a prompt's earlier lines, stay in the transcript above.
+- **[OPEN] The box while a command runs** — it goes; Warp keeps it, greyed, to type the next command in.
 - **[OPEN] Syntax colouring, Ctrl+R search, bash integration** — next after Tab.
 
 ## Tabs
@@ -19,7 +20,11 @@ milestones are in `CLAUDE.md` § Plan; finished items move to `done.md`.
 - **[OPEN] Glyphs for CJK and emoji** — wide runes take their two cells, but SF Mono has no CJK glyphs and stb_truetype no colour emoji; a fallback font is needed.
 - **[OPEN] Combining marks** — dropped; a cell would need a rune and its marks.
 - **[OPEN] Wide runes in the command line** — the editor lays out a rune a column.
-- **[OPEN] A setting for bold as bright** — the theme has it; nothing turns it on.
+
+## Settings
+
+- **[OPEN] The command line's own colours** — its band, completion menu and chosen row are fixed; they could follow the theme.
+- **[OPEN] Settings window on Linux needs a way in besides Ctrl+,** — there is no menu bar to show it.
 
 ## Found along the way
 

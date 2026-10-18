@@ -7,6 +7,7 @@ Finished work, moved from `todo.md` with its section; the rules it left behind a
 
 - **[DONE 10/16] Tab completion** — zsh's own, captured by a widget and offered in a menu (`CLAUDE.md`, Tab completion).
 - **[DONE 10/16] Filter the menu as you type** — typing narrows it from zsh's list and ⌫ widens it; it closes when nothing is left or the caret leaves the word.
+- **[DONE 10/17] The command line pinned to the window's foot** — a box holding the prompt and the editor, as Warp has it; the menu opens upward.
 - **[DONE 10/16] Type-ahead** — a `zle-line-init` hook reports keys waiting at a new line; a typed Return runs its line, the rest goes into the editor.
 
 ## Tabs
@@ -27,3 +28,7 @@ Finished work, moved from `todo.md` with its section; the rules it left behind a
 - **[DONE 10/16] Selection and copy** — drag, double-click a word, triple-click a line, ⌘C; Select All while a program runs.
 - **[DONE 10/16] Device reports** — DA1, DA2, XTVERSION, DSR, DECRQM and the colour queries answered.
 - **[DONE 10/16] Alt as Meta off macOS** — Alt+key and Alt+Backspace as Escape-prefixed.
+
+## Settings
+
+- **[DONE 10/17] A settings window** — font family or file, size, line spacing, six themes, every colour, bold as bright; kept in `~/.config/sulafat/settings.json`.

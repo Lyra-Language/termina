@@ -62,6 +62,12 @@ import ui.{
   Theme,
   typed_lines,
   tab_command,
+  OpenSettings,
+  MENU_SETTINGS,
+  settings_window,
+  theme_of,
+  channels,
+  packed,
   tab_bar,
   order_by,
   TabBar,
@@ -82,6 +88,20 @@ import ui.{
   NewTab,
   CloseTab,
   ShowTab
+}
+import settings.{
+  defaults,
+  settings_to_json,
+  settings_from_json,
+  theme_colours,
+  colour_of,
+  hex_of,
+  families_of,
+  family_for,
+  file_family,
+  font_families,
+  Settings,
+  FontFamily,
 }
 import session.{
   open_session,
@@ -114,6 +134,7 @@ let main = () -> u8 => {
   failed += check_tab_drag(host)
   failed += check_mouse_reports()
   failed += check_meta_and_bright()
+  failed += check_settings(host)
   destroy_host(host)
   if failed == 0 {
     println("uitest: all passed")
@@ -354,6 +375,28 @@ let check_completion = (host: Host) -> i64 => {
     "0|ls s "
   )
 
+  // In the box at the window's foot the menu opens upward, above the prompt's row: its
+  // second row is two rows above that.
+  var above = command_line([])
+  let box_place = Place { PLACE | menu_above: true, rows_above: 1 }
+  above.edit.paste("ls s")
+  let _ = frame_at(host, above, box_place)
+  above.pending = Some(("ls s", 4))
+  above.completed([offer("", "src", "/", "src", ""), offer("", "sub", "/", "sub", "")])
+  let _ = frame_at(host, above, box_place)
+  // Rows -3 and -2 are the menu's (two items above one prompt row); -2 is "sub".
+  get_io().add_mouse_pos_event(
+    PLACE.origin.x + 9.25 * PLACE.cell.x,
+    PLACE.origin.y - 1.5 * PLACE.cell.y
+  )
+  let _ = frame_at(host, above, box_place)
+  get_io().add_mouse_button_event(0, true)
+  let _ = frame_at(host, above, box_place)
+  get_io().add_mouse_button_event(0, false)
+  let _ = frame_at(host, above, box_place)
+  failed += check("a menu above, clicked", above.edit.content(), "ls sub/")
+  for _ in 0..<30 { let _ = frame_at(host, above, box_place) }
+
   // An answer for a line edited since is dropped.
   var stale = command_line([])
   type_text(host, stale, "ec")
@@ -472,12 +515,149 @@ let check_edit_actions = (host: Host) -> i64 => {
   failed
 }
 
+// The settings: the file, the fonts found, the theme made of them, and the window.
+let check_settings = (host: Host) -> i64 => {
+  var failed = 0
+  let d = defaults()
+  failed += check(
+    "a round trip",
+    settings_to_json(settings_from_json(settings_to_json(d))),
+    settings_to_json(d)
+  )
+  failed += check(
+    "a broken file is the defaults",
+    settings_to_json(settings_from_json("{ nope")),
+    settings_to_json(d)
+  )
+  let odd = settings_from_json(`{"font_size": 99, "theme": "Nord", "colours": {"background": "#000000", "ansi": ["#fff"]}, "bold_is_bright": true}`)
+  failed += check("a size too large is the largest", "${odd.font_size}", "32")
+  failed += check(
+    "the theme's colours",
+    hex_of(odd.colours.fg),
+    hex_of(theme_colours("Nord").fg)
+  )
+  failed += check("one written over them", hex_of(odd.colours.bg), "#000000")
+  failed += check(
+    "a short ANSI list is not taken",
+    "${odd.colours.ansi.len()} ${hex_of(odd.colours.ansi[1])}",
+    "16 ${hex_of(theme_colours("Nord").ansi[1])}"
+  )
+  failed += check("a flag", "${odd.bold_is_bright}", "true")
+  failed += check("a colour read", "${colour_of("#1a2B3c") ?? 0}", "${u32(0x1A2B3C)}")
+  failed += check(
+    "not a colour",
+    "${colour_of("#12345") == None} ${colour_of("zzzzzz") == None}",
+    "true true"
+  )
+  failed += check("a colour written", hex_of(0x0A0B0C), "#0a0b0c")
+  failed += check(
+    "picker channels and back",
+    hex_of(packed(channels(0x3A6EA5))),
+    "#3a6ea5"
+  )
+
+  // Font files grouped into families: faces by suffix, the unoffered weights left out, and
+  // a file that does not look monospaced passed over.
+  let found = families_of([
+    "/f/JetBrainsMono-Regular.ttf",
+    "/f/JetBrainsMono-Bold.ttf",
+    "/f/JetBrainsMono-Italic.ttf",
+    "/f/JetBrainsMono-BoldItalic.ttf",
+    "/f/JetBrainsMono-Light.ttf",
+    "/f/Arial.ttf",
+    "/f/FiraCode-Regular.otf",
+    "/f/OnlyBoldMono-Bold.ttf",
+    "/f/Arial Unicode.ttf",
+    "/f/Courier New.ttf",
+    "/f/Courier New Bold.ttf",
+    "/f/Courier New Italic.ttf",
+    "/f/Courier New Bold Italic.ttf",
+  ])
+  failed += check(
+    "families",
+    [f in found | f.name].join(","),
+    "Courier New,Fira Code,JetBrains Mono"
+  )
+  let courier = found[0]
+  failed += check(
+    "faces after a space",
+    "${courier.bold != ""} ${courier.italic != ""} ${courier.bold_italic != ""}",
+    "true true true"
+  )
+  failed += check(
+    "their faces",
+    "${found[2].bold != ""} ${found[2].italic != ""} ${found[2].bold_italic != ""} ${found[1].bold == ""}",
+    "true true true true"
+  )
+  let here = font_families()
+  failed += check("some family installed", "${here.len() > 0}", "true")
+  // A font file chosen instead: a family of its one face, kept in the file, and chosen over
+  // the family named.
+  let file = file_family("/Users/me/Fonts/BerkeleyMono-Regular.otf")
+  failed += check(
+    "a file's family",
+    "${file.name}|${file.regular}|${file.bold}",
+    "Berkeley Mono|/Users/me/Fonts/BerkeleyMono-Regular.otf|"
+  )
+  var with_file = defaults()
+  with_file.font_file = "/Users/me/Fonts/BerkeleyMono-Regular.otf"
+  failed += check(
+    "the file over the family",
+    (family_for(with_file, here) ?? file).name,
+    "Berkeley Mono"
+  )
+  failed += check(
+    "kept in the file",
+    settings_from_json(settings_to_json(with_file)).font_file,
+    with_file.font_file
+  )
+  failed += check("no file: the family", (family_for(d, here) ?? file).name, here[0].name)
+
+  // The theme the settings make.
+  let t = theme_of(d)
+  failed += check("the theme's background", hex(t.bg), hex(abgr(d.colours.bg)))
+  failed += check("the selection is translucent", "${(t.selection >> 24) < 0xFF}", "true")
+  failed += check(
+    "the palette from the ANSI colours",
+    hex(t.palette[4]),
+    hex(abgr(d.colours.ansi[4]))
+  )
+
+  // The window draws, unchanged without input.
+  var open = true
+  var s = defaults()
+  var changed = false
+  for _ in 0..<3 { changed = settings_frame(host, open, s, here) }
+  failed += check("the window draws, unchanged", "${open} ${changed}", "true false")
+  failed
+}
+
+/// One frame with only the settings window.
+let settings_frame = (
+  host: Host,
+  open: mut bool,
+  s: mut Settings,
+  families: []FontFamily
+) -> bool => {
+  if !begin_frame(host) { return false }
+  let ask = settings_window(open, s, families)
+  end_frame(host, 0.0, 0.0, 0.0)
+  ask.changed || ask.choose_file
+}
+
 // Alt as Meta, and bold as bright.
 let check_meta_and_bright = () -> i64 => {
   var failed = 0
   failed += check("meta", meta("bf").replace("\e", "^"), "^b^f")
   let off = dark_theme()
-  let on = Theme { fg: off.fg, bg: off.bg, palette: off.palette, bold_is_bright: true }
+  let on = Theme {
+    fg: off.fg,
+    bg: off.bg,
+    cursor: off.cursor,
+    selection: off.selection,
+    palette: off.palette,
+    bold_is_bright: true,
+  }
   let bold_red = Cell { ch: 'x', fg: indexed(1), bg: DEFAULT, attrs: BOLD }
   failed += check("bold red, as asked", hex(off.colours(bold_red).0), hex(off.palette[1]))
   failed += check("bold red, bright", hex(on.colours(bold_red).0), hex(off.palette[9]))
@@ -698,6 +878,11 @@ let check_tab_keys = (host: Host) -> i64 => {
     describe_tab(menu_command(MENU_NEXT_TAB, 2, 3)),
     "show 0"
   )
+  failed += check(
+    "the menu's settings",
+    describe_tab(menu_command(MENU_SETTINGS, 0, 3)),
+    "settings"
+  )
   io.set_config_mac_osx_behaviors(false)
   failed
 }
@@ -716,6 +901,7 @@ let describe_tab = (c: TabCommand) -> string => match c {
   NewTab => "new",
   CloseTab => "close",
   ShowTab(n) => "show ${n}",
+  OpenSettings => "settings",
 }
 
 /// The tab command for a key pressed with `mods` held, with tab `active` of `count` shown.
@@ -889,6 +1075,26 @@ let check_theme = () -> i64 => {
 let hex = (c: u32) -> string => "${c}"
 
 // ── Driving ──────────────────────────────────────────────────────────────────
+
+/// One frame with the command line in a window covering the host, focused, at `at`.
+let frame_at = (host: Host, line: mut CommandLine, at: Place) -> Outcome => {
+  if !begin_frame(host) { return Nothing }
+  set_next_window_pos(Vec2 { x: 0.0, y: 0.0 })
+  set_next_window_size(Vec2 { x: 800.0, y: 400.0 })
+  let _ = begin("checks", WINDOW_FLAGS_NO_DECORATION)
+  let style = Style {
+    text: 0xFFFFFFFF,
+    caret: 0xFFFFFFFF,
+    selection: 0x80808080,
+    menu: 0xFF202020,
+    menu_chosen: 0xFF404040,
+    faint: 0xFF808080,
+  }
+  let outcome = line.update(at, get_window_draw_list(), style, true)
+  end()
+  end_frame(host, 0.0, 0.0, 0.0)
+  outcome
+}
 
 /// One frame with the command line in a window covering the host, focused.
 let frame = (host: Host, line: mut CommandLine) -> Outcome => {

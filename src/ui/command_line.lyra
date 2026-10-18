@@ -167,6 +167,10 @@ pub struct Place {
   /// How far down its cell a line's text is drawn.
   text_dy: f32,
   wrap: Wrap,
+  /// The completion menu opens upward, above `rows_above` rows over the text (the prompt's,
+  /// when the command line is a box at the window's foot), rather than below it.
+  menu_above: bool = false,
+  rows_above: i64 = 0,
 }
 
 impl CommandLine {
@@ -259,7 +263,8 @@ impl CommandLine {
 
   // Where the menu is: its first row (below the command line's last), its column (the
   // word's, moved left to fit), and its width — in cells.
-  let menu_layout = pure (self, wrap: Wrap) -> (i64, i64, i64) => {
+  let menu_layout = pure (self, at: Place) -> (i64, i64, i64) => {
+    let wrap = at.wrap
     var shown_w = 0
     var desc_w = 0
     for c in self.menu {
@@ -270,7 +275,11 @@ impl CommandLine {
     let width = (shown_w + 2 + gap).min(wrap.cols)
     let (start, _) = shell_word_at(self.edit.text, self.edit.cursor)
     let (_, col) = position(self.edit.text, wrap, start)
-    (row_count(self.edit.text, wrap), col.min(wrap.cols - width).max(0), width)
+    let row = if at.menu_above { -(at.rows_above + self.menu_rows()) } else { row_count(
+      self.edit.text,
+      wrap
+    ) }
+    (row, col.min(wrap.cols - width).max(0), width)
   }
 
   /// Undo, cut, paste and the rest: the same whether chosen from the Edit menu or pressed.
@@ -376,7 +385,7 @@ impl CommandLine {
     let row = ((m.y - at.origin.y) / at.cell.y).floor()
     let fx = (m.x - at.origin.x) / at.cell.x
     if self.menu.len() > 0 {
-      let (menu_row, menu_col, width) = self.menu_layout(at.wrap)
+      let (menu_row, menu_col, width) = self.menu_layout(at)
       let k = row - menu_row
       let inside = k >= 0 &&
         k < self.menu_rows() &&
@@ -590,7 +599,7 @@ impl CommandLine {
 
   // The completion menu: a row each, the chosen one marked, descriptions fainter.
   let draw_menu = (self, at: Place, list: DrawList, style: Style) -> void => {
-    let (row, col, width) = self.menu_layout(at.wrap)
+    let (row, col, width) = self.menu_layout(at)
     let top = cell_pos(at, row, col)
     let shown_rows = self.menu_rows()
     let pad = at.cell.x * 0.5
