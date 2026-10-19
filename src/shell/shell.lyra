@@ -8,11 +8,13 @@ module shell
 //! them): `A` a prompt begins, `B` the prompt has been drawn and input begins, `C` a command
 //! is running and its output begins, `D;status` it ended. OSC 7 reports the directory.
 //!
-//! **Tab completion is zsh's own.** Sulafat writes the command line to a request file and
-//! sends a key bound to a widget here, which loads it into zsh's buffer, runs zsh's
-//! completion system with `compadd` captured — so the user's completion settings, plugins
-//! and directory all apply — and reports each match (OSC 7770) without inserting or listing
-//! any. Its messages are `b` (begin), `m;<prefix>;<insert>;<suffix>;<shown>;<description>`
+//! **Tab completion is the shell's own.** Sulafat writes the command line to a request file
+//! and sends a key bound to a widget here. zsh's loads it into zsh's buffer and runs zsh's
+//! completion system with `compadd` captured; bash's runs what readline would — the
+//! command's compspec (`complete -p`, bash-completion's loaded on demand), its `-F`
+//! function with `COMP_*` set, its other options through `compgen` — so the user's
+//! completion settings, plugins and directory all apply. Each reports each match (OSC
+//! 7770) without inserting or listing any. Its messages are `b` (begin), `m;<prefix>;<insert>;<suffix>;<shown>;<description>`
 //! (a match, each field percent-encoded) and `e` (end); `vt.Screen` collects them.
 //!
 //! **Keys typed ahead** — typed while a command ran, and not read by it — are still on the
@@ -34,7 +36,9 @@ module shell
 //! `PROMPT_COMMAND`, before readline starts, and reported as zsh's are, a moment before the
 //! prompt rather than after it — the command line keeps them until the prompt comes. The
 //! hooks need `PS0`, so a bash older than 4.4 (macOS's own is 3.2) is a classic terminal.
-//! Tab completion is zsh's only, for now ([Integration.completes]).
+//! bash's completion function is given the word unquoted: bash-completion quotes it once
+//! more for `compgen`, counting on two dequotings in a real completion (bash's and
+//! readline's), and outside one there is only bash's. bash's matches have no descriptions.
 //!
 //! Other shells run without integration: a classic terminal, keys to the shell.
 
@@ -43,13 +47,12 @@ import std.io.{ write_file, create_dir_all, read_bytes }
 import std.path
 
 /// What a shell with Sulafat's integration is started with: its command line, its
-/// environment, as `NAME=value` entries for `bindings.pty`'s `spawn`, the file completion
-/// requests are written to, and whether it answers them.
+/// environment, as `NAME=value` entries for `bindings.pty`'s `spawn`, and the file
+/// completion requests are written to.
 pub struct Integration {
   args: []string,
   env: []string,
   request: string,
-  completes: bool,
 }
 
 /// The integration for `shell` (a path, as `$SHELL` holds it), its files written; `None` for
@@ -69,16 +72,15 @@ pub let integration = (shell: string, id: string) -> Maybe<Integration> => {
         "SULAFAT_COMPLETE_FILE=${request}",
       ],
       request: request,
-      completes: true,
     })
   }
   if name == "bash" {
     let Some(dir) = integration_dir("bash", "rc.bash", BASHRC) else { return None }
+    let request = dir.join("request-${id}")
     return Some(Integration {
       args: [shell, "--rcfile", dir.join("rc.bash"), "-i"],
-      env: ["SULAFAT_SHELL_INTEGRATION=1"],
-      request: dir.join("request-${id}"),
-      completes: false,
+      env: ["SULAFAT_SHELL_INTEGRATION=1", "SULAFAT_COMPLETE_FILE=${request}"],
+      request: request,
     })
   }
   None
@@ -86,13 +88,13 @@ pub let integration = (shell: string, id: string) -> Maybe<Integration> => {
 
 /// Ask the shell for the completions of `text` with the caret at rune `cursor`: the request
 /// written, and the key that runs the shell's widget on it, to be sent to the shell. `None`
-/// when the shell answers none, or the file cannot be written.
+/// when the file cannot be written.
 pub let completion_request = (
   i: Integration,
   text: string,
   cursor: i64
 ) -> Maybe<string> =>
-  if i.completes && write_file(
+  if write_file(
     i.request,
     "${cursor}\n${text}"
   ) { Some(COMPLETE_KEY) } else { None }
@@ -396,5 +398,183 @@ if (( BASH_VERSINFO[0] > 4 || (BASH_VERSINFO[0] == 4 && BASH_VERSINFO[1] >= 4) )
   # all of it the first time, which notes that a command ran, and none of it after.
   _sulafat_c=$'\e]133;C\a'
   PS0="${PS0}"'${_sulafat_c:0:$((_sulafat_ran ? 0 : (_sulafat_ran = 1, 99)))}'
+  # Tab completion for the command line Sulafat edits: the request file holds the caret's
+  # offset, a newline and the text; the word's matches are reported (OSC 7770) as zsh's are,
+  # none inserted. What readline would run is run: the command's compspec (`complete -p`,
+  # loaded on demand through bash-completion's -D loader), its -F function with COMP_* set,
+  # its other options through compgen; commands for the first word; else file names.
+  _sulafat_enc() {
+    local s=${1//\%/%25}
+    s=${s//;/%3B}
+    s=${s//$'\n'/%0A}
+    s=${s//$'\t'/%09}
+    s=${s//$'\e'/}
+    s=${s//$'\a'/}
+    REPLY=$s
+  }
+  _sulafat_complete() {
+    local f=$SULAFAT_COMPLETE_FILE data
+    [[ -r $f ]] || return 0
+    data=$(<"$f")
+    local point=${data%%$'\n'*} line=${data#*$'\n'}
+    local before=${line:0:point}
+    # The command the caret is in (from `start`), its words as readline makes them — a
+    # break character in COMP_WORDBREAKS (`=`, `:`) a word of its own — and the shell word
+    # under the caret, which is what Sulafat replaces.
+    local breaks=${COMP_WORDBREAKS-$' \t\n"\'><=;|&(:'}
+    local -a words=()
+    local w= word= q= esc= c i start=0 broke=
+    for (( i = 0; i < ${#before}; i++ )); do
+      c=${before:i:1}
+      broke=
+      if [[ -n $esc ]]; then w+=$c; word+=$c; esc=; continue; fi
+      if [[ -n $q ]]; then
+        w+=$c; word+=$c
+        if [[ $c == "$q" ]]; then q=; elif [[ $c == '\' && $q == '"' ]]; then esc=1; fi
+        continue
+      fi
+      case $c in
+        '\') w+=$c; word+=$c; esc=1 ;;
+        '"'|"'") q=$c; w+=$c; word+=$c ;;
+        ' '|$'\t') [[ -n $w ]] && words+=("$w"); w=; word= ;;
+        $'\n'|';'|'|'|'&'|'(') words=(); w=; word=; start=$(( i + 1 )) ;;
+        *)
+          if [[ $breaks == *"$c"* ]]; then
+            [[ -n $w ]] && words+=("$w")
+            words+=("$c"); w=; word+=$c; broke=1
+          else
+            w+=$c; word+=$c
+          fi ;;
+      esac
+    done
+    # Right after a break character readline's word is that character, and what is typed
+    # goes after it: nothing of it is replaced.
+    [[ -n $broke ]] || words+=("$w")
+    local cword=$(( ${#words[@]} - 1 ))
+    local prev= cmd=${words[0]} typed=$w
+    (( cword > 0 )) && prev=${words[cword - 1]}
+    # The word unquoted — without its opening quote, or its backslashes — for compgen, and
+    # for the completion function: bash-completion quotes the word once more for compgen,
+    # counting on two dequotings, bash's and readline's, of which outside a real completion
+    # only bash's happens.
+    local quote= bare=$typed
+    if [[ $typed == [\"\']* ]]; then quote=${typed:0:1}; bare=${typed:1}; else bare=${typed//\\/}; fi
+    local -a fwords=("${words[@]}")
+    [[ -n $broke ]] || fwords[cword]=$bare
+    local fline=${before:start}
+    fline=${fline:0:${#fline}-${#typed}}$bare
+    local -a hits=()
+    local -A _sulafat_opts=()
+    # compopt outside a real completion fails: this one notes the options for the report.
+    compopt() {
+      while (( $# )); do
+        case $1 in
+          -o) _sulafat_opts[$2]=1; shift ;;
+          +o) unset "_sulafat_opts[$2]"; shift ;;
+        esac
+        shift
+      done
+      return 0
+    }
+    if (( cword == 0 )); then
+      if [[ $bare == */* ]]; then
+        _sulafat_opts[filenames]=1
+        mapfile -t hits < <(compgen -f -- "$bare")
+      else
+        mapfile -t hits < <(compgen -c -- "$bare")
+      fi
+    else
+      local spec loader
+      spec=$(builtin complete -p -- "$cmd" 2>/dev/null)
+      if [[ -z $spec && $(builtin complete -p -D 2>/dev/null) =~ -F\ ([^ ]+) ]]; then
+        loader=${BASH_REMATCH[1]}
+        local COMP_WORDS=("${fwords[@]}") COMP_CWORD=$cword COMP_LINE=$fline
+        local COMP_POINT=${#fline} COMP_TYPE=9 COMP_KEY=9
+        local -a COMPREPLY=()
+        "$loader" "$cmd" "$bare" "$prev" >/dev/null 2>&1 </dev/null
+        spec=$(builtin complete -p -- "$cmd" 2>/dev/null)
+      fi
+      if [[ -n $spec ]]; then
+        local -a sw=() gen=()
+        local fn= k
+        eval "sw=(${spec#complete })"
+        for (( k = 0; k < ${#sw[@]} - 1; k++ )); do
+          case ${sw[k]} in
+            -F) fn=${sw[k + 1]}; (( k++ )) ;;
+            -o) _sulafat_opts[${sw[k + 1]}]=1; (( k++ )) ;;
+            # A command's output: left out, as it may be slow or change something.
+            -C) (( k++ )) ;;
+            -A|-G|-W|-X|-P|-S) gen+=("${sw[k]}" "${sw[k + 1]}"); (( k++ )) ;;
+            *) gen+=("${sw[k]}") ;;
+          esac
+        done
+        (( ${#gen[@]} )) && mapfile -t hits < <(compgen "${gen[@]}" -- "$bare" 2>/dev/null)
+        if [[ -n $fn ]]; then
+          local COMP_WORDS=("${fwords[@]}") COMP_CWORD=$cword COMP_LINE=$fline
+          local COMP_POINT=${#fline} COMP_TYPE=9 COMP_KEY=9
+          local -a COMPREPLY=()
+          "$fn" "$cmd" "$bare" "$prev" >/dev/null 2>&1 </dev/null
+          hits+=("${COMPREPLY[@]}")
+        fi
+        if (( ${#hits[@]} == 0 )) && [[ -n ${_sulafat_opts[default]}${_sulafat_opts[bashdefault]} ]]; then
+          _sulafat_opts[filenames]=1
+          mapfile -t hits < <(compgen -f -- "$bare")
+        fi
+        if (( ${#hits[@]} == 0 )) && [[ -n ${_sulafat_opts[dirnames]} ]]; then
+          _sulafat_opts[filenames]=1
+          mapfile -t hits < <(compgen -d -- "$bare")
+        fi
+        if [[ -n ${_sulafat_opts[plusdirs]} ]]; then
+          _sulafat_opts[filenames]=1
+          mapfile -t -O ${#hits[@]} hits < <(compgen -d -- "$bare")
+        fi
+      else
+        _sulafat_opts[filenames]=1
+        mapfile -t hits < <(compgen -f -- "$bare")
+      fi
+    fi
+    builtin unset -f compopt
+    # Sorted and each once, as readline lists them (but -o nosort), at most 500.
+    if [[ -z ${_sulafat_opts[nosort]} ]] && (( ${#hits[@]} )); then
+      mapfile -t hits < <(builtin printf '%s\n' "${hits[@]}" | LC_ALL=C sort -u)
+    fi
+    # Sulafat's word is replaced: what of it comes before readline's (`--opt=` before a
+    # value), the match, and after it a space — a `/` after a directory, nothing under
+    # -o nospace, a closing quote first inside quotes.
+    local pre=${word:0:${#word}-${#typed}}$quote
+    local h ins shown suf path n=0
+    builtin printf '\e]7770;b\a'
+    for h in "${hits[@]}"; do
+      [[ -z $h ]] && continue
+      (( n++ >= 500 )) && break
+      ins=$h; shown=$h; suf=' '
+      if [[ -n ${_sulafat_opts[filenames]} ]]; then
+        path=$h
+        [[ $path == '~/'* ]] && path=$HOME/${path:2}
+        if [[ $h == */ ]]; then suf=; elif [[ -d $path ]]; then suf=/; fi
+        shown=${h%/}; shown=${shown##*/}
+        [[ $h == */ || $suf == / ]] && shown+=/
+        if [[ -z $quote && -z ${_sulafat_opts[noquote]} ]]; then
+          if [[ $h == '~/'* ]]; then builtin printf -v ins '~/%q' "${h:2}"
+          else builtin printf -v ins '%q' "$h"; fi
+        fi
+      fi
+      [[ -n ${_sulafat_opts[nospace]} && $suf == ' ' ]] && suf=
+      [[ -n $quote && $suf != / ]] && suf=$quote$suf
+      _sulafat_enc "$pre"; local e_pre=$REPLY
+      _sulafat_enc "$ins"; ins=$REPLY
+      _sulafat_enc "$suf"; suf=$REPLY
+      _sulafat_enc "$shown"; shown=$REPLY
+      builtin printf '\e]7770;m;%s;%s;%s;%s;\a' "$e_pre" "$ins" "$suf" "$shown"
+    done
+    builtin printf '\e]7770;e\a'
+    READLINE_LINE=
+    READLINE_POINT=0
+  }
+  # In every keymap, whichever the user's files chose.
+  for _sulafat_m in emacs vi-insert vi-command; do
+    builtin bind -m "$_sulafat_m" -x '"\e[9898~": _sulafat_complete' 2>/dev/null
+  done
+  builtin unset _sulafat_m
 fi
 `##

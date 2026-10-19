@@ -174,8 +174,7 @@ shell ⇄ bindings.pty ──bytes──▶ vt.Parser ──[]Action──▶ vt
   from `PS0`, once for what was entered (a paste of several lines is several commands to
   bash). Each hook hands back the `$?` it found. Type-ahead is read at the end of
   `PROMPT_COMMAND` with `read -n 1 -t`, which turns canonical mode off while it waits (`-t 0`
-  sees only whole lines), and arrives just before `B`. Tab completion is zsh's only
-  (`Integration.completes`).
+  sees only whole lines), and arrives just before `B`.
 - **Return sends the command as a bracketed paste, then `\r`**, so the shell's line editor
   takes several lines as one command and echoes it into the transcript where the editor
   was. The shell turns the mode on just *after* the `B` mark — a check that answers `B` at
@@ -183,12 +182,20 @@ shell ⇄ bindings.pty ──bytes──▶ vt.Parser ──[]Action──▶ vt
 - **The `B` mark is the end of `PS1`**, re-added at each prompt by a precmd hook that moves
   itself last, so a theme's own hook has built `PS1` first. A theme that redraws the
   prompt asynchronously is untested.
-- **Tab completion is zsh's, run in the live shell.** Sulafat writes `caret\ntext` to the
-  window's request file (`SULAFAT_COMPLETE_FILE`) and sends `\e[9898~`, bound (once the
-  user's `.zshrc` has chosen emacs or vi keys) to a widget that loads it into `BUFFER`, runs
-  `complete-word` with `compadd` captured, and reports matches as OSC 7770 (`b`,
-  `m;prefix;insert;suffix;shown;description` percent-encoded, `e`) — none inserted, none
-  listed. **Sulafat finds the word itself** (`editor.shell_word_at`, quotes and escapes
+- **Tab completion is the shell's, run in the live shell.** Sulafat writes `caret\ntext` to
+  the window's request file (`SULAFAT_COMPLETE_FILE`) and sends `\e[9898~`, bound to a widget
+  that reports matches as OSC 7770 (`b`, `m;prefix;insert;suffix;shown;description`
+  percent-encoded, `e`) — none inserted, none listed. zsh's (bound once the user's `.zshrc`
+  has chosen emacs or vi keys) loads the text into `BUFFER` and runs `complete-word` with
+  `compadd` captured. bash's (`bind -x`, every keymap) splits the caret's command into
+  words as readline does (`COMP_WORDBREAKS`: `--opt=val` completes `val`, `if=` kept as the
+  prefix), and runs the command's compspec — loaded through bash-completion's `-D` loader
+  when there is none yet — its `-F` function with `COMP_*` set and its other options
+  through `compgen`, commands for the first word, file names failing all; a `compopt`
+  stand-in notes `nospace`, `filenames` and the rest. **The function is given the word
+  unquoted** (`COMP_WORDS`, `COMP_LINE` and `$2`): bash-completion quotes it again for
+  `compgen`, counting on readline's dequoting too, which a widget does not have. bash's
+  matches have no descriptions; file names are `%q`-quoted, a directory gets `/`. **Sulafat finds the word itself** (`editor.shell_word_at`, quotes and escapes
   included): inside quotes zsh measures positions with the quote removed. The answer for a
   line edited since the request is dropped. **Typing narrows the menu locally** from the
   list zsh gave (`CommandLine.narrow`, by exact start; ⌫ widens it), keeping the choice
@@ -220,7 +227,6 @@ shell ⇄ bindings.pty ──bytes──▶ vt.Parser ──[]Action──▶ vt
    then the command line as Sulafat's editor — multi-line, soft wrap, the mouse (click,
    drag, double-click a word, triple-click a line), word and line motions, undo, the
    clipboard, history from `~/.zsh_history`, Tab completion (zsh's own, in a menu); bash's
-   integration (10/19), but its Tab completion. Next: bash's completion, syntax colouring,
-   Ctrl+R history search.
+   integration and its completion (10/19). Next: syntax colouring, Ctrl+R history search.
 
 Open work is in `todo.md`; finished work in `done.md`.

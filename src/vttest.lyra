@@ -66,7 +66,7 @@ let main = () -> u8 => {
   // says so. bash's need 4.4 or newer, which macOS's own /bin/bash is not.
   if installed(["/bin/zsh"], "the zsh checks") {
     failed += check_shell("/bin/zsh")
-    failed += check_zsh_completion()
+    failed += check_completion("/bin/zsh")
     failed += check_typed_ahead("/bin/zsh")
   }
   let bashes = if platform() == "macOS" {
@@ -76,6 +76,7 @@ let main = () -> u8 => {
     var bash = bashes[0]
     for b in bashes { if is_executable(b) && !is_executable(bash) { bash = b } }
     failed += check_shell(bash)
+    failed += check_completion(bash)
     failed += check_typed_ahead(bash)
     failed += check_bash_history()
   }
@@ -795,8 +796,10 @@ let check_completion_reports = () -> i64 => {
   failed
 }
 
-// zsh's own completions through the integration, in a directory of known files.
-let check_zsh_completion = () -> i64 => {
+// The shell's own completions through the integration, in a directory of known files: zsh's
+// and bash's give the same answers.
+let check_completion = (shell: string) -> i64 => {
+  let name = shell.base()
   let dir = (lookup("TMPDIR") ?? "/tmp").join("sulafat-vttest-${wall_clock_nanos()}")
   if !create_dir_all(dir.join("sub dir")) { return check(
     "scratch dir",
@@ -805,21 +808,21 @@ let check_zsh_completion = () -> i64 => {
   ) }
   let _ = write_file(dir.join("plain.txt"), "")
   let _ = write_file(dir.join("a b.txt"), "")
-  let Some(i) = integration("/bin/zsh", "vttest-complete") else {
-    return check("zsh integration", "not written", "written")
+  let Some(i) = integration(shell, "vttest-complete") else {
+    return check("${name} integration", "not written", "written")
   }
   let Some(pty) = spawn(
-    ["/bin/zsh", "-i"],
+    i.args,
     80,
     10,
     Some(dir),
     ["TERM=xterm-256color", ...i.env]
   ) else {
-    return check("spawn zsh", "failed", "spawned")
+    return check("spawn ${name}", "failed", "spawned")
   }
   var p = parser()
   var s = screen(80, 10)
-  let asks = ["cat pl", "cd su", "cat a", "ech", "echo $HO"]
+  let asks = ["cat pl", "cd su", "cat a", "ech", "echo $HO", "cat \"a", "dd if=pl"]
   var answers: []string = []
   var asked = 0
   var at_prompt = false
@@ -857,13 +860,15 @@ let check_zsh_completion = () -> i64 => {
   let _ = remove_file(i.request)
   let _ = remove_file(dir.join("plain.txt"))
   let _ = remove_file(dir.join("a b.txt"))
-  var failed = check("asked them all", "${answers.len()}", "${asks.len()}")
+  var failed = check("${name}: asked them all", "${answers.len()}", "${asks.len()}")
   if answers.len() == asks.len() {
-    failed += check("a file", answers[0], "plain.txt ")
-    failed += check("a directory", answers[1], "sub\\ dir/")
-    failed += check("a name with a space", answers[2], "a\\ b.txt ")
-    failed += check("a command", "${answers[3].contains("echo ")}", "true")
-    failed += check("a variable", "${answers[4].contains("$HOME ")}", "true")
+    failed += check("${name}: a file", answers[0], "plain.txt ")
+    failed += check("${name}: a directory", answers[1], "sub\\ dir/")
+    failed += check("${name}: a name with a space", answers[2], "a\\ b.txt ")
+    failed += check("${name}: a command", "${answers[3].contains("echo ")}", "true")
+    failed += check("${name}: a variable", "${answers[4].contains("$HOME ")}", "true")
+    failed += check("${name}: inside quotes", answers[5], "\"a b.txt\" ")
+    failed += check("${name}: a value after =", answers[6], "if=plain.txt ")
   }
   failed
 }
