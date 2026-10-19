@@ -117,6 +117,7 @@ import settings.{
   settings_to_json,
   settings_from_json,
   theme_colours,
+  THEME_NAMES,
   sections_of,
   can_save_as,
   save_theme,
@@ -832,6 +833,11 @@ let check_settings = (host: Host) -> i64 => {
   // The sections', tabs' and command line's colours: a file without them takes the theme's,
   // one with them keeps them; a theme's own shades are made from its background.
   failed += check("the theme's sections", hex_of(odd.colours.input), "#3b4252")
+  failed += check(
+    "Gruvbox, dark and light",
+    "${THEME_NAMES.contains("Gruvbox Dark")} ${hex_of(theme_colours("Gruvbox Dark").bg)} ${hex_of(theme_colours("Gruvbox Light").bg)}",
+    "true #282828 #fbf1c7"
+  )
   let tabbed = settings_from_json(`{"colours": {"tab": "#123456", "menu_chosen": "#654321"}}`)
   failed += check(
     "tab and menu colours read",
