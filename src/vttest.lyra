@@ -5,7 +5,8 @@
 //   build/vttest               every check; exits 1 naming each that failed
 
 import bindings.pty.{ spawn, close }
-import shell.{ integration, submission, completion_request }
+import bindings.sdl3.{ platform }
+import shell.{ integration, submission, completion_request, parse_bash_history }
 import editor.{ editor, Editor, Wrap, position, index_at, rune_at, shell_word_at }
 import std.env.{ lookup }
 import std.io.{ create_dir_all, write_file, remove_file, is_executable }
@@ -61,11 +62,22 @@ let main = () -> u8 => {
   failed += check_marks()
   failed += check_words()
   failed += check_completion_reports()
-  // The integration's checks need zsh itself: a machine without it skips them, and says so.
+  // The integration's checks need the shell itself: a machine without it skips them, and
+  // says so. bash's need 4.4 or newer, which macOS's own /bin/bash is not.
   if installed(["/bin/zsh"], "the zsh checks") {
-    failed += check_zsh()
+    failed += check_shell("/bin/zsh")
     failed += check_zsh_completion()
-    failed += check_zsh_typed_ahead()
+    failed += check_typed_ahead("/bin/zsh")
+  }
+  let bashes = if platform() == "macOS" {
+    ["/opt/homebrew/bin/bash", "/usr/local/bin/bash"]
+  } else { ["/bin/bash", "/usr/bin/bash"] }
+  if installed(bashes, "the bash checks (bash 4.4 or newer)") {
+    var bash = bashes[0]
+    for b in bashes { if is_executable(b) && !is_executable(bash) { bash = b } }
+    failed += check_shell(bash)
+    failed += check_typed_ahead(bash)
+    failed += check_bash_history()
   }
   failed += check_full_screen()
   if failed == 0 {
@@ -667,25 +679,28 @@ let check_marks = () -> i64 => {
   failed
 }
 
-// zsh with the integration, end to end: the prompt's mark arrives, a two-line command sent
-// as the command line sends it runs as one, and its end reports the last line's status.
-let check_zsh = () -> i64 => {
-  let Some(i) = integration("/bin/zsh", "vttest") else {
-    return check("zsh integration", "not written", "written")
+// A shell with the integration, end to end: the prompt's mark arrives, a two-line command
+// sent as the command line sends it runs as one, and its end reports the last line's
+// status.
+let check_shell = (shell: string) -> i64 => {
+  let name = shell.base()
+  let Some(i) = integration(shell, "vttest") else {
+    return check("${name} integration", "not written", "written")
   }
   let env = ["TERM=xterm-256color", ...i.env]
-  let Some(pty) = spawn(["/bin/zsh", "-i"], 60, 10, None, env) else {
-    return check("spawn zsh", "failed", "spawned")
+  let Some(pty) = spawn(i.args, 60, 10, None, env) else {
+    return check("spawn ${name}", "failed", "spawned")
   }
   var p = parser()
   var s = screen(60, 10)
   var seen: []string = []
   var sent = false
   var at_prompt = false
+  var from = (-1, -1)
   var spins = 0
   var done = false
   while !done && spins < 3000000 {
-    // zsh draws the prompt (and its mark) a moment before it turns bracketed paste on; a
+    // The shell draws the prompt (and its mark) a moment before it turns bracketed paste on; a
     // person's Return comes long after both, and this waits for the second as they do.
     if at_prompt && !sent && s.bracketed_paste {
       let _ = pty.write(submission("echo one\necho two; false", s.bracketed_paste))
@@ -697,9 +712,14 @@ let check_zsh = () -> i64 => {
         if bytes.len() > 0 { s.apply(p.feed(bytes)) }
         for m in s.take_marks() {
           match m {
-            InputStart(_, _) => {
+            // The prompt redrawn where the command was sent from (bash's readline, on a
+            // paste of several lines) is not a new one, as a session has it.
+            InputStart(at, col) => if !(sent && at == from.0 && col == from.1) {
               seen.push("B")
-              if sent { done = true } else { at_prompt = true }
+              if sent { done = true } else {
+                at_prompt = true
+                from = (at, col)
+              }
             },
             OutputStart => seen.push("C"),
             CommandEnd(status) => seen.push("D${status}"),
@@ -716,10 +736,18 @@ let check_zsh = () -> i64 => {
     let t = line_text(s.line(i)).trim()
     if t == "one" || t == "two" { output.push(t) }
   }
-  var failed = check("zsh marks", seen.join(" "), "B C D1 B")
-  failed += check("zsh ran both lines", output.join(","), "one,two")
+  var failed = check("${name} marks", seen.join(" "), "B C D1 B")
+  failed += check("${name} ran both lines", output.join(","), "one,two")
   failed
 }
+
+// bash's history file: its time lines are not commands, and a repeat in a row is kept once.
+let check_bash_history = () -> i64 =>
+  check(
+    "bash history",
+    parse_bash_history("#1700000000\nls\n#1700000001\nls\nmake test\n".encode_utf8()).join("|"),
+    "ls|make test"
+  )
 
 // The shell word a completion replaces: quotes and escapes keep a word together.
 let check_words = () -> i64 => {
@@ -842,18 +870,13 @@ let check_zsh_completion = () -> i64 => {
 
 // Keys typed while a command runs, unread by it, reach the next line's report and not
 // zsh's hidden buffer.
-let check_zsh_typed_ahead = () -> i64 => {
-  let Some(i) = integration("/bin/zsh", "vttest-ahead") else {
-    return check("zsh integration", "not written", "written")
+let check_typed_ahead = (shell: string) -> i64 => {
+  let name = shell.base()
+  let Some(i) = integration(shell, "vttest-ahead") else {
+    return check("${name} integration", "not written", "written")
   }
-  let Some(pty) = spawn(
-    ["/bin/zsh", "-i"],
-    60,
-    10,
-    None,
-    ["TERM=xterm-256color", ...i.env]
-  ) else {
-    return check("spawn zsh", "failed", "spawned")
+  let Some(pty) = spawn(i.args, 60, 10, None, ["TERM=xterm-256color", ...i.env]) else {
+    return check("spawn ${name}", "failed", "spawned")
   }
   var p = parser()
   var s = screen(60, 10)
@@ -896,7 +919,13 @@ let check_zsh_typed_ahead = () -> i64 => {
     }
   }
   close(pty)
-  check("typed ahead, reported", reports.join("|"), "echo ahead\nech")
+  // Return arrives as \r or \n, by when it was typed (the terminal translates it only once
+  // readline has given it back); both end a line for the command line.
+  check(
+    "${name}: typed ahead, reported",
+    reports.join("|").replace("\r", "\n"),
+    "echo ahead\nech"
+  )
 }
 
 // vim, less and top (htop when there is one) on a pseudo-terminal: each drawn as it should

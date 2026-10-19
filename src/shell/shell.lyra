@@ -23,47 +23,79 @@ module shell
 //!
 //! **zsh** is reached through `ZDOTDIR`: zsh reads `$ZDOTDIR/.zshenv` first, and Sulafat's
 //! puts the user's `ZDOTDIR` back, reads their `.zshenv`, and adds two hooks — so their
-//! `.zprofile`, `.zshrc` and `.zlogin` are read from their own directory as always. Other
-//! shells run without integration: a classic terminal, keys to the shell.
+//! `.zprofile`, `.zshrc` and `.zlogin` are read from their own directory as always.
+//!
+//! **bash** is started `bash --rcfile <Sulafat's> -i`: an rc file is read only by an
+//! interactive shell that is not a login one, so Sulafat's reads what `bash -l` would —
+//! `/etc/profile`, then the first of `~/.bash_profile`, `~/.bash_login` and `~/.profile`
+//! (Ubuntu's reads `~/.bashrc`) — and then adds the marks: `D`, OSC 7 and `A` from the
+//! front of `PROMPT_COMMAND`, `B` at the end of `PS1` from its back (after a theme's prompt
+//! command has rebuilt it), `C` from `PS0`. Keys typed ahead are read at the end of
+//! `PROMPT_COMMAND`, before readline starts, and reported as zsh's are, a moment before the
+//! prompt rather than after it — the command line keeps them until the prompt comes. The
+//! hooks need `PS0`, so a bash older than 4.4 (macOS's own is 3.2) is a classic terminal.
+//! Tab completion is zsh's only, for now ([Integration.completes]).
+//!
+//! Other shells run without integration: a classic terminal, keys to the shell.
 
 import std.env.{ lookup }
 import std.io.{ write_file, create_dir_all, read_bytes }
 import std.path
 
-/// What a shell with Sulafat's integration is started with: its environment, as `NAME=value`
-/// entries for `bindings.pty`'s `spawn`, and the file completion requests are written to.
+/// What a shell with Sulafat's integration is started with: its command line, its
+/// environment, as `NAME=value` entries for `bindings.pty`'s `spawn`, the file completion
+/// requests are written to, and whether it answers them.
 pub struct Integration {
+  args: []string,
   env: []string,
   request: string,
+  completes: bool,
 }
 
 /// The integration for `shell` (a path, as `$SHELL` holds it), its files written; `None` for
 /// a shell it has none for, or when they could not be written. Each window has a request
 /// file of its own, named by `id`.
 pub let integration = (shell: string, id: string) -> Maybe<Integration> => {
-  if shell.base() != "zsh" { return None }
-  let Some(dir) = zsh_dir() else { return None }
-  let request = dir.join("request-${id}")
-  Some(Integration {
-    env: [
-      "ZDOTDIR=${dir}",
-      "SULAFAT_ORIG_ZDOTDIR=${lookup("ZDOTDIR") ?? ""}",
-      "SULAFAT_SHELL_INTEGRATION=1",
-      "SULAFAT_COMPLETE_FILE=${request}",
-    ],
-    request: request,
-  })
+  let name = shell.base()
+  if name == "zsh" {
+    let Some(dir) = integration_dir("zsh", ".zshenv", ZSHENV) else { return None }
+    let request = dir.join("request-${id}")
+    return Some(Integration {
+      args: [shell, "-l"],
+      env: [
+        "ZDOTDIR=${dir}",
+        "SULAFAT_ORIG_ZDOTDIR=${lookup("ZDOTDIR") ?? ""}",
+        "SULAFAT_SHELL_INTEGRATION=1",
+        "SULAFAT_COMPLETE_FILE=${request}",
+      ],
+      request: request,
+      completes: true,
+    })
+  }
+  if name == "bash" {
+    let Some(dir) = integration_dir("bash", "rc.bash", BASHRC) else { return None }
+    return Some(Integration {
+      args: [shell, "--rcfile", dir.join("rc.bash"), "-i"],
+      env: ["SULAFAT_SHELL_INTEGRATION=1"],
+      request: dir.join("request-${id}"),
+      completes: false,
+    })
+  }
+  None
 }
 
 /// Ask the shell for the completions of `text` with the caret at rune `cursor`: the request
 /// written, and the key that runs the shell's widget on it, to be sent to the shell. `None`
-/// when the file cannot be written.
+/// when the shell answers none, or the file cannot be written.
 pub let completion_request = (
   i: Integration,
   text: string,
   cursor: i64
 ) -> Maybe<string> =>
-  if write_file(i.request, "${cursor}\n${text}") { Some(COMPLETE_KEY) } else { None }
+  if i.completes && write_file(
+    i.request,
+    "${cursor}\n${text}"
+  ) { Some(COMPLETE_KEY) } else { None }
 
 /// The key zsh's completion widget is bound to: a private CSI no keyboard sends.
 const COMPLETE_KEY: string = "\e[9898~"
@@ -78,14 +110,23 @@ pub let submission = pure (command: string, bracketed: bool) -> string => {
 }
 
 /// The shell's saved history, oldest first, for the command line's ↑: zsh's `$HISTFILE`, or
-/// `.zsh_history` in `ZDOTDIR` or the home directory. At most [HISTORY_LIMIT] entries, a
-/// command repeated in a row kept once; empty for another shell or no file.
+/// `.zsh_history` in `ZDOTDIR` or the home directory; bash's `$HISTFILE`, or
+/// `~/.bash_history`. At most [HISTORY_LIMIT] entries, a command repeated in a row kept
+/// once; empty for another shell or no file.
 pub let load_history = (shell: string) -> []string => {
-  if shell.base() != "zsh" { return [] }
-  let home = lookup("ZDOTDIR") ?? lookup("HOME") ?? ""
-  let file = lookup("HISTFILE") ?? home.join(".zsh_history")
-  let Some(bytes) = read_bytes(file) else { return [] }
-  parse_zsh_history(bytes)
+  let name = shell.base()
+  if name == "zsh" {
+    let home = lookup("ZDOTDIR") ?? lookup("HOME") ?? ""
+    let file = lookup("HISTFILE") ?? home.join(".zsh_history")
+    let Some(bytes) = read_bytes(file) else { return [] }
+    return parse_zsh_history(bytes)
+  }
+  if name == "bash" {
+    let file = lookup("HISTFILE") ?? (lookup("HOME") ?? "").join(".bash_history")
+    let Some(bytes) = read_bytes(file) else { return [] }
+    return parse_bash_history(bytes)
+  }
+  []
 }
 
 /// History entries kept at most.
@@ -124,6 +165,29 @@ pub let parse_zsh_history = pure (bytes: []u8) -> []string => {
   ) } else { out }
 }
 
+/// bash's history file as entries: a line each, but the `#<seconds>` lines `HISTTIMEFORMAT`
+/// writes before each, which are times, not commands.
+pub let parse_bash_history = pure (bytes: []u8) -> []string => {
+  var out: []string = []
+  for line in bytes.decode_utf8().split("\n") {
+    if line != "" && !is_time_stamp(line) && (out.len() == 0 || out[out.len() - 1] != line) { out.push(line) }
+  }
+  if out.len() > HISTORY_LIMIT { out.slice(
+    out.len() - HISTORY_LIMIT,
+    out.len()
+  ) } else { out }
+}
+
+/// Whether a bash history line is a time, `#` and digits.
+let is_time_stamp = pure (line: string) -> bool => {
+  if line.len() < 2 || !line.starts_with("#") { return false }
+  for r in line.slice(
+    1,
+    line.len()
+  ).to_runes() { if !r.is_ascii_digit() { return false } }
+  true
+}
+
 /// A history line without the extended format's `: <time>:<duration>;` in front.
 let strip_extended = pure (line: string) -> string => {
   if !line.starts_with(": ") { return line }
@@ -133,16 +197,17 @@ let strip_extended = pure (line: string) -> string => {
   }
 }
 
-/// The directory holding Sulafat's `.zshenv`, written there now (each start, so that a newer
-/// Sulafat's replaces an older one's): `$XDG_CACHE_HOME/sulafat/zsh`, else `~/.cache/…`.
-let zsh_dir = () -> Maybe<string> => {
+/// The directory holding a shell's integration, its file `name` written there now as `text`
+/// (each start, so that a newer Sulafat's replaces an older one's):
+/// `$XDG_CACHE_HOME/sulafat/<shell>`, else `~/.cache/…`.
+let integration_dir = (shell: string, name: string, text: string) -> Maybe<string> => {
   let cache = match lookup("XDG_CACHE_HOME") {
     Some(d) => if d == "" { "${lookup("HOME") ?? "/tmp"}/.cache" } else { d },
     None => "${lookup("HOME") ?? "/tmp"}/.cache",
   }
-  let dir = cache.join("sulafat").join("zsh")
+  let dir = cache.join("sulafat").join(shell)
   if !create_dir_all(dir) { return None }
-  if !write_file(dir.join(".zshenv"), ZSHENV) { return None }
+  if !write_file(dir.join(name), text) { return None }
   Some(dir)
 }
 
@@ -276,5 +341,60 @@ if [[ -o interactive ]]; then
     add-zsh-hook -d precmd _sulafat_bind
   }
   add-zsh-hook precmd _sulafat_bind
+fi
+`##
+
+/// bash's integration (see the module's notes). `PS0` cannot run a command in this shell — a
+/// `$(…)` there runs in a subshell — so `C` is a substring of itself whose length is an
+/// arithmetic expression: its whole length while no command has run since the prompt,
+/// noting that one has as it is worked out, and nothing after.
+/// Each hook gives back the `$?` it found, for the user's prompt commands after it.
+const BASHRC: string = ##`# Sulafat's bash integration, read through --rcfile in place of ~/.bashrc.
+# Written by Sulafat at each start; edits here are lost.
+# What a login shell reads, as `bash -l` would: an --rcfile is read only by a shell that
+# is interactive and not a login one, which is how Sulafat starts bash.
+[ -r /etc/profile ] && . /etc/profile
+if [ -r "$HOME/.bash_profile" ]; then . "$HOME/.bash_profile"
+elif [ -r "$HOME/.bash_login" ]; then . "$HOME/.bash_login"
+elif [ -r "$HOME/.profile" ]; then . "$HOME/.profile"
+fi
+# The hooks need PS0 (bash 4.4); an older bash is a classic terminal.
+if (( BASH_VERSINFO[0] > 4 || (BASH_VERSINFO[0] == 4 && BASH_VERSINFO[1] >= 4) )); then
+  _sulafat_ran=
+  _sulafat_precmd() {
+    local s=$?
+    [[ -n $_sulafat_ran ]] && builtin printf '\e]133;D;%s\a' "$s"
+    _sulafat_ran=
+    builtin printf '\e]7;file://%s%s\a' "$HOSTNAME" "$PWD"
+    builtin printf '\e]133;A\a'
+    return $s
+  }
+  # Last: B at the end of PS1, which a prompt command before may have rebuilt; then keys
+  # typed ahead, read before readline would take them (OSC 7770 t), controls and %/; as %XX.
+  _sulafat_prompt() {
+    local s=$? c h out=
+    [[ $PS1 == *'133;B'* ]] || PS1="${PS1}"'\[\e]133;B\a\]'
+    # `read -n` puts the terminal in non-canonical mode while it waits, so a line half typed
+    # is read too; `-t 0` alone would see only whole lines.
+    while IFS= builtin read -r -s -n 1 -d '' -t 0.001 c; do
+      if [[ $c == [[:cntrl:]] || $c == '%' || $c == ';' ]]; then
+        builtin printf -v h '%%%02X' "'$c"
+        out+=$h
+      else
+        out+=$c
+      fi
+    done
+    [[ -n $out ]] && builtin printf '\e]7770;t;%s\a' "$out"
+    return $s
+  }
+  if [[ $(builtin declare -p PROMPT_COMMAND 2>/dev/null) == "declare -a"* ]]; then
+    PROMPT_COMMAND=(_sulafat_precmd "${PROMPT_COMMAND[@]}" _sulafat_prompt)
+  else
+    PROMPT_COMMAND=$'_sulafat_precmd\n'"${PROMPT_COMMAND}"$'\n_sulafat_prompt'
+  fi
+  # C once for what was entered, though a paste of several lines runs as several commands:
+  # all of it the first time, which notes that a command ran, and none of it after.
+  _sulafat_c=$'\e]133;C\a'
+  PS0="${PS0}"'${_sulafat_c:0:$((_sulafat_ran ? 0 : (_sulafat_ran = 1, 99)))}'
 fi
 `##

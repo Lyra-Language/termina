@@ -20,7 +20,7 @@ build/sulafat CMD [ARG…]    # that program instead (as xterm -e), no integrati
 open build/Sulafat.app      # the same, as a Mac app
                             # Settings… (⌘,; Ctrl+, off macOS): font, size, spacing, colours —
                             #    kept in ~/.config/sulafat/settings.json ($XDG_CONFIG_HOME)
-build/vttest                # parser, screen, editor, PTY and zsh checks; exit 1 on a failure
+build/vttest                # parser, screen, editor, PTY, zsh and bash checks; exit 1 on a failure
 SDL_VIDEODRIVER=dummy build/uitest   # the command line on a headless ImGui host, driven by
                             #    injected keys, typing and clicks (double-click included)
 build/menutest              # the Mac's menu bar, installed and read back (SDL's real video
@@ -44,7 +44,7 @@ shell ⇄ bindings.pty ──bytes──▶ vt.Parser ──[]Action──▶ vt
 | `src/ui/tabs.lyra` | the tab bar (reorderable, its order read back), the tab shortcuts, and the Mac's menu bar |
 | `src/ui/menu_bar.lyra` | the menu bar Sulafat draws off macOS: the Mac's menus as ImGui's main menu bar |
 | `src/menutest.lyra` | the menu bar installed and read back |
-| `src/shell/shell.lyra` | shell integration (zsh's `.zshenv`, through `ZDOTDIR`): the marks, Tab's completion widget and its request file, the history file, what Return sends |
+| `src/shell/shell.lyra` | shell integration (zsh's `.zshenv` through `ZDOTDIR`, bash's rc file through `--rcfile`): the marks, Tab's completion widget and its request file, the history files, what Return sends |
 | `src/editor/editor.lyra` | the command line's editor — text, caret, selection, motions, words, undo, layout; **pure** |
 | `src/ui/modifiers.lyra` | the modifier keys as pressed — ImGui's macOS Ctrl/⌘ swap undone |
 | `src/ui/typeahead.lyra` | keys typed ahead, raw, made into lines (Backspace, Ctrl+U/W applied; escapes dropped) |
@@ -58,7 +58,7 @@ shell ⇄ bindings.pty ──bytes──▶ vt.Parser ──[]Action──▶ vt
 | `src/ui/settings_window.lyra` | the settings window: font family or file, size, spacing, theme, every colour, bold as bright |
 | `src/ui/theme.lyra` | recorded colours → pixels: the theme's own pair, ANSI 16, xterm's 256; inverse, dim, hidden |
 | `src/ui/grid.lyra` | a screen line drawn: background runs, text runs of one style, faces, underlines, strike |
-| `src/vttest.lyra` | the checks: byte strings against actions and screens, the editor on text, real programs and zsh on a PTY |
+| `src/vttest.lyra` | the checks: byte strings against actions and screens, the editor on text, real programs, zsh and bash on a PTY (each skipped, and said so, where not installed) |
 | `src/uitest.lyra` | the command line on a headless host: injected input, the editor checked after |
 
 - **The parser recognises, the screen acts.** Neither reads the other's input: the parser is
@@ -159,15 +159,27 @@ shell ⇄ bindings.pty ──bytes──▶ vt.Parser ──[]Action──▶ vt
   (`origin.y + scroll + avail.y`), wherever the view is scrolled, and grid clicks stop at
   its top. While a program runs there is no box. zsh's echo of the command still lands in
   the transcript as `prompt command`.
-- **The command line is Sulafat's only between `B` and the next mark.** zsh reports
+- **The command line is Sulafat's only between `B` and the next mark.** zsh and bash report
   `A`/`B`/`C`/`D` (OSC 133) through `shell/shell.lyra`'s hooks; at `B`, `Mode` becomes
   `AtPrompt(line, col)` and the editor is drawn from that cell, the shell's empty input
-  hidden under it; any other mark is `Raw`. A shell without integration (bash for now, a
-  remote shell over ssh) never reaches `AtPrompt` — a classic terminal.
+  hidden under it; any other mark is `Raw`. **A `B` where the command was just sent from is
+  that prompt redrawn** (`Session.sent_from`) — bash's readline redraws its line on a paste
+  of several lines, before `C` — and is not a new prompt. A shell without integration (a
+  bash older than 4.4, another shell, a remote one over ssh) never reaches `AtPrompt` — a
+  classic terminal.
+- **bash is started `bash --rcfile <Sulafat's> -i`** — an rc file is read only by an
+  interactive non-login shell — and the file reads what `bash -l` would (`/etc/profile`, then
+  the first of `~/.bash_profile`, `~/.bash_login`, `~/.profile`). `D`, OSC 7 and `A` come
+  from the front of `PROMPT_COMMAND`, `B` is added to the end of `PS1` from its back, `C`
+  from `PS0`, once for what was entered (a paste of several lines is several commands to
+  bash). Each hook hands back the `$?` it found. Type-ahead is read at the end of
+  `PROMPT_COMMAND` with `read -n 1 -t`, which turns canonical mode off while it waits (`-t 0`
+  sees only whole lines), and arrives just before `B`. Tab completion is zsh's only
+  (`Integration.completes`).
 - **Return sends the command as a bracketed paste, then `\r`**, so the shell's line editor
   takes several lines as one command and echoes it into the transcript where the editor
-  was. zsh turns the mode on just *after* the `B` mark — a check that answers `B` at once
-  must wait for it (`check_zsh`).
+  was. The shell turns the mode on just *after* the `B` mark — a check that answers `B` at
+  once must wait for it (`check_shell`).
 - **The `B` mark is the end of `PS1`**, re-added at each prompt by a precmd hook that moves
   itself last, so a theme's own hook has built `PS1` first. A theme that redraws the
   prompt asynchronously is untested.
@@ -207,7 +219,8 @@ shell ⇄ bindings.pty ──bytes──▶ vt.Parser ──[]Action──▶ vt
 4. **M3 — the editor (begun 10/16, before M1 and the block cards)**: zsh's integration,
    then the command line as Sulafat's editor — multi-line, soft wrap, the mouse (click,
    drag, double-click a word, triple-click a line), word and line motions, undo, the
-   clipboard, history from `~/.zsh_history`, Tab completion (zsh's own, in a menu). Next:
-   syntax colouring, Ctrl+R history search, bash's integration.
+   clipboard, history from `~/.zsh_history`, Tab completion (zsh's own, in a menu); bash's
+   integration (10/19), but its Tab completion. Next: bash's completion, syntax colouring,
+   Ctrl+R history search.
 
 Open work is in `todo.md`; finished work in `done.md`.

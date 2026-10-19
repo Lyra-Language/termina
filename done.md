@@ -9,6 +9,7 @@ Finished work, moved from `todo.md` with its section; the rules it left behind a
 - **[DONE 10/16] Filter the menu as you type** — typing narrows it from zsh's list and ⌫ widens it; it closes when nothing is left or the caret leaves the word.
 - **[DONE 10/17] The command line pinned to the window's foot** — a box holding the prompt and the editor, as Warp has it; the menu opens upward.
 - **[DONE 10/16] Type-ahead** — a `zle-line-init` hook reports keys waiting at a new line; a typed Return runs its line, the rest goes into the editor.
+- **[DONE 10/19] bash's integration** — marks, commands, type-ahead and history through an `--rcfile` that reads what `bash -l` would; bash 4.4 or newer (`PS0`).
 
 ## Tabs
 

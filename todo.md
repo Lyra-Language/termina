@@ -9,7 +9,8 @@ milestones are in `CLAUDE.md` § Plan; finished items move to `done.md`.
 - **[OPEN] A completion's own suffix rules** — zsh removes an auto-added space or `/` when the next key is `/` or `)`; Sulafat keeps it.
 - **[OPEN] Right prompts and two-line prompts** — the box shows the prompt's last line before the input column; an `RPROMPT`, or a prompt's earlier lines, stay in the transcript above.
 - **[OPEN] The box while a command runs** — it goes; Warp keeps it, greyed, to type the next command in.
-- **[OPEN] Syntax colouring, Ctrl+R search, bash integration** — next after Tab.
+- **[OPEN] bash's Tab completion** — a `bind -x` widget running the word's `complete -p` function (`compgen` for commands and files) and reporting `COMPREPLY` as OSC 7770; names only, bash completions have no descriptions.
+- **[OPEN] Syntax colouring, Ctrl+R search** — next after bash's completion.
 
 ## Tabs
 

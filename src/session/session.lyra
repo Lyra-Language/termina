@@ -113,6 +113,10 @@ pub struct Session {
   mouse_cell: (i64, i64),
   wheel_left: f32,
   had_focus: bool,
+  /// Where the prompt a command was just sent from began (its `B` mark), until the next
+  /// mark of another kind: a `B` there again is that prompt redrawn — bash's readline
+  /// redraws its line on a paste of several lines — not a new one.
+  sent_from: Maybe<(i64, i64)>,
 }
 
 /// Start a tab: `program` (the login shell with Sulafat's integration when empty) in `dir`
@@ -124,9 +128,14 @@ pub let open_session = (
 ) -> Maybe<Session> => {
   let shell = lookup("SHELL") ?? "/bin/sh"
   let own = program.len() > 0
-  let args = if own { program } else { [shell, "-l"] }
   // The request file is this tab's: named by the time it started, to the nanosecond.
   let integrated = if own { None } else { integration(shell, "${wall_clock_nanos()}") }
+  let args = if own { program } else {
+    match integrated {
+      Some(i) => i.args,
+      None => [shell, "-l"],
+    }
+  }
   let integration_env = match integrated {
     Some(i) => i.env,
     None => [],
@@ -163,6 +172,7 @@ pub let open_session = (
     mouse_cell: (-1, -1),
     wheel_left: 0.0,
     had_focus: false,
+    sent_from: None,
   })
 }
 
@@ -254,6 +264,19 @@ impl Session {
   /// hung up on.
   pub let request_close = (self: mut) -> void => { self.alive = false }
 
+  /// Run `command` at the prompt: sent to the shell as a paste and a Return, kept in the
+  /// history, and the prompt it was sent from noted ([Session.sent_from]).
+  let send_command = (self: mut, command: string) -> void => {
+    let _ = self.pty.write(submission(command, self.shown.bracketed_paste))
+    self.line.submitted(command)
+    self.running = command
+    match self.mode {
+      AtPrompt(at, col) => { self.sent_from = Some((at, col)) },
+      Raw => {},
+    }
+    self.mode = Raw
+  }
+
   /// This frame's reading: what the program wrote, carried out; where its shell now is; the
   /// shell's completions and keys typed ahead handed to the command line; a typed-ahead
   /// command run at a prompt. `shown` says whether the tab is the one in view.
@@ -267,13 +290,21 @@ impl Session {
     if shown { self.unseen = false }
     // The last mark says where the shell is: input begins there, or something else has.
     for m in self.shown.take_marks() {
-      self.mode = match m {
-        InputStart(at, col) => AtPrompt(at, col),
-        _ => Raw,
-      }
-      match self.mode {
-        AtPrompt(_, _) => { self.running = "" },
-        Raw => {},
+      match m {
+        InputStart(at, col) => {
+          let redrawn = match self.sent_from {
+            Some((a, c)) => a == at && c == col,
+            None => false,
+          }
+          if !redrawn {
+            self.mode = AtPrompt(at, col)
+            self.running = ""
+          }
+        },
+        _ => {
+          self.mode = Raw
+          self.sent_from = None
+        },
       }
     }
     // The program's questions answered (what terminal, where the cursor is, which colours).
@@ -286,12 +317,7 @@ impl Session {
     for keys in self.shown.take_typed_ahead() { self.line.typed_ahead(keys) }
     match self.mode {
       AtPrompt(_, _) => match self.line.take_typed_ahead() {
-        Some(command) => {
-          let _ = self.pty.write(submission(command, self.shown.bracketed_paste))
-          self.line.submitted(command)
-          self.running = command
-          self.mode = Raw
-        },
+        Some(command) => self.send_command(command),
         None => {},
       },
       Raw => {},
@@ -487,10 +513,7 @@ pub let draw_session = (
       }
       match s.line.update(place, list, style, focused) {
         Submit(command) => {
-          let _ = s.pty.write(submission(command, s.shown.bracketed_paste))
-          s.line.submitted(command)
-          s.running = command
-          s.mode = Raw
+          s.send_command(command)
           follow = true
         },
         Send(bytes) => {
