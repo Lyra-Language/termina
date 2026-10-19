@@ -5,12 +5,7 @@ milestones are in `CLAUDE.md` § Plan; finished items move to `done.md`.
 
 ## The command line (M3)
 
-- **[OPEN] Narrowing is literal** — a case-insensitive or substring `matcher-list` in the user's zsh shapes Tab's list, but typing then narrows by exact start; asking zsh again would honour it.
-- **[OPEN] A completion's own suffix rules** — zsh removes an auto-added space or `/` when the next key is `/` or `)`; Sulafat keeps it.
-- **[OPEN] Right prompts and two-line prompts** — the box shows the prompt's last line before the input column; an `RPROMPT`, or a prompt's earlier lines, stay in the transcript above.
-- **[OPEN] The box while a command runs** — it goes; Warp keeps it, greyed, to type the next command in.
-- **[OPEN] bash: a compspec's `-C` command is not run** — it may be slow or change something; those commands complete nothing (readline would run them).
-- **[OPEN] Syntax colouring, Ctrl+R search** — next.
+- **[OPEN] A command that does not exist** — syntax colouring could show it red, but Sulafat cannot see the shell's aliases and functions; asking the shell (`type`) per command word would.
 
 ## Tabs
 

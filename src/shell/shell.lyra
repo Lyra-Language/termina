@@ -30,9 +30,9 @@ module shell
 //! **bash** is started `bash --rcfile <Sulafat's> -i`: an rc file is read only by an
 //! interactive shell that is not a login one, so Sulafat's reads what `bash -l` would —
 //! `/etc/profile`, then the first of `~/.bash_profile`, `~/.bash_login` and `~/.profile`
-//! (Ubuntu's reads `~/.bashrc`) — and then adds the marks: `D`, OSC 7 and `A` from the
-//! front of `PROMPT_COMMAND`, `B` at the end of `PS1` from its back (after a theme's prompt
-//! command has rebuilt it), `C` from `PS0`. Keys typed ahead are read at the end of
+//! (Ubuntu's reads `~/.bashrc`) — and then adds the marks: `D` and OSC 7 from the front of
+//! `PROMPT_COMMAND`, `A` at the start of `PS1` and `B` at its end from its back (after a
+//! theme's prompt command has rebuilt it), `C` from `PS0`. Keys typed ahead are read at the end of
 //! `PROMPT_COMMAND`, before readline starts, and reported as zsh's are, a moment before the
 //! prompt rather than after it — the command line keeps them until the prompt comes. The
 //! hooks need `PS0`, so a bash older than 4.4 (macOS's own is 3.2) is a classic terminal.
@@ -213,12 +213,13 @@ let integration_dir = (shell: string, name: string, text: string) -> Maybe<strin
   Some(dir)
 }
 
-/// zsh's integration. The `B` mark goes at the end of `PS1` rather than in a `zle-line-init`
-/// widget, because a widget runs before the prompt is drawn on some versions, and the mark
-/// must sit where input begins. Its precmd hook moves itself last, so that a theme that
-/// rebuilds `PS1` in its own hook (powerlevel10k, starship) has done so before the mark is
-/// added — from the second prompt on; the first may lack the mark under such a theme, and
-/// is then a classic prompt.
+/// zsh's integration. The `A` mark goes at the start of `PS1`, so it falls where the prompt
+/// is drawn (after `PROMPT_SP`), and `B` at its end rather than in a `zle-line-init` widget,
+/// because a widget runs before the prompt is drawn on some versions, and the mark must sit
+/// where input begins. Its precmd hook moves itself last, so that a theme that rebuilds
+/// `PS1` in its own hook (powerlevel10k, starship) has done so before the marks are added —
+/// from the second prompt on; the first may lack them under such a theme, and is then a
+/// classic prompt.
 const ZSHENV: string = ##`# Sulafat's shell integration, loaded through ZDOTDIR, which is put back first.
 # Written by Sulafat at each start; edits here are lost.
 if [[ -n "$SULAFAT_ORIG_ZDOTDIR" ]]; then ZDOTDIR="$SULAFAT_ORIG_ZDOTDIR"; else builtin unset ZDOTDIR; fi
@@ -232,10 +233,10 @@ if [[ -o interactive ]]; then
     [[ -n $_sulafat_ran ]] && builtin printf '\e]133;D;%s\a' $s
     _sulafat_ran=
     builtin printf '\e]7;file://%s%s\a' "${HOST}" "${PWD}"
-    builtin printf '\e]133;A\a'
     if [[ ${precmd_functions[-1]} != _sulafat_precmd ]]; then
       precmd_functions=(${precmd_functions:#_sulafat_precmd} _sulafat_precmd)
     fi
+    [[ $PS1 == *$'\e]133;A\a'* ]] || PS1="%{"$'\e]133;A\a'"%}${PS1}"
     [[ $PS1 == *$'\e]133;B\a'* ]] || PS1="${PS1}%{"$'\e]133;B\a'"%}"
   }
   _sulafat_preexec() {
@@ -368,13 +369,14 @@ if (( BASH_VERSINFO[0] > 4 || (BASH_VERSINFO[0] == 4 && BASH_VERSINFO[1] >= 4) )
     [[ -n $_sulafat_ran ]] && builtin printf '\e]133;D;%s\a' "$s"
     _sulafat_ran=
     builtin printf '\e]7;file://%s%s\a' "$HOSTNAME" "$PWD"
-    builtin printf '\e]133;A\a'
     return $s
   }
-  # Last: B at the end of PS1, which a prompt command before may have rebuilt; then keys
-  # typed ahead, read before readline would take them (OSC 7770 t), controls and %/; as %XX.
+  # Last: A at the start of PS1 and B at its end, which a prompt command before may have
+  # rebuilt; then keys typed ahead, read before readline would take them (OSC 7770 t),
+  # controls and %/; as %XX.
   _sulafat_prompt() {
     local s=$? c h out=
+    [[ $PS1 == *'133;A'* ]] || PS1='\[\e]133;A\a\]'"${PS1}"
     [[ $PS1 == *'133;B'* ]] || PS1="${PS1}"'\[\e]133;B\a\]'
     # `read -n` puts the terminal in non-canonical mode while it waits, so a line half typed
     # is read too; `-t 0` alone would see only whole lines.
@@ -496,14 +498,13 @@ if (( BASH_VERSINFO[0] > 4 || (BASH_VERSINFO[0] == 4 && BASH_VERSINFO[1] >= 4) )
       fi
       if [[ -n $spec ]]; then
         local -a sw=() gen=()
-        local fn= k
+        local fn= gencmd= k
         eval "sw=(${spec#complete })"
         for (( k = 0; k < ${#sw[@]} - 1; k++ )); do
           case ${sw[k]} in
             -F) fn=${sw[k + 1]}; (( k++ )) ;;
             -o) _sulafat_opts[${sw[k + 1]}]=1; (( k++ )) ;;
-            # A command's output: left out, as it may be slow or change something.
-            -C) (( k++ )) ;;
+            -C) gencmd=${sw[k + 1]}; (( k++ )) ;;
             -A|-G|-W|-X|-P|-S) gen+=("${sw[k]}" "${sw[k + 1]}"); (( k++ )) ;;
             *) gen+=("${sw[k]}") ;;
           esac
@@ -515,6 +516,15 @@ if (( BASH_VERSINFO[0] > 4 || (BASH_VERSINFO[0] == 4 && BASH_VERSINFO[1] >= 4) )
           local -a COMPREPLY=()
           "$fn" "$cmd" "$bare" "$prev" >/dev/null 2>&1 </dev/null
           hits+=("${COMPREPLY[@]}")
+        fi
+        # -C: a command whose output, a line each, is completions — run as readline runs it,
+        # in a subshell, the words its arguments and COMP_LINE and COMP_POINT its
+        # environment.
+        if [[ -n $gencmd ]]; then
+          mapfile -t -O ${#hits[@]} hits < <(
+            export COMP_LINE=$fline COMP_POINT=${#fline} COMP_TYPE=9 COMP_KEY=9
+            eval "$gencmd"' "$cmd" "$bare" "$prev"' 2>/dev/null </dev/null
+          )
         fi
         if (( ${#hits[@]} == 0 )) && [[ -n ${_sulafat_opts[default]}${_sulafat_opts[bashdefault]} ]]; then
           _sulafat_opts[filenames]=1

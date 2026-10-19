@@ -8,6 +8,7 @@ import std.io.{ remove_file }
 import bindings.pty.{ spawn, close, Pty }
 import bindings.sdl3.{ platform }
 import bindings.imgui.{
+  DrawList,
   is_mouse_released,
   get_io,
   set_clipboard_text,
@@ -76,7 +77,7 @@ import ui.{
   Fonts,
   LineAt,
 }
-import editor.{ Wrap }
+import editor.{ Wrap, text_of }
 
 /// A tab's program and everything Sulafat keeps for it.
 pub struct Session {
@@ -117,6 +118,9 @@ pub struct Session {
   /// mark of another kind: a `B` there again is that prompt redrawn — bash's readline
   /// redraws its line on a paste of several lines — not a new one.
   sent_from: Maybe<(i64, i64)>,
+  /// Where the last prompt began (its `A` mark): an absolute line and a column. The box
+  /// shows the prompt from there — a prompt of several lines whole.
+  prompt_from: (i64, i64),
 }
 
 /// Start a tab: `program` (the login shell with Sulafat's integration when empty) in `dir`
@@ -173,6 +177,7 @@ pub let open_session = (
     wheel_left: 0.0,
     had_focus: false,
     sent_from: None,
+    prompt_from: (-1, 0),
   })
 }
 
@@ -301,6 +306,12 @@ impl Session {
             self.running = ""
           }
         },
+        // A prompt begins; drawn again with its line (bash's readline, on a paste), it does
+        // not end what a command sent from it is waiting for.
+        PromptStart(at, col) => {
+          self.prompt_from = (at, col)
+          self.mode = Raw
+        },
         _ => {
           self.mode = Raw
           self.sent_from = None
@@ -382,7 +393,26 @@ pub let draw_session = (
   // and so a little narrower than the grid.
   let inset_cols = (2.0 * BOX_INSET / cell.x).ceil()
   let wrap = Wrap { first: 0, cols: (cols - inset_cols).max(1) }
-  let box_rows = if input_line >= 0 { 1 + s.line.rows(wrap) } else { 0 }
+  // The prompt's first line and the column it begins at: its `A` mark's, when that is the
+  // input's line or a few above it; else the input's line from its start.
+  let (first, first_col) = match prompt {
+    Some((i, _)) => match s.shown.line_at(s.prompt_from.0) {
+      Some(a) => if a <= i && i - a < PROMPT_ROWS { (a, s.prompt_from.1.min(cols)) } else { (i, 0) },
+      None => (i, 0),
+    },
+    None => (-1, 0),
+  }
+  let prompt_rows = if input_line >= 0 { input_line - first + 1 } else { 0 }
+  // While a command sent from the box runs, the box stays, greyed, showing it — the keys
+  // are the program's — but not when a full-screen program has the window.
+  let integrated = match s.integrated {
+    Some(_) => true,
+    None => false,
+  }
+  let running_box = input_line < 0 && s.running != "" && !s.shown.alt && integrated
+  let box_rows = if input_line >= 0 { prompt_rows + s.line.rows(wrap) }
+  else if running_box { 1 }
+  else { 0 }
   let box_height = if box_rows > 0 {
     f32(box_rows) * cell.y + 2.0 * BOX_PADDING + BOX_GAP
   } else { 0.0 }
@@ -394,9 +424,10 @@ pub let draw_session = (
   // the scrollback above its screen is not shown.
   let base = if s.shown.alt { s.shown.scrollback_len() } else { 0 }
   let line_count = s.shown.scrollback_len() + s.shown.rows
-  // The grid's lines: all of them, or at a prompt those above its line — the prompt is in
-  // the box, and below it is only the shell's empty input.
-  let grid_lines = if input_line >= 0 { input_line } else { line_count }
+  // The grid's lines: all of them, or at a prompt those above its first line — the prompt is
+  // in the box, and below it is only the shell's empty input — and that line too when the
+  // prompt began partway along it, after output that did not end its line.
+  let grid_lines = if input_line < 0 { line_count } else if first_col > 0 { first + 1 } else { first }
   let total = grid_lines - base
   // The page: the grid's lines, and room under them for the box, so that the last line
   // rests on the box when the view is at the bottom.
@@ -408,7 +439,7 @@ pub let draw_session = (
   let box_top = view_bottom - box_height
   let list = get_window_draw_list()
   for i in top..<bottom {
-    let upto = s.shown.cols
+    let upto = if input_line >= 0 && i == first && first_col > 0 { first_col } else { s.shown.cols }
     let at = LineAt {
       origin: Vec2 { x: origin.x, y: origin.y + f32(i - base) * cell.y },
       cell: cell,
@@ -444,7 +475,14 @@ pub let draw_session = (
     report_mouse(s, origin, cell, base)
   } else {
     // The box's own clicks are the command line's; the grid takes those above it.
-    grid_mouse(s, origin, cell, base, grid_lines, if raw { 1.0e30 } else { box_top })
+    grid_mouse(
+      s,
+      origin,
+      cell,
+      base,
+      grid_lines,
+      if raw && !running_box { 1.0e30 } else { box_top }
+    )
     if raw && s.shown.alt && s.shown.alternate_scroll && s.shown.mouse_mode == 0 && is_window_hovered() {
       let notches = wheel_notches(s, get_io().mouse_wheel())
       if notches != 0 {
@@ -463,45 +501,52 @@ pub let draw_session = (
   match prompt {
     Some((i, prompt_end)) => {
       let before = "${s.line.edit.cursor}:${s.line.edit.anchor}:${s.line.edit.content()}"
-      // The box: opaque, so the scrolled-back grid never shows through it, tinted, a rule
-      // along its top; the prompt in its first row, as the shell drew it.
-      let x0 = origin.x - BOX_MARGIN
-      let x1 = origin.x + f32(cols) * cell.x + BOX_MARGIN
-      list.add_rect_filled(
-        Vec2 { x: x0, y: box_top },
-        Vec2 { x: x1, y: view_bottom + BOX_MARGIN },
-        theme.bg
-      )
-      list.add_rect_filled(
-        Vec2 { x: x0, y: box_top },
-        Vec2 { x: x1, y: view_bottom + BOX_MARGIN },
-        INPUT_BAND,
-        BOX_ROUNDING
-      )
-      list.add_line_h(x0, x1, box_top, BOX_RULE, 1.0)
-      let prompt_at = LineAt {
-        origin: Vec2 { x: origin.x + BOX_INSET, y: box_top + BOX_PADDING },
+      draw_box(list, theme, origin.x, cols, cell, box_top, view_bottom)
+      // The prompt's rows, each line's cells from where the prompt began on it to the input
+      // column on the last.
+      for r in 0..<prompt_rows {
+        let l = first + r
+        let cells = s.shown.line(l)
+        let from = if r == 0 { first_col } else { 0 }
+        let to = (if l == i { prompt_end } else { cols }).min(cells.len())
+        if to > from {
+          let row_at = LineAt {
+            origin: Vec2 { x: origin.x + BOX_INSET, y: box_top + BOX_PADDING + f32(r) * cell.y },
+            cell: cell,
+            text_dy: text_dy,
+            pixel: pixel,
+          }
+          draw_line(
+            list,
+            theme,
+            fonts,
+            row_at,
+            cells.slice(from, to),
+            s.shown.combining,
+            to - from
+          )
+        }
+      }
+      draw_right_prompt(s, list, theme, fonts, i, prompt_end, LineAt {
+        origin: Vec2 {
+          x: origin.x + BOX_INSET,
+          y: box_top + BOX_PADDING + f32(prompt_rows - 1) * cell.y,
+        },
         cell: cell,
         text_dy: text_dy,
         pixel: pixel,
-      }
-      draw_line(
-        list,
-        theme,
-        fonts,
-        prompt_at,
-        s.shown.line(i),
-        s.shown.combining,
-        prompt_end
-      )
+      }, wrap.cols, (if i == first { prompt_end - first_col } else { prompt_end }))
       let place = Place {
-        origin: Vec2 { x: origin.x + BOX_INSET, y: box_top + BOX_PADDING + cell.y + BOX_GAP },
+        origin: Vec2 {
+          x: origin.x + BOX_INSET,
+          y: box_top + BOX_PADDING + f32(prompt_rows) * cell.y + BOX_GAP,
+        },
         cell: cell,
         text_dy: text_dy,
         wrap: wrap,
         menu_above: true,
         // The menu rests just above the box.
-        lift: cell.y + BOX_PADDING + BOX_GAP + BOX_MENU_GAP,
+        lift: f32(prompt_rows) * cell.y + BOX_PADDING + BOX_GAP + BOX_MENU_GAP,
       }
       let style = Style {
         text: theme.fg,
@@ -510,6 +555,12 @@ pub let draw_session = (
         menu: MENU,
         menu_chosen: MENU_CHOSEN,
         faint: theme.palette[8],
+        // The syntax in the theme's own ANSI colours: green, cyan, yellow, magenta, blue.
+        command: theme.palette[2],
+        option: theme.palette[6],
+        quoted: theme.palette[3],
+        variable: theme.palette[5],
+        operator: theme.palette[4],
       }
       match s.line.update(place, list, style, focused) {
         Submit(command) => {
@@ -536,6 +587,22 @@ pub let draw_session = (
       if before != after { follow = true }
     },
     None => {
+      if running_box {
+        // The command running, greyed, its first line, as wide as the box.
+        draw_box(list, theme, origin.x, cols, cell, box_top, view_bottom)
+        let lines = s.running.split("\n")
+        let head = if lines.len() > 1 { "${lines[0]} ⏎ …" } else { lines[0] }
+        let runes = head.to_runes()
+        let fits = if runes.len() > wrap.cols { text_of(runes.slice(
+          0,
+          wrap.cols
+        )) } else { head }
+        list.add_text(
+          Vec2 { x: origin.x + BOX_INSET, y: box_top + BOX_PADDING + text_dy },
+          theme.palette[8],
+          fits
+        )
+      }
       if s.shown.cursor_visible {
         // The shape the program set (DECSCUSR): a block, an underline or a bar.
         let shape = s.shown.cursor_shape
@@ -741,6 +808,68 @@ let unit_span = pure (
   let to = Spot { line: line, col: b }
   (from, to)
 }
+
+/// The box's frame from `box_top` to the view's foot, around a grid `cols` wide from `x`:
+/// opaque, so the scrolled-back grid never shows through it, tinted, a rule along its top.
+let draw_box = (
+  list: DrawList,
+  theme: Theme,
+  x: f32,
+  cols: i64,
+  cell: Vec2,
+  box_top: f32,
+  view_bottom: f32
+) -> void => {
+  let x0 = x - BOX_MARGIN
+  let x1 = x + f32(cols) * cell.x + BOX_MARGIN
+  list.add_rect_filled(
+    Vec2 { x: x0, y: box_top },
+    Vec2 { x: x1, y: view_bottom + BOX_MARGIN },
+    theme.bg
+  )
+  list.add_rect_filled(
+    Vec2 { x: x0, y: box_top },
+    Vec2 { x: x1, y: view_bottom + BOX_MARGIN },
+    INPUT_BAND,
+    BOX_ROUNDING
+  )
+  list.add_line_h(x0, x1, box_top, BOX_RULE, 1.0)
+}
+
+/// A right prompt (zsh's `RPROMPT`) in the box: what the shell drew on input line `i` after
+/// input column `prompt_end` — the shell's input itself is empty, the command line being
+/// Sulafat's — right-aligned in the row `at` begins, `cols` wide; left out where it would
+/// meet the prompt, `prompt_cols` wide on that row.
+let draw_right_prompt = (
+  s: Session,
+  list: DrawList,
+  theme: Theme,
+  fonts: Fonts,
+  i: i64,
+  prompt_end: i64,
+  at: LineAt,
+  cols: i64,
+  prompt_cols: i64
+) -> void => {
+  let cells = s.shown.line(i)
+  var from = prompt_end
+  while from < cells.len() && cells[from].ch == ' ' { from += 1 }
+  var to = cells.len()
+  while to > from && cells[to - 1].ch == ' ' { to -= 1 }
+  let width = to - from
+  if width <= 0 || cols - width <= prompt_cols { return }
+  let right_at = LineAt {
+    origin: Vec2 { x: at.origin.x + f32(cols - width) * at.cell.x, y: at.origin.y },
+    cell: at.cell,
+    text_dy: at.text_dy,
+    pixel: at.pixel,
+  }
+  draw_line(list, theme, fonts, right_at, cells.slice(from, to), s.shown.combining, width)
+}
+
+/// The most rows of a prompt the box shows; a prompt's `A` mark further above its input is
+/// taken for a stray, and the box shows the input's line alone.
+const PROMPT_ROWS: i64 = 4
 
 /// The colours drawn over the grid besides the theme's: the band behind the command line,
 /// and the completion menu and its chosen row.

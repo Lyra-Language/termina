@@ -50,6 +50,9 @@ import bindings.imgui.{
   KEY_W,
   KEY_X,
   KEY_Z,
+  KEY_R,
+  KEY_S,
+  KEY_G,
   KEY_LEFT_ARROW,
   KEY_RIGHT_ARROW,
   KEY_UP_ARROW,
@@ -71,6 +74,15 @@ import editor.{
   row_count,
   layout,
   cells_of,
+  kinds,
+  Kind,
+  Plain,
+  Command,
+  Option,
+  Quoted,
+  Variable,
+  Operator,
+  Comment,
   index_at,
   rune_at,
   shell_word_at,
@@ -92,8 +104,10 @@ pub struct CommandLine {
   /// The word a double-click selected, while the drag after it extends by words.
   word_drag: Maybe<(i64, i64)>,
   /// The text and caret completions were asked for, while the shell works on them: an
-  /// answer for anything else (the user went on typing) is dropped.
+  /// answer for anything else (the user went on typing) is dropped. `refreshing`: the ask
+  /// was typing's, with the menu open, and the answer is the menu's new contents.
   pending: Maybe<(string, i64)>,
+  refreshing: bool,
   /// The completions zsh offered, while their menu is open, and the column their word
   /// begins at: what typing narrows the menu from, and widens it back to.
   offered: []Completion,
@@ -110,6 +124,12 @@ pub struct CommandLine {
   /// Keys typed ahead and not yet used, as lines (`typeahead.lyra`): each ended line a
   /// command to run at a prompt, in turn, and what follows the last Return for the editor.
   ahead: string,
+  /// The suffix a completion just put in — its `/` or space — with the line and caret it
+  /// left, while they are unchanged: what the next key typed may take back ([type_text]).
+  suffix_left: Maybe<(string, i64, string)>,
+  /// History search (Ctrl+R) under way: what the editor held before it, put back if it is
+  /// cancelled. Meanwhile the editor's text is the query and the menu its matches.
+  searching: Maybe<string>,
 }
 
 /// Completions a menu shows at once; more scroll.
@@ -138,6 +158,7 @@ pub let command_line = pure (history: []string) -> CommandLine => CommandLine {
   dragging: false,
   word_drag: None,
   pending: None,
+  refreshing: false,
   offered: [],
   menu_word: 0,
   menu: [],
@@ -145,6 +166,8 @@ pub let command_line = pure (history: []string) -> CommandLine => CommandLine {
   menu_top: 0,
   ahead: "",
   menu_keys: false,
+  suffix_left: None,
+  searching: None,
 }
 
 /// What the Edit menu does — and ⌘Z, ⇧⌘Z, ⌘X, ⌘C, ⌘V, ⌘A without one.
@@ -155,10 +178,18 @@ pub struct Style {
   text: u32,
   caret: u32,
   selection: u32,
-  /// The completion menu: its background, the chosen row's, and descriptions' text.
+  /// The completion menu: its background, the chosen row's, and descriptions' text (and
+  /// comments').
   menu: u32,
   menu_chosen: u32,
   faint: u32,
+  /// The syntax's colours (`../editor/syntax.lyra`): commands, options, quoted text,
+  /// variables, operators and redirections.
+  command: u32,
+  option: u32,
+  quoted: u32,
+  variable: u32,
+  operator: u32,
 }
 
 /// Where the command line is: the screen position of column 0 of its first row, a cell's
@@ -180,15 +211,23 @@ impl CommandLine {
   /// How many rows the command line takes laid out by `wrap`.
   pub let rows = pure (self, wrap: Wrap) -> i64 => row_count(self.edit.text, wrap)
 
-  /// How many rows the completion menu takes below them (0 when it is closed).
+  /// How many rows the completion menu takes below them (0 when it is closed) — or the
+  /// history search's matches, one row saying there are none when there are none.
   pub let menu_rows = pure (self) -> i64 =>
-    if self.menu.len() == 0 { 0 } else { self.menu.len().min(MENU_ROWS) }
+    if self.menu.len() == 0 { if self.searching != None { 1 } else { 0 } } else { self.menu.len().min(MENU_ROWS) }
+
+  /// Whether a history search (Ctrl+R) is under way.
+  pub let is_searching = pure (self) -> bool => self.searching != None
 
   /// The shell's completions arrived. Those for a line since edited are dropped; one is put
-  /// in; of several, the start they share is put in and the menu opens.
+  /// in; of several, the start they share is put in and the menu opens. Asked again as
+  /// typing narrowed the menu, they are its contents as the shell gave them — its matching
+  /// (a case-insensitive or substring `matcher-list`) honoured — and nothing is put in.
   pub let completed = (self: mut, offered: []Completion) -> void => {
     let Some((text, cursor)) = self.pending else { return }
     self.pending = None
+    let refresh = self.refreshing
+    self.refreshing = false
     if text != self.edit.content() || cursor != self.edit.cursor { return }
     // The same completion can come from two completion functions (zsh's `echo` is a
     // builtin and a command): offered once.
@@ -198,6 +237,7 @@ impl CommandLine {
       for u in unique { if u.prefix == c.prefix && u.insert == c.insert && u.suffix == c.suffix { seen = true } }
       if !seen { unique.push(c) }
     }
+    if refresh { return self.refreshed(unique) }
     if unique.len() == 0 { return }
     if unique.len() == 1 { return self.apply(unique[0]) }
     let (start, end) = shell_word_at(self.edit.text, self.edit.cursor)
@@ -216,10 +256,11 @@ impl CommandLine {
     self.narrow()
   }
 
-  // The menu as the word now stands: the offered completions it is the start of, the one
-  // chosen kept chosen while it is among them. Closed when the caret has left the end of
-  // the word the completions were for, when none is left, or when the one left is the word
-  // already, complete.
+  // The menu as the word now stands, until the shell answers again: the offered completions
+  // it is the start of, case aside, the one chosen kept chosen while it is among them.
+  // Closed when the caret has left the end of the word the completions were for, or when
+  // the one left is the word already, complete; kept as it was when none starts so, since
+  // the shell's own matching may yet find some.
   let narrow = (self: mut) -> void => {
     let (start, end) = shell_word_at(self.edit.text, self.edit.cursor)
     if start != self.menu_word || self.edit.cursor != end || self.edit.has_selection() {
@@ -227,8 +268,29 @@ impl CommandLine {
     }
     let typed = text_of(self.edit.text.slice(start, self.edit.cursor))
     var kept: []Completion = []
-    for c in self.offered { if key_of(c).starts_with(typed) { kept.push(c) } }
-    if kept.len() == 0 || (kept.len() == 1 && key_of(kept[0]) == typed) { return self.close_menu() }
+    for c in self.offered { if key_of(c)
+        .to_ascii_lower()
+        .starts_with(typed.to_ascii_lower()) { kept.push(c) } }
+    if kept.len() == 1 && key_of(kept[0]) == typed { return self.close_menu() }
+    if kept.len() == 0 { return }
+    self.show(kept)
+  }
+
+  // The shell's answer for the word as typed now: the menu's contents as given, or closed
+  // when there are none — or when the menu closed meanwhile, the answer is not wanted.
+  let refreshed = (self: mut, offered: []Completion) -> void => {
+    if self.offered.len() == 0 { return }
+    let (start, end) = shell_word_at(self.edit.text, self.edit.cursor)
+    if start != self.menu_word || self.edit.cursor != end { return self.close_menu() }
+    if offered.len() == 0 { return self.close_menu() }
+    let typed = text_of(self.edit.text.slice(start, end))
+    if offered.len() == 1 && key_of(offered[0]) == typed { return self.close_menu() }
+    self.offered = offered
+    self.show(offered)
+  }
+
+  // `kept` as the menu, the one chosen kept chosen while it is among them.
+  let show = (self: mut, kept: []Completion) -> void => {
     let was = if self.chosen < self.menu.len() { key_of(self.menu[self.chosen]) } else { "" }
     self.chosen = 0
     for k in 0..<kept.len() { if key_of(kept[k]) == was { self.chosen = k } }
@@ -242,14 +304,19 @@ impl CommandLine {
       .max(0)
   }
 
-  // Put completion `c` in place of the word at the caret, and close the menu.
+  // Put completion `c` in place of the word at the caret, and close the menu; its suffix
+  // noted, for the next key to take back.
   let apply = (self: mut, c: Completion) -> void => {
     let (start, end) = shell_word_at(self.edit.text, self.edit.cursor)
     self.edit.replace(start, end, "${c.prefix}${c.insert}${c.suffix}")
     self.close_menu()
+    self.suffix_left = if c.suffix.ends_with("/") || c.suffix.ends_with(" ") {
+      Some((self.edit.content(), self.edit.cursor, c.suffix))
+    } else { None }
   }
 
   let close_menu = (self: mut) -> void => {
+    self.refreshing = false
     self.offered = []
     self.menu = []
     self.chosen = 0
@@ -275,10 +342,12 @@ impl CommandLine {
       desc_w = desc_w.max(c.description.len().min(MENU_DESCRIPTION))
     }
     let gap = if desc_w > 0 { desc_w + 2 } else { 0 }
-    let width = (shown_w + 2 + gap).min(wrap.cols)
+    let searching = self.searching != None
+    // The history search's list is the box's width, from its first column.
+    let width = if searching { wrap.cols } else { (shown_w + 2 + gap).min(wrap.cols) }
     let (start, _) = shell_word_at(self.edit.text, self.edit.cursor)
     let (_, col) = position(self.edit.text, wrap, start)
-    let left = col.min(wrap.cols - width).max(0)
+    let left = if searching { 0 } else { col.min(wrap.cols - width).max(0) }
     let under = cell_pos(at, row_count(self.edit.text, wrap), left)
     let top = if at.menu_above {
       Vec2 { x: under.x, y: at.origin.y - at.lift - f32(self.menu_rows()) * at.cell.y }
@@ -345,6 +414,7 @@ impl CommandLine {
 
   /// Run a command: remember it, and start an empty line.
   pub let submitted = (self: mut, command: string) -> void => {
+    self.searching = None
     self.close_menu()
     self.pending = None
     if command.trim() != "" && (self.history.len() == 0 || self.history[self.history.len() - 1] != command) {
@@ -396,10 +466,15 @@ impl CommandLine {
         fx >= f32(menu_col) &&
         fx < f32(menu_col + width)
       if inside {
-        if is_mouse_clicked(0) { return self.apply(self.menu[self.menu_top + k]) }
+        if is_mouse_clicked(0) {
+          if self.searching != None { return self.end_search(Some(self.menu_top + k)) }
+          return self.apply(self.menu[self.menu_top + k])
+        }
         return
       }
-      if is_mouse_clicked(0) { self.close_menu() }
+      if is_mouse_clicked(0) {
+        if self.searching != None { self.end_search(None) } else { self.close_menu() }
+      }
     }
     let over = is_window_hovered() && row >= 0
     if over { set_mouse_cursor(MOUSE_CURSOR_TEXT_INPUT) }
@@ -443,6 +518,18 @@ impl CommandLine {
     let command = if mac { mods.command } else { ctrl && shift }
     // A word at a time: ⌥ on a Mac, Ctrl elsewhere.
     let by_word = if mac { mods.alt } else { ctrl }
+    if self.searching != None { return self.search_keys(
+      wrap,
+      mac,
+      shift,
+      ctrl,
+      command,
+      by_word
+    ) }
+    if ctrl && !shift && is_key_pressed(KEY_R) {
+      self.start_search()
+      return Nothing
+    }
     if self.menu.len() > 0 {
       if is_key_pressed(KEY_DOWN_ARROW) || (is_key_pressed(KEY_TAB) && !shift) { self.choose(1); return Nothing }
       if is_key_pressed(KEY_UP_ARROW) || (is_key_pressed(KEY_TAB) && shift) { self.choose(-1); return Nothing }
@@ -459,8 +546,19 @@ impl CommandLine {
       let text_before = self.edit.content()
       let cursor_before = self.edit.cursor
       let outcome = self.edit_keys(wrap, mac, shift, ctrl, command, by_word)
-      if self.edit.content() != text_before { self.narrow() }
-      else if self.edit.cursor != cursor_before { self.close_menu() }
+      if self.edit.content() != text_before {
+        self.narrow()
+        // And the shell asked again, for its own matching of the word as it now is.
+        let asked = match outcome {
+          Nothing => self.menu.len() > 0,
+          _ => false,
+        }
+        if asked {
+          self.pending = Some((self.edit.content(), self.edit.cursor))
+          self.refreshing = true
+          return Complete(self.edit.content(), self.edit.cursor)
+        }
+      } else if self.edit.cursor != cursor_before { self.close_menu() }
       return outcome
     }
     if is_key_pressed(KEY_TAB) && !ctrl && !command {
@@ -545,7 +643,110 @@ impl CommandLine {
     Nothing
   }
 
-  let type_text = (self: mut, s: string) -> void => self.edit.type_text(s)
+  // Typing — and, right after a completion, its suffix taken back when what is typed would
+  // double it or end the word anyway, as zsh does (`AUTO_REMOVE_SLASH`): a `/` before a `/`,
+  // a blank or `; | & )`, a space before a blank or `; | & )`.
+  let type_text = (self: mut, s: string) -> void => {
+    match self.suffix_left {
+      Some((text, cursor, suffix)) => {
+        if text == self.edit.content() &&
+          cursor == self.edit.cursor &&
+          s != "" &&
+          suffix_gives_way(
+            suffix,
+            s.slice(0, 1)
+          ) { self.edit.backspace() }
+      },
+      None => {},
+    }
+    self.suffix_left = None
+    self.edit.type_text(s)
+  }
+
+  // ── History search ───────────────────────────────────────────────────────
+
+  // Ctrl+R: the history's matches for what the editor holds, the newest chosen.
+  let start_search = (self: mut) -> void => {
+    self.close_menu()
+    self.searching = Some(self.edit.content())
+    self.search()
+  }
+
+  // The menu as the history's commands the query is in — case aside — each once, the newest
+  // last (nearest the box) and chosen.
+  let search = (self: mut) -> void => {
+    let query = self.edit.content().to_ascii_lower()
+    var newest_first: []Completion = []
+    var seen: []string = []
+    var k = self.history.len() - 1
+    while k >= 0 {
+      let entry = self.history[k]
+      if !seen.contains(entry) && entry.to_ascii_lower().contains(query) {
+        seen.push(entry)
+        newest_first.push(Completion {
+          prefix: "",
+          insert: entry,
+          suffix: "",
+          shown: entry.replace("\n", " ⏎ "),
+          description: "",
+        })
+      }
+      k -= 1
+    }
+    self.menu = [i in 0..<newest_first.len() | newest_first[newest_first.len() - 1 - i]]
+    self.chosen = (self.menu.len() - 1).max(0)
+    self.menu_top = (self.menu.len() - MENU_ROWS).max(0)
+  }
+
+  // The search ended: match `chosen` put in the editor, or (`None`) the text from before.
+  let end_search = (self: mut, chosen: Maybe<i64>) -> void => {
+    let before = self.searching ?? ""
+    self.searching = None
+    let text = match chosen {
+      Some(k) => if k < self.menu.len() { self.menu[k].insert } else { before },
+      None => before,
+    }
+    self.close_menu()
+    self.edit.set_content(text)
+  }
+
+  // A key during the search: ↑ or Ctrl+R an older match, ↓ or Ctrl+S a newer, Return or Tab
+  // the chosen one into the editor, Escape or Ctrl+G back to what was there; anything else
+  // edits the query.
+  let search_keys = (
+    self: mut,
+    wrap: Wrap,
+    mac: bool,
+    shift: bool,
+    ctrl: bool,
+    command: bool,
+    by_word: bool
+  ) -> Outcome => {
+    let has = self.menu.len() > 0
+    if is_key_pressed(KEY_UP_ARROW) || (ctrl && is_key_pressed(KEY_R)) {
+      if has { self.choose(-1) }
+      return Nothing
+    }
+    if is_key_pressed(KEY_DOWN_ARROW) || (ctrl && is_key_pressed(KEY_S)) {
+      if has { self.choose(1) }
+      return Nothing
+    }
+    if is_key_pressed(KEY_ENTER) || is_key_pressed(KEY_KEYPAD_ENTER) || is_key_pressed(KEY_TAB) {
+      self.end_search(if has { Some(self.chosen) } else { None })
+      return Nothing
+    }
+    if is_key_pressed(KEY_ESCAPE) || (ctrl && is_key_pressed(KEY_G)) {
+      self.end_search(None)
+      return Nothing
+    }
+    let before = self.edit.content()
+    let outcome = self.edit_keys(wrap, mac, shift, ctrl, command, by_word)
+    if self.edit.content() != before { self.search() }
+    match outcome {
+      Submit(_) => Nothing,
+      other => other,
+    }
+  }
 
   // ↑ from the first row: the entry before the one shown, the user's own text kept.
   let older = (self: mut) -> void => {
@@ -570,12 +771,15 @@ impl CommandLine {
     let text = self.edit.text
     let (a, b) = self.edit.selection()
     let places = layout(text, at.wrap)
-    // Text in runs of runes a cell wide on one row; a wide rune alone, across its two
-    // cells, as the grid draws one — a run's glyphs are spaced by the font, not the grid.
+    let kind = kinds(text)
+    // Text in runs of one kind, of runes a cell wide on one row; a wide rune alone, across
+    // its two cells, as the grid draws one — a run's glyphs are spaced by the font, not the
+    // grid.
     var run: []u8 = []
     var run_row = 0
     var run_col = 0
     var run_end = 0
+    var run_colour = style.text
     for k in 0..<text.len() {
       let (row, col) = places[k]
       let r = text[k]
@@ -590,31 +794,37 @@ impl CommandLine {
           style.selection
         )
       }
-      let apart = r == '\n' || w == 2 || row != run_row || col != run_end
+      let paint = colour_of(style, kind[k])
+      let apart = r == '\n' ||
+        w == 2 ||
+        row != run_row ||
+        col != run_end ||
+        paint != run_colour
       if apart && run.len() > 0 {
-        flush(list, at, run_row, run_col, run, style.text)
+        flush(list, at, run_row, run_col, run, run_colour)
         run = []
       }
       if r != '\n' {
         if run.len() == 0 {
           run_row = row
           run_col = col
+          run_colour = paint
         }
         push_rune(run, i64(r))
         run_end = col + w
         if w == 2 {
-          flush(list, at, run_row, run_col, run, style.text)
+          flush(list, at, run_row, run_col, run, run_colour)
           run = []
         }
       }
     }
-    flush(list, at, run_row, run_col, run, style.text)
+    flush(list, at, run_row, run_col, run, run_colour)
     if focused {
       let (r, c) = position(text, at.wrap, self.edit.cursor)
       let p = cell_pos(at, r, c)
       list.add_rect_filled(p, Vec2 { x: p.x + 2.0, y: p.y + at.cell.y }, style.caret)
     }
-    if self.menu.len() > 0 { self.draw_menu(at, list, style) }
+    if self.menu_rows() > 0 { self.draw_menu(at, list, style) }
   }
 
   // The completion menu: a row each, the chosen one marked, descriptions fainter.
@@ -630,6 +840,16 @@ impl CommandLine {
     )
     var shown_w = 0
     for c in self.menu { shown_w = shown_w.max(c.shown.len().min(MENU_SHOWN)) }
+    if self.menu.len() == 0 {
+      list.add_text(
+        Vec2 { x: top.x + at.cell.x, y: top.y + at.text_dy },
+        style.faint,
+        "No command in the history has that in it"
+      )
+      return
+    }
+    // A history entry is shown as wide as the list allows; a completion to its limit.
+    let limit = if self.searching != None { width - 2 } else { MENU_SHOWN }
     for k in 0..<shown_rows {
       let c = self.menu[self.menu_top + k]
       let y = top.y + f32(k) * at.cell.y
@@ -641,10 +861,7 @@ impl CommandLine {
           4.0
         )
       }
-      let shown = if c.shown.len() > MENU_SHOWN { c.shown.slice(
-        0,
-        MENU_SHOWN
-      ) } else { c.shown }
+      let shown = if c.shown.len() > limit { c.shown.slice(0, limit) } else { c.shown }
       list.add_text(Vec2 { x: top.x + at.cell.x, y: y + at.text_dy }, style.text, shown)
       if c.description != "" {
         let room = width - shown_w - 4
@@ -662,6 +879,17 @@ impl CommandLine {
       }
     }
   }
+}
+
+/// The colour a rune of `kind` is drawn in.
+let colour_of = pure (style: Style, kind: Kind) -> u32 => match kind {
+  Plain => style.text,
+  Command => style.command,
+  Option => style.option,
+  Quoted => style.quoted,
+  Variable => style.variable,
+  Operator => style.operator,
+  Comment => style.faint,
 }
 
 let cell_pos = pure (at: Place, row: i64, col: i64) -> Vec2 => Vec2 {
@@ -698,6 +926,18 @@ pub let push_rune = (bytes: mut []u8, c: i64) -> void => {
     bytes.push(u8(0x80 | ((c >> 6) & 0x3F)))
     bytes.push(u8(0x80 | (c & 0x3F)))
   }
+}
+
+/// Whether a completion's auto-added `suffix` gives way to `next`, the character typed after
+/// it: a `/` to another, and either to a blank or a character that ends a word.
+let suffix_gives_way = pure (suffix: string, next: string) -> bool => {
+  let ends_word = next == " " ||
+    next == "\t" ||
+    next == ";" ||
+    next == "|" ||
+    next == "&" ||
+    next == ")"
+  if suffix.ends_with("/") { next == "/" || ends_word } else { ends_word }
 }
 
 /// What a completion makes of its word, before its suffix: what typing is compared with.

@@ -1,0 +1,197 @@
+module editor
+//! The command line's syntax, for colouring it: each rune's kind, from a lexer of the shell
+//! language small enough to be wrong only quietly — it never decides anything but a colour.
+//!
+//! **What it knows**: words and blanks; `'…'`, `"…"` and `$'…'` quoting, and `\` escapes;
+//! `$NAME`, `${…}` and `$(`; the operators `| & ; ( ) < >` and their doubles; `#` comments at
+//! a word's start. A command is the first word of each command — after a separator, `(` or
+//! `$(` — not counting `NAME=value` assignments before it, and the word after `sudo`, `time`
+//! and their like, or after a keyword that begins a command (`then`, `do`, `!`), is one too.
+//! A word after `<` or `>` is a file, never a command.
+
+/// What a rune of the command line is part of.
+pub data Kind = Plain | Command | Option | Quoted | Variable | Operator | Comment
+
+/// Each rune of `text`'s kind, as many as runes.
+pub let kinds = pure (text: []rune) -> []Kind => {
+  var out: []Kind = [Plain; text.len()]
+  var at_command = true
+  var after_redirect = false
+  var i = 0
+  while i < text.len() {
+    let r = text[i]
+    if r == ' ' || r == '\t' {
+      i += 1
+    } else if r == '\n' || r == ';' || r == '|' || r == '&' || r == '(' {
+      // A separator: what follows is a command. `|&`, `&&`, `||`, `;;` are one each.
+      out[i] = Operator
+      i += 1
+      while i < text.len() && (text[i] == '|' || text[i] == '&' || text[i] == ';') {
+        out[i] = Operator
+        i += 1
+      }
+      at_command = true
+      after_redirect = false
+    } else if r == ')' {
+      out[i] = Operator
+      i += 1
+    } else if r == '<' || r == '>' {
+      // A redirection, its target a file: `>`, `>>`, `<`, `<<`, `>&`, `<&`.
+      out[i] = Operator
+      i += 1
+      while i < text.len() && (text[i] == '<' || text[i] == '>' || text[i] == '&') {
+        out[i] = Operator
+        i += 1
+      }
+      after_redirect = true
+    } else if r == '#' {
+      while i < text.len() && text[i] != '\n' {
+        out[i] = Comment
+        i += 1
+      }
+    } else {
+      let end = word_end(text, i)
+      let word = text_of(text.slice(i, end))
+      let base = if after_redirect { Plain }
+      else if at_command && !is_assignment(word) { Command }
+      else if r == '-' { Option }
+      else { Plain }
+      mark_word(text, i, end, base, out)
+      if after_redirect { after_redirect = false }
+      else if at_command && !is_assignment(word) { at_command = PREFIXES.contains(word) }
+      i = end
+    }
+  }
+  out
+}
+
+/// Words after which the next is a command too: those that run one, and keywords that
+/// begin one.
+const PREFIXES: []string = [
+  "sudo", "doas", "time", "nohup", "exec", "command", "builtin", "env", "nice", "xargs",
+  "then", "do", "else", "elif", "if", "while", "until", "!", "{",
+]
+
+/// Where the word starting at `start` ends: at an unquoted blank or operator.
+let word_end = pure (text: []rune, start: i64) -> i64 => {
+  var i = start
+  var quote: rune = ' '
+  while i < text.len() {
+    let r = text[i]
+    if quote != ' ' {
+      if r == '\\' && quote == '"' && i + 1 < text.len() { i += 1 }
+      else if r == quote { quote = ' ' }
+    } else if r == '\\' && i + 1 < text.len() {
+      i += 1
+    } else if r == '\'' || r == '"' {
+      quote = r
+    } else if r == '$' && i + 1 < text.len() && text[i + 1] == '(' {
+      // `$(…)` is part of the word, to its matching `)`.
+      i = matching_paren(text, i + 1)
+    } else if r == ' ' || r == '\t' || r == '\n' || r == ';' || r == '|' || r == '&' || r == '<' || r == '>' || r == '(' || r == ')' {
+      return i
+    }
+    i += 1
+  }
+  text.len()
+}
+
+/// The `)` matching the `(` at `open`, or the text's last rune.
+let matching_paren = pure (text: []rune, open: i64) -> i64 => {
+  var depth = 0
+  var i = open
+  while i < text.len() {
+    if text[i] == '(' { depth += 1 }
+    else if text[i] == ')' {
+      depth -= 1
+      if depth == 0 { return i }
+    }
+    i += 1
+  }
+  text.len() - 1
+}
+
+/// Runes `start` to `end` (a word) marked: `base` for the word, its quoted parts `Quoted`,
+/// its variables `Variable` (inside double quotes too).
+let mark_word = (
+  text: []rune,
+  start: i64,
+  end: i64,
+  base: Kind,
+  out: mut []Kind
+) -> void => {
+  var i = start
+  var quote: rune = ' '
+  while i < end {
+    let r = text[i]
+    if quote == '\'' {
+      out[i] = Quoted
+      if r == '\'' { quote = ' ' }
+      i += 1
+    } else if r == '$' && i + 1 < end && quote != '\'' && text[i + 1] != '(' && text[i + 1] != '\'' {
+      let v = variable_end(text, i, end)
+      for k in i..<v { out[k] = Variable }
+      i = v
+    } else if quote == '"' {
+      out[i] = Quoted
+      if r == '\\' && i + 1 < end {
+        out[i + 1] = Quoted
+        i += 1
+      } else if r == '"' { quote = ' ' }
+      i += 1
+    } else if r == '\'' || r == '"' {
+      out[i] = Quoted
+      quote = r
+      i += 1
+    } else if r == '$' && i + 1 < end && text[i + 1] == '\'' {
+      // `$'…'`, ANSI-C quoting.
+      out[i] = Quoted
+      out[i + 1] = Quoted
+      quote = '\''
+      i += 2
+    } else if r == '$' && i + 1 < end && text[i + 1] == '(' {
+      // `$(…)`: a command line of its own, its kinds as one's.
+      out[i] = Operator
+      out[i + 1] = Operator
+      let close = matching_paren(text, i + 1).min(end - 1)
+      let closed = close > i + 1 && text[close] == ')'
+      let inner_end = if closed { close } else { end }
+      let inner = kinds(text.slice(i + 2, inner_end))
+      for k in 0..<inner.len() { out[i + 2 + k] = inner[k] }
+      if closed { out[close] = Operator }
+      i = inner_end + (if closed { 1 } else { 0 })
+    } else {
+      out[i] = base
+      if r == '\\' && i + 1 < end {
+        out[i + 1] = base
+        i += 1
+      }
+      i += 1
+    }
+  }
+}
+
+/// Where the variable starting with the `$` at `start` ends, within the word ending at
+/// `end`: `${…}`, a name, or one special character (`$?`, `$1`, `$@`).
+let variable_end = pure (text: []rune, start: i64, end: i64) -> i64 => {
+  var i = start + 1
+  if text[i] == '{' {
+    while i < end && text[i] != '}' { i += 1 }
+    return (i + 1).min(end)
+  }
+  if text[i].is_ascii_alpha() || text[i] == '_' {
+    while i < end && (text[i].is_ascii_alpha() || text[i].is_ascii_digit() || text[i] == '_') { i += 1 }
+    return i
+  }
+  i + 1
+}
+
+/// Whether `word` is an assignment, `NAME=value`, which may come before a command.
+let is_assignment = pure (word: string) -> bool => {
+  let Some(eq) = word.index("=") else { return false }
+  if eq == 0 { return false }
+  for r in word.slice(0, eq).to_runes() {
+    if !(r.is_ascii_alpha() || r.is_ascii_digit() || r == '_') { return false }
+  }
+  true
+}

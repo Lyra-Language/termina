@@ -44,6 +44,7 @@ import bindings.imgui.{
   KEY_W,
   KEY_3,
   KEY_9,
+  KEY_R,
   KEY_EQUAL,
   KEY_MINUS,
   KEY_0,
@@ -263,6 +264,41 @@ let check_history = (host: Host) -> i64 => {
   line.submitted("echo new")
   press(host, line, [], KEY_UP_ARROW)
   failed += check("a run command joins the history", line.edit.content(), "echo new")
+
+  // Ctrl+R: the history's commands with the query in them, case aside, each once, the
+  // newest last and chosen; ↑ an older one; Return puts it in. Nothing matching shows a
+  // row saying so; Escape puts back what was there.
+  var search = command_line(["make", "git status", "make test", "ls", "make test"])
+  type_text(host, search, "draft")
+  press(host, search, [MOD_CTRL], KEY_R)
+  // What was typed is the query: nothing has "draft" in it.
+  failed += check(
+    "what was typed is the query",
+    "${search.is_searching()}|${shown(search)}",
+    "true|"
+  )
+  press(host, search, [MOD_CTRL], KEY_A)
+  press(host, search, [MOD_CTRL], KEY_K)
+  failed += check("all of it, each once", shown(search), "make git status ls make test")
+  failed += check("the newest chosen", chosen(search), "make test")
+  type_text(host, search, "MA")
+  failed += check("the query narrows it", shown(search), "make make test")
+  press(host, search, [], KEY_UP_ARROW)
+  press(host, search, [], KEY_ENTER)
+  failed += check(
+    "return puts it in",
+    "${search.edit.content()}|${search.is_searching()}",
+    "make|false"
+  )
+  press(host, search, [MOD_CTRL], KEY_R)
+  type_text(host, search, "zz")
+  failed += check("nothing matches", "${search.menu_rows()}|${shown(search)}", "1|")
+  press(host, search, [], KEY_ESCAPE)
+  failed += check(
+    "escape puts it back",
+    "${search.edit.content()}|${search.is_searching()}",
+    "make|false"
+  )
   failed
 }
 
@@ -325,11 +361,14 @@ let check_completion = (host: Host) -> i64 => {
   let _ = press(host, closing, [], KEY_TAB)
   closing.completed([offer("", "xa", " ", "xa", ""), offer("", "xb", " ", "xb", "")])
   type_text(host, closing, "y")
+  // Nothing starts so here, but the shell is asked again; its answer, none, closes it.
   failed += check(
-    "typing closes, and types",
-    "${closing.menu_rows()}|${closing.edit.content()}",
-    "0|xy"
+    "typing types, and asks again",
+    "${closing.edit.content()}|${closing.pending != None}",
+    "xy|true"
   )
+  closing.completed([])
+  failed += check("no answer closes", "${closing.menu_rows()}", "0")
 
   // Typing narrows the menu from the list zsh gave; backspace widens it again; the choice
   // stays chosen while it is there.
@@ -370,10 +409,31 @@ let check_completion = (host: Host) -> i64 => {
   let _ = press(host, gone, [], KEY_TAB)
   gone.completed([offer("", "src", "/", "src", ""), offer("", "sub", "/", "sub", "")])
   type_text(host, gone, "q")
+  gone.completed([])
   failed += check(
     "nothing left closes",
     "${gone.menu_rows()}|${gone.edit.content()}",
     "0|ls sq"
+  )
+  // The shell's answer to typing is the menu as given: a match the typed word is not the
+  // start of — a case-insensitive matcher's — shown, and nothing put in.
+  var matched = command_line([])
+  type_text(host, matched, "cd d")
+  let _ = press(host, matched, [], KEY_TAB)
+  matched.completed([
+    offer("", "Documents", "/", "Documents", ""),
+    offer("", "dev", "/", "dev", "")
+  ])
+  type_text(host, matched, "o")
+  failed += check("narrowed meanwhile, case aside", shown(matched), "Documents")
+  matched.completed([
+    offer("", "Documents", "/", "Documents", ""),
+    offer("", "Downloads", "/", "Downloads", "")
+  ])
+  failed += check(
+    "the shell's answer is the menu",
+    "${shown(matched)}|${matched.edit.content()}",
+    "Documents Downloads|cd do"
   )
   var full = command_line([])
   type_text(host, full, "ls s")
@@ -423,6 +483,27 @@ let check_completion = (host: Host) -> i64 => {
   let _ = frame_at(host, above, box_place)
   failed += check("a menu above, clicked", above.edit.content(), "ls sub/")
   for _ in 0..<30 { let _ = frame_at(host, above, box_place) }
+
+  // A completion's suffix gives way to what would double it or end the word: its `/` to a
+  // `/`, its space to a `|`; a letter keeps it.
+  var slash = command_line([])
+  type_text(host, slash, "cd s")
+  let _ = press(host, slash, [], KEY_TAB)
+  slash.completed([offer("", "sub", "/", "sub", "")])
+  type_text(host, slash, "/x")
+  failed += check("a / typed after a completed /", slash.edit.content(), "cd sub/x")
+  var piped = command_line([])
+  type_text(host, piped, "cat pl")
+  let _ = press(host, piped, [], KEY_TAB)
+  piped.completed([offer("", "plain.txt", " ", "plain.txt", "")])
+  type_text(host, piped, "|")
+  failed += check("a | after a completed space", piped.edit.content(), "cat plain.txt|")
+  var spaced_on = command_line([])
+  type_text(host, spaced_on, "cat pl")
+  let _ = press(host, spaced_on, [], KEY_TAB)
+  spaced_on.completed([offer("", "plain.txt", " ", "plain.txt", "")])
+  type_text(host, spaced_on, "x")
+  failed += check("a letter keeps the space", spaced_on.edit.content(), "cat plain.txt x")
 
   // An answer for a line edited since is dropped.
   var stale = command_line([])
@@ -1303,6 +1384,11 @@ let frame_at = (host: Host, line: mut CommandLine, at: Place) -> Outcome => {
     menu: 0xFF202020,
     menu_chosen: 0xFF404040,
     faint: 0xFF808080,
+    command: 0xFF00FF00,
+    option: 0xFFFFFF00,
+    quoted: 0xFF00FFFF,
+    variable: 0xFFFF00FF,
+    operator: 0xFFFF0000,
   }
   let outcome = line.update(at, get_window_draw_list(), style, true)
   end()
@@ -1323,6 +1409,11 @@ let frame = (host: Host, line: mut CommandLine) -> Outcome => {
     menu: 0xFF202020,
     menu_chosen: 0xFF404040,
     faint: 0xFF808080,
+    command: 0xFF00FF00,
+    option: 0xFFFFFF00,
+    quoted: 0xFF00FFFF,
+    variable: 0xFFFF00FF,
+    operator: 0xFFFF0000,
   }
   let outcome = line.update(PLACE, get_window_draw_list(), style, true)
   end()

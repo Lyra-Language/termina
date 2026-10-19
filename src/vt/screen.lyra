@@ -110,8 +110,8 @@ pub struct Completion {
 
 /// Where a shell with Sulafat's integration is (OSC 133 — `shell/shell.lyra`).
 pub data Mark =
-  /// A prompt is being drawn (`A`).
-  PromptStart
+  /// A prompt is being drawn (`A`), from this absolute line and column.
+  PromptStart(i64, i64)
   /// The prompt is drawn, and the command typed begins at this absolute line and column
   /// (`B`): where the command line's editor goes.
   | InputStart(i64, i64)
@@ -456,7 +456,10 @@ impl Screen {
   // An OSC 133 mark. Input begins where the cursor is — on the next line when the prompt
   // filled the last column and the wrap is still pending.
   let shell_mark = (self: mut, mark: string) -> void => {
-    if mark.starts_with("A") { self.marks.push(PromptStart) }
+    if mark.starts_with("A") {
+      if self.wrap_pending { self.marks.push(PromptStart(self.cursor_line() + 1, 0)) }
+      else { self.marks.push(PromptStart(self.cursor_line(), self.x)) }
+    }
     else if mark.starts_with("B") {
       if self.wrap_pending { self.marks.push(InputStart(self.cursor_line() + 1, 0)) }
       else { self.marks.push(InputStart(self.cursor_line(), self.x)) }

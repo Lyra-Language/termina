@@ -46,6 +46,7 @@ shell ⇄ bindings.pty ──bytes──▶ vt.Parser ──[]Action──▶ vt
 | `src/menutest.lyra` | the menu bar installed and read back |
 | `src/shell/shell.lyra` | shell integration (zsh's `.zshenv` through `ZDOTDIR`, bash's rc file through `--rcfile`): the marks, Tab's completion widget and its request file, the history files, what Return sends |
 | `src/editor/editor.lyra` | the command line's editor — text, caret, selection, motions, words, undo, layout; **pure** |
+| `src/editor/syntax.lyra` | the command line's syntax for colouring: each rune's kind (command, option, quoted, variable, operator, comment); **pure** |
 | `src/ui/modifiers.lyra` | the modifier keys as pressed — ImGui's macOS Ctrl/⌘ swap undone |
 | `src/ui/typeahead.lyra` | keys typed ahead, raw, made into lines (Backspace, Ctrl+U/W applied; escapes dropped) |
 | `src/ui/command_line.lyra` | the editor at the prompt: keys and mouse into editor calls, history, the completion menu, drawing |
@@ -166,7 +167,9 @@ shell ⇄ bindings.pty ──bytes──▶ vt.Parser ──[]Action──▶ vt
   does. The grid draws only the lines above the prompt's, and the page counts the box's height so the
   last line rests on it at the bottom; the box is drawn opaque at the view's foot
   (`origin.y + scroll + avail.y`), wherever the view is scrolled, and grid clicks stop at
-  its top. While a program runs there is no box. zsh's echo of the command still lands in
+  its top. **While a command sent from it runs, the box stays, greyed**, showing the
+  command's first line — the keys are the program's, as in any terminal — but not on the
+  alternate screen, where a full-screen program has the window. zsh's echo of the command still lands in
   the transcript as `prompt command`.
 - **The command line is Sulafat's only between `B` and the next mark.** zsh and bash report
   `A`/`B`/`C`/`D` (OSC 133) through `shell/shell.lyra`'s hooks; at `B`, `Mode` becomes
@@ -188,9 +191,17 @@ shell ⇄ bindings.pty ──bytes──▶ vt.Parser ──[]Action──▶ vt
   takes several lines as one command and echoes it into the transcript where the editor
   was. The shell turns the mode on just *after* the `B` mark — a check that answers `B` at
   once must wait for it (`check_shell`).
-- **The `B` mark is the end of `PS1`**, re-added at each prompt by a precmd hook that moves
-  itself last, so a theme's own hook has built `PS1` first. A theme that redraws the
-  prompt asynchronously is untested.
+- **The `A` mark is the start of `PS1` and `B` its end**, re-added at each prompt by a
+  precmd hook that moves itself last (bash: the last of `PROMPT_COMMAND`), so a theme's own
+  hook has built `PS1` first. `A` in `PS1`, not printed by the hook, falls where the prompt
+  is drawn — after zsh's `PROMPT_SP`, partway along a line that output did not end — and
+  carries that line and column (`PromptStart`). A theme that redraws the prompt
+  asynchronously is untested.
+- **The box shows the prompt from `A` to `B`**: up to `PROMPT_ROWS` lines (a prompt of
+  several lines whole), the first from `A`'s column — output before it on that line stays
+  in the grid, drawn up to there — and a right prompt (zsh's `RPROMPT`: what follows the
+  input column on `B`'s line, the shell's own input being empty) right-aligned in the last
+  row. An `A` repeated with its line (a redraw) does not clear `Session.sent_from`.
 - **Tab completion is the shell's, run in the live shell.** Sulafat writes `caret\ntext` to
   the window's request file (`SULAFAT_COMPLETE_FILE`) and sends `\e[9898~`, bound to a widget
   that reports matches as OSC 7770 (`b`, `m;prefix;insert;suffix;shown;description`
@@ -206,10 +217,23 @@ shell ⇄ bindings.pty ──bytes──▶ vt.Parser ──[]Action──▶ vt
   `compgen`, counting on readline's dequoting too, which a widget does not have. bash's
   matches have no descriptions; file names are `%q`-quoted, a directory gets `/`. **Sulafat finds the word itself** (`editor.shell_word_at`, quotes and escapes
   included): inside quotes zsh measures positions with the quote removed. The answer for a
-  line edited since the request is dropped. **Typing narrows the menu locally** from the
-  list zsh gave (`CommandLine.narrow`, by exact start; ⌫ widens it), keeping the choice
-  chosen; it closes when nothing is left, the word is typed in full, or the caret moves off. `compinit` is loaded only if the user's
-  config has not, its dump in Sulafat's cache.
+  line edited since the request is dropped. **Typing asks the shell again** (`refreshing`):
+  its answer is the menu as given — a case-insensitive or substring `matcher-list`
+  honoured — nothing put in; meanwhile the menu narrows locally (`CommandLine.narrow`, by
+  start, case aside, kept when nothing starts so), keeping the choice chosen. It closes
+  when the shell finds nothing, the word is typed in full, or the caret moves off. **A
+  completion's `/` or space gives way** to the next key when that would double it or end
+  the word (`suffix_left`): zsh's `AUTO_REMOVE_SLASH`. `compinit` is loaded only if the
+  user's config has not, its dump in Sulafat's cache.
+- **The command line is coloured by its syntax** (`editor.kinds`, a small lexer that only
+  ever chooses a colour): commands, options, quoted text, variables, operators and comments,
+  in the theme's ANSI green, cyan, yellow, magenta, blue and its faint grey. `$(…)` is
+  lexed as a command line of its own.
+- **Ctrl+R searches the history** (`CommandLine.searching`): the editor's text is the query,
+  the menu — the box's width — the history's commands with it in them, case aside, each once,
+  the newest last and chosen; ↑/Ctrl+R older, ↓/Ctrl+S newer, Return or Tab puts one in,
+  Escape or Ctrl+G puts back what was there. A bash compspec's `-C` command is run as
+  readline runs it.
 - **Keys typed while a command runs go to it; what it leaves unread is Sulafat's.** At each
   new line zsh's `zle-line-init` (Sulafat's, running the user's first) reads what is waiting
   — before zsh's own line editor would take it into a buffer hidden under Sulafat's — and
@@ -236,6 +260,8 @@ shell ⇄ bindings.pty ──bytes──▶ vt.Parser ──[]Action──▶ vt
    then the command line as Sulafat's editor — multi-line, soft wrap, the mouse (click,
    drag, double-click a word, triple-click a line), word and line motions, undo, the
    clipboard, history from `~/.zsh_history`, Tab completion (zsh's own, in a menu); bash's
-   integration and its completion (10/19). Next: syntax colouring, Ctrl+R history search.
+   integration and its completion, syntax colouring, Ctrl+R history search, prompts of
+   several lines and right prompts in the box, the box kept, greyed, while a command runs
+   (10/19).
 
 Open work is in `todo.md`; finished work in `done.md`.

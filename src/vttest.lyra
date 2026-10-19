@@ -7,7 +7,23 @@
 import bindings.pty.{ spawn, close }
 import bindings.sdl3.{ platform }
 import shell.{ integration, submission, completion_request, parse_bash_history }
-import editor.{ editor, Editor, Wrap, position, index_at, rune_at, shell_word_at }
+import editor.{
+  editor,
+  Editor,
+  Wrap,
+  position,
+  index_at,
+  rune_at,
+  shell_word_at,
+  kinds,
+  Plain,
+  Command,
+  Option,
+  Quoted,
+  Variable,
+  Operator,
+  Comment,
+}
 import std.env.{ lookup }
 import std.io.{ create_dir_all, write_file, remove_file, is_executable }
 import std.path
@@ -59,6 +75,7 @@ let main = () -> u8 => {
   failed += check_pty()
   failed += check_typing()
   failed += check_editor()
+  failed += check_syntax()
   failed += check_marks()
   failed += check_words()
   failed += check_completion_reports()
@@ -97,6 +114,33 @@ let installed = (paths: []string, what: string) -> bool => {
   println("vttest: skipped ${what}: ${paths.join(" or ")} not installed")
   false
 }
+
+// The command line's colouring: each rune's kind, a letter each — P plain, C command, O
+// option, Q quoted, V variable, X operator, # comment.
+let check_syntax = () -> i64 => {
+  var failed = 0
+  failed += check("a command and options", syntax("ls -la x"), "CCPOOOPP")
+  failed += check("quotes and a variable", syntax("echo \"a $B\" 'c'"), "CCCCPQQQVVQPQQQ")
+  failed += check("a pipe begins a command", syntax("a | grep x"), "CPXPCCCCPP")
+  failed += check("an assignment before it", syntax("X=1 make"), "PPPPCCCC")
+  failed += check("sudo's command", syntax("sudo rm -f"), "CCCCPCCPOO")
+  failed += check("a redirection's file", syntax("cat >out"), "CCCPXPPP")
+  failed += check("a comment", syntax("ls # hi"), "CCP####")
+  failed += check("a command inside $(…)", syntax("echo $(pwd)"), "CCCCPXXCCCX")
+  failed += check("braces and $?", syntax(`x ${A}$?`), "CPVVVVVV")
+  failed += check("an unclosed $(", syntax("x $(pw"), "CPXXCC")
+  failed
+}
+
+let syntax = pure (text: string) -> string => [k in kinds(text.to_runes()) | match k {
+  Plain => "P",
+  Command => "C",
+  Option => "O",
+  Quoted => "Q",
+  Variable => "V",
+  Operator => "X",
+  Comment => "#",
+}].join("")
 
 let check_parser = () -> i64 => {
   var failed = 0
@@ -677,6 +721,13 @@ let check_marks = () -> i64 => {
   failed += check("bracketed paste", "${s.bracketed_paste}", "true")
   s.apply(p.feed("\e]133;C\x07out\r\n\e]133;D;3\x07".encode_utf8()))
   failed += check("run and end", "${describe_marks(s)}", "C D(3)")
+  // A prompt after output that did not end its line begins partway along it.
+  s.apply(p.feed("half\e]133;A\x07".encode_utf8()))
+  let starts = [m in s.take_marks() | match m {
+    PromptStart(l, c) => "${l - s.absolute(s.scrollback_len())},${c}",
+    _ => "",
+  }]
+  failed += check("where a prompt begins", starts.join(" "), "1,4")
   failed
 }
 
@@ -698,6 +749,8 @@ let check_shell = (shell: string) -> i64 => {
   var sent = false
   var at_prompt = false
   var from = (-1, -1)
+  var a_at = (-1, -1)
+  var b_line = -1
   var spins = 0
   var done = false
   while !done && spins < 3000000 {
@@ -720,8 +773,10 @@ let check_shell = (shell: string) -> i64 => {
               if sent { done = true } else {
                 at_prompt = true
                 from = (at, col)
+                b_line = at
               }
             },
+            PromptStart(at, col) => if !at_prompt { a_at = (at, col) },
             OutputStart => seen.push("C"),
             CommandEnd(status) => seen.push("D${status}"),
             _ => {},
@@ -738,6 +793,12 @@ let check_shell = (shell: string) -> i64 => {
     if t == "one" || t == "two" { output.push(t) }
   }
   var failed = check("${name} marks", seen.join(" "), "B C D1 B")
+  // A is the start of PS1: the prompt's first line, from its first column.
+  failed += check(
+    "${name}: A where the prompt begins",
+    "${a_at.1}|${a_at.0 <= b_line}",
+    "0|true"
+  )
   failed += check("${name} ran both lines", output.join(","), "one,two")
   failed
 }
@@ -1060,7 +1121,7 @@ let drawn_rows = pure (s: Screen) -> i64 =>
   [y in 0..<s.rows | screen_row(s, y) != "" | 1].len()
 
 let describe_marks = (s: mut Screen) -> string => [m in s.take_marks() | match m {
-  PromptStart => "A",
+  PromptStart(_, _) => "A",
   InputStart(line, col) => "B(${line},${col})",
   OutputStart => "C",
   CommandEnd(status) => "D(${status})",
