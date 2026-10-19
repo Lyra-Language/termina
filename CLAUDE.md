@@ -45,8 +45,24 @@ git tag v0.2.0 && git push origin v0.2.0   # a release: built, checked and publi
   `@rpath`), or in the archive's `lib/` (an rpath of `$ORIGIN/lib`, set by patchelf).
   Homebrew's is built for the Mac it runs on, and Ubuntu 24.04 has none.
 - **The Mac app runs on macOS 13 and later** (`MACOSX_DEPLOYMENT_TARGET`, read by clang,
-  SDL3's CMake and ImGui's build) and is **signed ad hoc, not notarized**: Gatekeeper asks
-  once. Linux archives run on glibc 2.39 and later (Ubuntu 24.04's).
+  SDL3's CMake and ImGui's build). Linux archives run on glibc 2.39 and later (Ubuntu
+  24.04's).
+- **The Mac app is signed with a Developer ID and notarized** when the repository has the
+  secrets below; without them, ad hoc, with a warning in the run and the release notes.
+  `package.sh` does it from `TERMINA_SIGN_IDENTITY` and `TERMINA_NOTARY_*`: the hardened
+  runtime with a secure timestamp, `notarytool` (its answer checked for `Accepted`, Apple's
+  log printed otherwise) and the ticket stapled. **The bundled SDL3 is signed with the same
+  identity**, or library validation refuses to load it ("different Team IDs").
+  **Not the App Store**: its sandbox would confine the user's shell and everything run
+  from it to the app's container.
+
+  | secret | what |
+  |---|---|
+  | `MACOS_CERTIFICATE_P12` | the Developer ID Application certificate and its key, exported as `.p12`, base64 (`base64 -i cert.p12 \| gh secret set MACOS_CERTIFICATE_P12`) |
+  | `MACOS_CERTIFICATE_PASSWORD` | the `.p12`'s password |
+  | `NOTARY_KEY_P8` | an App Store Connect API key (Developer role), the `.p8` file's text (`gh secret set NOTARY_KEY_P8 < AuthKey_….p8`) |
+  | `NOTARY_KEY_ID` | that key's id |
+  | `NOTARY_ISSUER_ID` | the account's issuer id (App Store Connect ▸ Users and Access ▸ Integrations) |
 
 ## Architecture
 
@@ -61,7 +77,7 @@ shell ⇄ bindings.pty ──bytes──▶ vt.Parser ──[]Action──▶ vt
 | file | what |
 |---|---|
 | `src/termina.lyra` | `main`: the ImGui host, the frame loop, the tabs and their bar, fonts |
-| `package.sh`, `tools/sdl3.sh` | a release archive with SDL3 inside, and SDL3 built from source for it (Releases, above) |
+| `package.sh`, `tools/sdl3.sh` | a release archive with SDL3 inside — the Mac app signed and notarized when given an identity and key — and SDL3 built from source for it (Releases, above) |
 | `assets/` | the icon: `termina.svg` the source; `Termina.icns` (the app's) and `termina.png` made from it (`assets/README.md`) |
 | `src/session/session.lyra` | one tab: its PTY, screen, `Mode` and command line; read each frame, drawn and given keys when shown |
 | `src/ui/tabs.lyra` | the tab bar (reorderable, its order read back) and the tab shortcuts |

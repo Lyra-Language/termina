@@ -1047,13 +1047,17 @@ let check_less_and_top = (dir: string) -> i64 => {
     // screen, then `\e[K` at the pending wrap, loses its last character here as in xterm.
     ["less", "words.txt"],
     dir,
-    // A file shorter than the screen is drawn at its foot, above less's own status line,
-    // as in any terminal: less moves to the last row and lets the lines scroll up.
-    (s) => s.alt && screen_row(s, s.rows - 1).ends_with("(END)"),
-    (s) => "${screen_row(s, s.rows - 4)}|${screen_row(s, s.rows - 3)}|${screen_row(s, s.rows - 2)}|${screen_row(s, 0)}",
+    // A file shorter than the screen is drawn above less's status line, wherever that is:
+    // less 668 moves to the last row and lets the lines scroll up, less 590 (Ubuntu
+    // 24.04's, macOS 15's) draws from the top with `(END)` just below.
+    (s) => s.alt && end_row(s) >= 3,
+    (s) => {
+      let e = end_row(s)
+      "${screen_row(s, e - 3)}|${screen_row(s, e - 2)}|${screen_row(s, e - 1)}"
+    },
     "q"
   )
-  failed += check("less draws the file above (END)", less_seen, "alpha|beta|gamma|")
+  failed += check("less draws the file above (END)", less_seen, "alpha|beta|gamma")
   failed += check(
     "less quits back to the main screen",
     "${less_ended} ${less_after.alt}",
@@ -1115,7 +1119,17 @@ let full_screen = (
     }
   }
   close(pty)
+  // What was on the screen instead, for the failure to say.
+  if !quitting {
+    seen = "never ready; the screen: ${[y in 0..<s.rows | screen_row(s, y)].join("|")}"
+  }
   (seen, s, ended)
+}
+
+/// The screen's row ending in less's `(END)`, or -1.
+let end_row = pure (s: Screen) -> i64 => {
+  for y in 0..<s.rows { if screen_row(s, y).ends_with("(END)") { return y } }
+  -1
 }
 
 /// Row `y` of the screen (not the scrollback), its trailing blanks off.

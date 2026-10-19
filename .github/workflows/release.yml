@@ -118,6 +118,53 @@ jobs:
           SDL_VIDEODRIVER=dummy build/uitest
           build/menutest
 
+      # The Developer ID certificate into a keychain of the job's own, and the App Store
+      # Connect key into a file, for package.sh to sign and notarize with. Without the
+      # secrets (a fork, or before they are added) the app is signed ad hoc, and a tag says
+      # so in a warning and the release notes.
+      - name: Set up signing (macOS)
+        if: runner.os == 'macOS'
+        env:
+          CERTIFICATE_P12: ${{ secrets.MACOS_CERTIFICATE_P12 }}
+          CERTIFICATE_PASSWORD: ${{ secrets.MACOS_CERTIFICATE_PASSWORD }}
+          NOTARY_KEY_P8: ${{ secrets.NOTARY_KEY_P8 }}
+          NOTARY_KEY_ID: ${{ secrets.NOTARY_KEY_ID }}
+          NOTARY_ISSUER_ID: ${{ secrets.NOTARY_ISSUER_ID }}
+        run: |
+          if [ -z "$CERTIFICATE_P12" ]; then
+            echo "::warning::no MACOS_CERTIFICATE_P12 secret: the app is signed ad hoc"
+            exit 0
+          fi
+          keychain="$RUNNER_TEMP/signing.keychain-db"
+          password="$(openssl rand -hex 16)"
+          security create-keychain -p "$password" "$keychain"
+          security set-keychain-settings -lut 21600 "$keychain"
+          security unlock-keychain -p "$password" "$keychain"
+          printf '%s' "$CERTIFICATE_P12" | base64 --decode > "$RUNNER_TEMP/certificate.p12"
+          security import "$RUNNER_TEMP/certificate.p12" -k "$keychain" \
+            -P "$CERTIFICATE_PASSWORD" -T /usr/bin/codesign
+          rm -f "$RUNNER_TEMP/certificate.p12"
+          security set-key-partition-list -S apple-tool:,apple: -s -k "$password" "$keychain"
+          security list-keychains -d user -s "$keychain" \
+            $(security list-keychains -d user | tr -d '"')
+          identity="$(security find-identity -v -p codesigning "$keychain" |
+            awk -F'"' '/Developer ID Application/ { print $2; exit }')"
+          if [ -z "$identity" ]; then
+            echo "::error::MACOS_CERTIFICATE_P12 holds no Developer ID Application identity"
+            exit 1
+          fi
+          echo "TERMINA_SIGN_IDENTITY=$identity" >> "$GITHUB_ENV"
+          if [ -z "$NOTARY_KEY_P8" ]; then
+            echo "::warning::no NOTARY_KEY_P8 secret: the app is signed but not notarized"
+            exit 0
+          fi
+          printf '%s\n' "$NOTARY_KEY_P8" > "$RUNNER_TEMP/notary.p8"
+          {
+            echo "TERMINA_NOTARY_KEY=$RUNNER_TEMP/notary.p8"
+            echo "TERMINA_NOTARY_KEY_ID=$NOTARY_KEY_ID"
+            echo "TERMINA_NOTARY_ISSUER=$NOTARY_ISSUER_ID"
+          } >> "$GITHUB_ENV"
+
       - name: Package
         working-directory: termina
         run: |
@@ -126,12 +173,21 @@ jobs:
           else
             version="dev-$(git rev-parse --short HEAD)"
           fi
-          ./package.sh "$version"
+          ./package.sh "$version" | tee "$RUNNER_TEMP/package.log"
+          # package.sh's last line says how the Mac app was signed: `(notarized)`, …
+          signed="$(tail -1 "$RUNNER_TEMP/package.log" | sed -n 's/.*(\(.*\))$/\1/p')"
           {
             echo "${{ matrix.name }}: termina $(git rev-parse --short HEAD)," \
               "lyra $(git -C ../lyra rev-parse --short HEAD)," \
-              "tree-sitter-lyra $(git -C ../tree-sitter-lyra rev-parse --short HEAD)"
+              "tree-sitter-lyra $(git -C ../tree-sitter-lyra rev-parse --short HEAD)" \
+              "${signed:+— $signed}"
           } > build/release/built-with-${{ matrix.name }}.txt
+
+      - name: Remove the signing keychain
+        if: always() && runner.os == 'macOS'
+        run: |
+          security delete-keychain "$RUNNER_TEMP/signing.keychain-db" 2>/dev/null || true
+          rm -f "$RUNNER_TEMP/notary.p8"
 
       - name: Keep the archive
         uses: actions/upload-artifact@v7
@@ -165,8 +221,12 @@ jobs:
             echo
             for f in archives/built-with-*.txt; do echo "- $(cat "$f")"; done
             echo
-            echo "The Mac app is signed ad hoc, not notarized: open it the first time with"
-            echo "right-click ▸ Open. On Linux, unpack the archive and run \`./termina\`."
+            if grep -q 'macos.*— notarized' archives/built-with-*.txt; then
+              echo "The Mac app is signed with a Developer ID and notarized by Apple."
+            else
+              echo "The Mac app is not notarized: open it the first time with right-click ▸ Open."
+            fi
+            echo "On Linux, unpack the archive and run \`./termina\`."
           } > notes.md
           gh release create "$GITHUB_REF_NAME" \
             --repo "$GITHUB_REPOSITORY" \

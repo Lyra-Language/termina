@@ -11,9 +11,16 @@
 # it; run on a developer's machine, it bundles Homebrew's or the system's.
 #
 # - **macOS**: into `Termina.app/Contents/Frameworks/`, the program told to look there
-#   (`@rpath`, with `@executable_path/../Frameworks` its rpath), and the bundle signed ad
-#   hoc — the Apple silicon minimum, and what a changed binary needs after
-#   install_name_tool. Not notarized: Gatekeeper asks once (right-click ▸ Open).
+#   (`@rpath`, with `@executable_path/../Frameworks` its rpath), and the bundle signed —
+#   which a changed binary needs after install_name_tool:
+#   - with **`TERMINA_SIGN_IDENTITY`** (a Developer ID Application identity in a
+#     keychain), for the hardened runtime with a secure timestamp, as notarization asks;
+#     and with **`TERMINA_NOTARY_KEY`**, `TERMINA_NOTARY_KEY_ID` and
+#     `TERMINA_NOTARY_ISSUER` too (an App Store Connect API key: the `.p8` file's path, its
+#     id, its issuer), notarized by Apple and the ticket stapled to the app, so it opens
+#     with no warning, offline too;
+#   - without, ad hoc — the Apple silicon minimum. Gatekeeper then asks once
+#     (right-click ▸ Open).
 # - **Linux**: into `lib/` beside the program, found through an rpath of `$ORIGIN/lib`
 #   (needs patchelf). The C library is the build machine's: built on Ubuntu 24.04, it runs
 #   on glibc 2.39 and newer.
@@ -59,13 +66,43 @@ case "$(uname -s)" in
       otool -L "$EXE" >&2
       die "the program links a library outside the system and the bundle"
     fi
-    codesign --force --sign - "$APP/Frameworks/libSDL3.0.dylib"
-    codesign --force --sign - "$STAGE/Termina.app"
-    codesign --verify --strict "$STAGE/Termina.app"
+    # The library first: a bundle's signature covers what is inside it, signed already.
+    if [ -n "${TERMINA_SIGN_IDENTITY:-}" ]; then
+      for code in "$APP/Frameworks/libSDL3.0.dylib" "$STAGE/Termina.app"; do
+        codesign --force --options runtime --timestamp --sign "$TERMINA_SIGN_IDENTITY" "$code"
+      done
+    else
+      codesign --force --sign - "$APP/Frameworks/libSDL3.0.dylib"
+      codesign --force --sign - "$STAGE/Termina.app"
+    fi
+    codesign --verify --strict --deep "$STAGE/Termina.app"
     rm -f "$OUT/$NAME.zip"
     (cd "$STAGE" && ditto -c -k --keepParent Termina.app "$OUT/$NAME.zip")
+    if [ -n "${TERMINA_SIGN_IDENTITY:-}" ] && [ -n "${TERMINA_NOTARY_KEY:-}" ]; then
+      # Apple's service checks the zip and answers for the app; the ticket is stapled to
+      # the app itself, so the zip is made again around it.
+      notary=(--key "$TERMINA_NOTARY_KEY" --key-id "${TERMINA_NOTARY_KEY_ID:?}"
+        --issuer "${TERMINA_NOTARY_ISSUER:?}")
+      answer="$(xcrun notarytool submit "$OUT/$NAME.zip" --wait "${notary[@]}")"
+      printf '%s\n' "$answer"
+      # An app Apple refuses still ends the wait: the answer says so, and the log says why.
+      if ! printf '%s\n' "$answer" | grep -q 'status: Accepted'; then
+        id="$(printf '%s\n' "$answer" | awk '/^ *id:/ { print $2; exit }')"
+        [ -n "$id" ] && xcrun notarytool log "$id" "${notary[@]}" >&2
+        die "notarization did not accept the app"
+      fi
+      xcrun stapler staple "$STAGE/Termina.app"
+      spctl --assess --type execute --verbose=2 "$STAGE/Termina.app"
+      rm -f "$OUT/$NAME.zip"
+      (cd "$STAGE" && ditto -c -k --keepParent Termina.app "$OUT/$NAME.zip")
+      signed="notarized"
+    elif [ -n "${TERMINA_SIGN_IDENTITY:-}" ]; then
+      signed="signed, not notarized"
+    else
+      signed="signed ad hoc"
+    fi
     rm -rf "$STAGE"
-    printf 'package: %s\n' "$OUT/$NAME.zip"
+    printf 'package: %s (%s)\n' "$OUT/$NAME.zip" "$signed"
     ;;
   Linux)
     command -v patchelf >/dev/null 2>&1 || die "patchelf not found"
