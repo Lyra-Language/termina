@@ -22,7 +22,6 @@ milestones are in `CLAUDE.md` § Plan; finished items move to `done.md`.
 ## Settings
 
 - **[OPEN] The command line's own colours** — its band, completion menu and chosen row are fixed; they could follow the theme.
-- **[OPEN] Settings window on Linux needs a way in besides Ctrl+,** — there is no menu bar to show it.
 
 ## Found along the way
 

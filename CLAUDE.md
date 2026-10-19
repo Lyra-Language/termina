@@ -42,6 +42,7 @@ shell ⇄ bindings.pty ──bytes──▶ vt.Parser ──[]Action──▶ vt
 | `src/sulafat.lyra` | `main`: the ImGui host, the frame loop, the tabs and their bar, fonts |
 | `src/session/session.lyra` | one tab: its PTY, screen, `Mode` and command line; read each frame, drawn and given keys when shown |
 | `src/ui/tabs.lyra` | the tab bar (reorderable, its order read back), the tab shortcuts, and the Mac's menu bar |
+| `src/ui/menu_bar.lyra` | the menu bar Sulafat draws off macOS: the Mac's menus as ImGui's main menu bar |
 | `src/menutest.lyra` | the menu bar installed and read back |
 | `src/shell/shell.lyra` | shell integration (zsh's `.zshenv`, through `ZDOTDIR`): the marks, Tab's completion widget and its request file, the history file, what Return sends |
 | `src/editor/editor.lyra` | the command line's editor — text, caret, selection, motions, words, undo, layout; **pure** |
@@ -80,6 +81,12 @@ shell ⇄ bindings.pty ──bytes──▶ vt.Parser ──[]Action──▶ vt
   matches shifted keys) and Close Tab ⌘W; they arrive through `poll_menu`, and
   `tab_command` leaves those keys alone when the bar is there, since AppKit hands a key
   equivalent to SDL too. ⌘1–⌘9 have no items and stay keys.
+- **Off macOS Sulafat draws the same menus** (`ui.menu_bar`, ImGui's main menu bar): Sulafat
+  (Settings…, Quit), Shell, Edit, and Window (Minimize, Maximize, the tabs). A choice
+  answers the Mac's tag (`MENU_*`; a tab is `MENU_TAB + k`), so the loop carries out both
+  bars' choices in one place; Quit, Minimize and Maximize are the host's, done in the bar.
+  There the keys stay keys and an item only shows them (Ctrl+Shift+…, Ctrl+Z for Undo).
+  The bar takes its height off the viewport's work area, which the terminal's window fills.
 - **Edit's items are one path with their keys** (`EditAction`): `CommandLine.edit_action` at a
   prompt, and while a program runs only Paste, sent bracketed when the program set
   `?2004` (`session.pasted`). With the menu bar the command line leaves ⌘Z/⌘X/⌘C/⌘V/⌘A to

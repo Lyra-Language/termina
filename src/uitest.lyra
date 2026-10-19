@@ -23,6 +23,9 @@ import bindings.imgui.{
   push_font_float,
   pop_font,
   get_font_baked,
+  get_item_rect_min,
+  get_item_rect_max,
+  get_main_viewport,
   WINDOW_FLAGS_NO_DECORATION,
   KEY_LEFT_ARROW,
   KEY_UP_ARROW,
@@ -85,6 +88,9 @@ import ui.{
   SelectAll,
   menu_command,
   MENU_NEW_TAB,
+  MENU_TAB,
+  MENU_PASTE,
+  menu_bar,
   MENU_CLOSE_TAB,
   MENU_PREVIOUS_TAB,
   MENU_NEXT_TAB,
@@ -142,6 +148,7 @@ let main = () -> u8 => {
   failed += check_meta_and_bright()
   failed += check_settings(host)
   failed += check_fallback_fonts(host)
+  failed += check_menu_bar(host)
   destroy_host(host)
   if failed == 0 {
     println("uitest: all passed")
@@ -523,6 +530,121 @@ let check_edit_actions = (host: Host) -> i64 => {
 }
 
 // The settings: the file, the fonts found, the theme made of them, and the window.
+// The menu bar Sulafat draws off macOS: a menu opened and an item clicked answer the
+// item's tag, as the Mac's bar sends it; a greyed item answers nothing; the bar takes its
+// height off the work area the terminal's window fills.
+let check_menu_bar = (host: Host) -> i64 => {
+  var failed = 0
+  let tabs = [TabLabel { name: "one", id: 1 }, TabLabel { name: "two", id: 2 }]
+  let none_enabled = [false, false, false, false, false, false]
+  for _ in 0..<3 { let _ = menu_frame(host, tabs, none_enabled) }
+  failed += check(
+    "the bar is above the work area",
+    "${get_main_viewport().work_pos().y > 0.0}",
+    "true"
+  )
+  failed += check(
+    "Shell ▸ New Tab",
+    "${pick(host, tabs, none_enabled, "Shell", "New Tab")}",
+    "${MENU_NEW_TAB}"
+  )
+  failed += check(
+    "Window ▸ the second tab",
+    "${pick(host, tabs, none_enabled, "Window", "two")}",
+    "${MENU_TAB + 1}"
+  )
+  failed += check(
+    "a greyed item",
+    "${pick(host, tabs, none_enabled, "Edit", "Paste")}",
+    "-1"
+  )
+  let all_enabled = [true, true, true, true, true, true]
+  failed += check(
+    "Edit ▸ Paste",
+    "${pick(host, tabs, all_enabled, "Edit", "Paste")}",
+    "${MENU_PASTE}"
+  )
+  failed
+}
+
+/// Open the menu `title` and click its item `label`, a press and a release a frame each, as
+/// a hand would: the tag answered, or -1. The menu is closed after, whatever was clicked.
+let pick = (
+  host: Host,
+  tabs: []TabLabel,
+  enabled: []bool,
+  title: string,
+  label: string
+) -> i32 => {
+  click_item(host, tabs, enabled, title)
+  // The menu draws its items the frame after it opens.
+  let _ = menu_frame(host, tabs, enabled)
+  var tag: i32 = -1
+  match spot(label) {
+    Some(item) => {
+      let io = get_io()
+      io.add_mouse_pos_event(item.x, item.y)
+      for down in [false, true, false] {
+        io.add_mouse_button_event(0, down)
+        match menu_frame(host, tabs, enabled) {
+          Some(t) => { tag = t },
+          None => {},
+        }
+      }
+    },
+    None => {},
+  }
+  // A greyed item leaves its menu open: a click off the bar closes it.
+  get_io().add_mouse_pos_event(400.0, 300.0)
+  for down in [true, false] {
+    get_io().add_mouse_button_event(0, down)
+    let _ = menu_frame(host, tabs, enabled)
+  }
+  tag
+}
+
+/// Click what the last frame drew as `label`.
+let click_item = (
+  host: Host,
+  tabs: []TabLabel,
+  enabled: []bool,
+  label: string
+) -> void => {
+  let Some(middle) = spot(label) else { return }
+  let io = get_io()
+  io.add_mouse_pos_event(middle.x, middle.y)
+  let _ = menu_frame(host, tabs, enabled)
+  io.add_mouse_button_event(0, true)
+  let _ = menu_frame(host, tabs, enabled)
+  io.add_mouse_button_event(0, false)
+  let _ = menu_frame(host, tabs, enabled)
+}
+
+/// One frame of the menu bar alone, every menu and item it drew noted where it is.
+let menu_frame = (host: Host, tabs: []TabLabel, enabled: []bool) -> Maybe<i32> => {
+  if !begin_frame(host) { return None }
+  spots = []
+  let tag = menu_bar(host, tabs, 0, enabled, note_spot)
+  end_frame(host, 0.0, 0.0, 0.0)
+  tag
+}
+
+/// Where the menu bar drew each menu and item in the last frame: its label and middle.
+var spots: [](string, Vec2) = []
+
+let note_spot = (label: string) -> void => {
+  let lo = get_item_rect_min()
+  let hi = get_item_rect_max()
+  spots.push((label, Vec2 { x: (lo.x + hi.x) / 2.0, y: (lo.y + hi.y) / 2.0 }))
+}
+
+/// Where `label` was drawn last frame.
+let spot = (label: string) -> Maybe<Vec2> => {
+  var found: Maybe<Vec2> = None
+  for (l, p) in spots { if l == label { found = Some(p) } }
+  found
+}
+
 // A glyph the family lacks — 中 in SF Mono or DejaVu Sans Mono — comes from a fallback font
 // merged into it. Skipped where the machine has no family or no fallback.
 let check_fallback_fonts = (host: Host) -> i64 => {

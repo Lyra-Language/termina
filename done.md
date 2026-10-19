@@ -17,6 +17,7 @@ Finished work, moved from `todo.md` with its section; the rules it left behind a
 - **[DONE 10/16] Tabs in the Mac menu bar** — Shell ▸ New Tab, Show Previous/Next Tab, Close Tab; replaces SDL's bar, whose ⌘W closed the app.
 - **[DONE 10/16] An Edit menu** — Undo, Redo, Cut, Copy, Paste, Select All; greyed when they would do nothing.
 - **[DONE 10/16] Copy from the grid** — the grid's selection; Edit ▸ Copy takes it when the command line has none.
+- **[DONE 10/19] A menu bar off macOS** — the Mac's menus drawn as ImGui's main menu bar, its choices the same tags; Settings… is in it.
 
 ## M1 — a classic terminal
 

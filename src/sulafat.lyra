@@ -87,6 +87,7 @@ import ui.{
   tab_command,
   menu_command,
   install_menus,
+  menu_bar,
   tab_bar,
   TabBar,
   TabLabel,
@@ -151,7 +152,19 @@ let main = () -> void => {
     if sessions.len() == 0 { break }
 
     var command = tab_command(active, sessions.len(), menus)
-    while let Some(tag) = poll_menu() {
+    // The menus' choices: the Mac's bar, or off macOS the one Sulafat draws, its items the
+    // same and carried out the same.
+    var chosen: []i32 = []
+    while let Some(tag) = poll_menu() { chosen.push(tag) }
+    if !menus {
+      var enabled: []bool = []
+      for (_, a) in EDIT_ITEMS { enabled.push(sessions[active].can(a)) }
+      match menu_bar(host, tab_labels(sessions, home), active, enabled, (_) => {}) {
+        Some(tag) => chosen.push(tag),
+        None => {},
+      }
+    }
+    for tag in chosen {
       match edit_action_of(tag) {
         // Edit's items act on the tab shown.
         Some(a) => sessions[active].edit_action(a),
@@ -288,11 +301,7 @@ let draw_window = (
   let _ = begin("terminal", flags)
   pop_style_var()
 
-  let labels = [k in 0..<sessions.len() | TabLabel {
-    name: "${if sessions[k].unseen { "• " } else { "" }}${tab_title(sessions[k], home)}",
-    id: sessions[k].id,
-  }]
-  let bar = tab_bar(labels, active, select)
+  let bar = tab_bar(tab_labels(sessions, home), active, select)
   let shown = bar.shown
 
   // The shown tab fills the rest of the window, in a child that scrolls on its own.
@@ -337,6 +346,14 @@ let draw_window = (
   end()
   bar
 }
+
+/// The tabs' names on the bar and in the menus — a `•` for output not yet seen — and their
+/// identities.
+let tab_labels = pure (sessions: []Session, home: string) -> []TabLabel =>
+  [k in 0..<sessions.len() | TabLabel {
+    name: "${if sessions[k].unseen { "• " } else { "" }}${tab_title(sessions[k], home)}",
+    id: sessions[k].id,
+  }]
 
 /// Whether `order` is 0, 1, 2, … — the tabs as they were.
 let in_order = pure (order: []i64) -> bool => {
