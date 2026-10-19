@@ -134,6 +134,8 @@ import settings.{
 }
 import session.{
   block_rows_layout,
+  Session,
+  Block,
   open_session,
   close_session,
   tab_title,
@@ -1379,6 +1381,14 @@ let check_sessions = () -> i64 => {
     "${rows.y_of(0)} ${rows.y_of(1)} ${rows.y_of(2)} ${rows.line_at_y(50.0, 3)}",
     "16 48 74 1"
   )
+  // Laying out the rows, a running block among them, leaves the session's blocks as they
+  // were — a frame's layout once added the running block to them, a block a frame.
+  var busy = Session {
+    e |
+    running_block: Some(Block { prompt: 2, output: 3, end: -1, status: -1, started: 0, ended: 0 }),
+  }
+  for _ in 0..<3 { let _ = block_rows_layout(busy, 0.0, 0, 20.0, 4) }
+  failed += check("layout leaves the blocks be", "${busy.blocks.len()}", "1")
   close_session(e)
   let Some(cleared) = open_session(
     ["/bin/sh", "-c", "${marks}; sleep 0.3; printf '\\033[2J'; sleep 2"],

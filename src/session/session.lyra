@@ -997,10 +997,12 @@ pub let block_rows_layout = pure (
 ) -> Rows => {
   var gaps: [](i64, f32) = []
   let first = s.shown.absolute(0)
-  var all = s.blocks
-  match s.running_block {
-    Some(b) => all.push(b),
-    None => {},
+  // The running block with the finished ones, in an array of its own: `s.blocks` itself is
+  // the session's, and an array a variable is set to is that array, not a copy — a push
+  // here added a block to the session every frame.
+  let all = match s.running_block {
+    Some(b) => [...s.blocks, b],
+    None => s.blocks,
   }
   for b in all {
     let p = b.prompt - first
@@ -1031,7 +1033,8 @@ pub let block_rows_layout = pure (
 /// `gaps` in order of their lines — nearly so already, the blocks being in order: an
 /// insertion sort, stable.
 let sorted_gaps = pure (gaps: [](i64, f32)) -> [](i64, f32) => {
-  var out = gaps
+  // A copy to sort: `gaps` is the caller's array.
+  var out = [...gaps]
   for i in 1..<out.len() {
     var j = i
     while j > 0 && out[j - 1].0 > out[j].0 {
