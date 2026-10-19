@@ -59,11 +59,14 @@ let main = () -> u8 => {
   failed += check_typing()
   failed += check_editor()
   failed += check_marks()
-  failed += check_zsh()
   failed += check_words()
   failed += check_completion_reports()
-  failed += check_zsh_completion()
-  failed += check_zsh_typed_ahead()
+  // The integration's checks need zsh itself: a machine without it skips them, and says so.
+  if installed(["/bin/zsh"], "the zsh checks") {
+    failed += check_zsh()
+    failed += check_zsh_completion()
+    failed += check_zsh_typed_ahead()
+  }
   failed += check_full_screen()
   if failed == 0 {
     println("vttest: all passed")
@@ -72,6 +75,14 @@ let main = () -> u8 => {
     println("vttest: ${failed} failed")
     1
   }
+}
+
+/// Whether one of `paths` is an installed program; when none is, `what` is reported as
+/// skipped.
+let installed = (paths: []string, what: string) -> bool => {
+  for p in paths { if is_executable(p) { return true } }
+  println("vttest: skipped ${what}: ${paths.join(" or ")} not installed")
+  false
 }
 
 let check_parser = () -> i64 => {
@@ -888,16 +899,26 @@ let check_zsh_typed_ahead = () -> i64 => {
   check("typed ahead, reported", reports.join("|"), "echo ahead\nech")
 }
 
-// vim, less and top (htop when there is one) on a pseudo-terminal: each on the alternate
-// screen, drawn as it should be, its questions answered — then quit, and the main screen
-// back.
+// vim, less and top (htop when there is one) on a pseudo-terminal: each drawn as it should
+// be, on the alternate screen (but procps's top, Linux's, which draws on the main one), its
+// questions answered — then quit, and the main screen back. vim is skipped where it is not
+// installed (a minimal Ubuntu has only vi).
 let check_full_screen = () -> i64 => {
   let dir = (lookup("TMPDIR") ?? "/tmp").join("sulafat-full-${wall_clock_nanos()}")
   if !create_dir_all(dir) { return check("scratch dir", "not made", "made") }
   let file = dir.join("words.txt")
   let _ = write_file(file, "alpha\nbeta\ngamma\n")
   var failed = 0
+  if installed(["/usr/bin/vim", "/opt/homebrew/bin/vim"], "the vim checks") {
+    failed += check_vim(dir, file)
+  }
+  failed += check_less_and_top(dir)
+  let _ = remove_file(file)
+  failed
+}
 
+let check_vim = (dir: string, file: string) -> i64 => {
+  var failed = 0
   let (vim_seen, vim_after, vim_ended) = full_screen(
     ["vim", "-u", "NONE", "-N", "-i", "NONE", file],
     dir,
@@ -915,7 +936,11 @@ let check_full_screen = () -> i64 => {
     "${vim_ended} ${vim_after.alt}",
     "true false"
   )
+  failed
+}
 
+let check_less_and_top = (dir: string) -> i64 => {
+  var failed = 0
   let (less_seen, less_after, less_ended) = full_screen(
     // In the file's directory, so its status line is short: a status exactly as wide as the
     // screen, then `\e[K` at the pending wrap, loses its last character here as in xterm.
@@ -938,7 +963,7 @@ let check_full_screen = () -> i64 => {
   let (top_seen, top_after, top_ended) = full_screen(
     [top],
     dir,
-    (s) => s.alt && drawn_rows(s) >= 5,
+    (s) => drawn_rows(s) >= 5,
     (s) => "${drawn_rows(s) >= 5}",
     "q"
   )
@@ -948,7 +973,6 @@ let check_full_screen = () -> i64 => {
     "${top_ended} ${top_after.alt}",
     "true false"
   )
-  let _ = remove_file(file)
   failed
 }
 

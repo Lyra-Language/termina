@@ -219,7 +219,9 @@ let check_keys = (host: Host) -> i64 => {
   press(host, line, [word], KEY_BACKSPACE)
   failed += check("delete a word back", line.edit.content(), "git ")
   let command = if platform() == "macOS" { [MOD_SUPER] } else { [MOD_CTRL, MOD_SHIFT] }
-  press(host, line, command, KEY_Z)
+  // Undo is ⌘Z, and off macOS Ctrl+Z: Ctrl+Shift+Z is Redo there.
+  let undo = if platform() == "macOS" { [MOD_SUPER] } else { [MOD_CTRL] }
+  press(host, line, undo, KEY_Z)
   failed += check("undo", line.edit.content(), "git stat")
   press(host, line, command, KEY_A)
   failed += check("select all", line.edit.selected_text(), "git stat")
