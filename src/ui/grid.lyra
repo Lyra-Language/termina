@@ -3,13 +3,15 @@ module ui
 //! underline or a strike adds. A run is as long as the style stays the same, so a line of
 //! plain text is one `add_text`, as it was before colour. **A wide rune is drawn alone**,
 //! across its two cells: a run's glyphs are spaced a cell apart, which a wide glyph is not.
+//! So is a rune with combining marks, drawn as it and its marks, so that a mark's own
+//! advance (the font's, not the grid's) cannot move what follows.
 //!
 //! **Bold** is the bold face when there is one (Linux's DejaVu has a file for it), else
 //! the text drawn twice a pixel apart: macOS's SF Mono is one variable font, and ImGui
 //! takes one instance of it. **Italic** is the italic face (SF Mono and DejaVu both ship
 //! one), or upright without it.
 
-import bindings.imgui.{ push_font_float, pop_font, Vec2, DrawList, Font }
+import bindings.imgui.{ push_font_float, pop_font, calc_text_size, Vec2, DrawList, Font }
 import vt.{
   Cell,
   BOLD,
@@ -19,7 +21,8 @@ import vt.{
   CURLY_UNDERLINE,
   STRIKE,
   SPACER,
-  width_of
+  width_of,
+  marks_of
 }
 
 /// The faces a grid is drawn in; `None` for one not found (the host's default face stands
@@ -41,13 +44,15 @@ pub struct LineAt {
   pixel: f32,
 }
 
-/// Draw the first `upto` cells of `cells` (all of them when `upto` is past the end).
+/// Draw the first `upto` cells of `cells` (all of them when `upto` is past the end), their
+/// combining marks the screen's `combining`.
 pub let draw_line = (
   list: DrawList,
   theme: Theme,
   fonts: Fonts,
   at: LineAt,
   cells: []Cell,
+  combining: []string,
   upto: i64
 ) -> void => {
   let n = upto.min(cells.len())
@@ -66,8 +71,11 @@ pub let draw_line = (
       // The second cell of a wide rune (or one left alone by an erase): nothing to draw.
       start += 1
     } else if width_of(cells[start].ch) == 2 {
-      draw_run(list, fonts, at, cells, start, (start + 2).min(n), fg, attrs)
+      draw_run(list, fonts, at, cells, combining, start, (start + 2).min(n), fg, attrs)
       start += 2
+    } else if marks_of(cells[start]) != 0 {
+      draw_run(list, fonts, at, cells, combining, start, start + 1, fg, attrs)
+      start += 1
     } else {
       var stop = start + 1
       while stop < end && one_cell(cells[stop]) && same_run(
@@ -76,14 +84,15 @@ pub let draw_line = (
         fg,
         attrs
       ) { stop += 1 }
-      draw_run(list, fonts, at, cells, start, stop, fg, attrs)
+      draw_run(list, fonts, at, cells, combining, start, stop, fg, attrs)
       start = stop
     }
   }
 }
 
-/// Whether a cell holds a rune one cell wide — one a run may take.
-let one_cell = pure (c: Cell) -> bool => c.ch != SPACER && width_of(c.ch) == 1
+/// Whether a cell holds a rune one cell wide and unmarked — one a run may take.
+let one_cell = pure (c: Cell) -> bool =>
+  c.ch != SPACER && width_of(c.ch) == 1 && marks_of(c) == 0
 
 /// Every underline's bit.
 const UNDERLINE_ANY: u32 = UNDERLINE | DOUBLE_UNDERLINE | CURLY_UNDERLINE
@@ -131,25 +140,32 @@ let draw_run = (
   fonts: Fonts,
   at: LineAt,
   cells: []Cell,
+  combining: []string,
   start: i64,
   stop: i64,
   fg: u32,
   attrs: u32
 ) -> void => {
   var bytes: []u8 = []
-  for k in start..<stop { if cells[k].ch != SPACER { push_rune(
-    bytes,
-    i64(cells[k].ch)
-  ) } }
+  for k in start..<stop {
+    if cells[k].ch != SPACER {
+      push_rune(bytes, i64(cells[k].ch))
+      let marks = marks_of(cells[k])
+      if marks != 0 { for b in combining[marks].encode_utf8() { bytes.push(b) } }
+    }
+  }
   let text = bytes.decode_utf8()
   let x0 = at.origin.x + f32(start) * at.cell.x
   let x1 = at.origin.x + f32(stop) * at.cell.x
-  let pos = Vec2 { x: x0, y: at.origin.y + at.text_dy }
   let (face, drawn_bold) = face_for(fonts, attrs & BOLD != 0, attrs & ITALIC != 0)
   match face {
     Some(f) => push_font_float(f, fonts.size),
     None => {},
   }
+  // A wide glyph (from a fallback font, often) is narrower than its two cells: centred.
+  let wide = stop - start == 2 && width_of(cells[start].ch) == 2
+  let spare = if wide { (x1 - x0 - calc_text_size(text).x).max(0.0) } else { 0.0 }
+  let pos = Vec2 { x: x0 + f32((spare / 2.0).floor()), y: at.origin.y + at.text_dy }
   list.add_text(pos, fg, text)
   if drawn_bold { list.add_text(Vec2 { x: pos.x + at.pixel, y: pos.y }, fg, text) }
   match face {

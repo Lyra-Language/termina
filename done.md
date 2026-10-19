@@ -28,6 +28,10 @@ Finished work, moved from `todo.md` with its section; the rules it left behind a
 - **[DONE 10/16] Selection and copy** — drag, double-click a word, triple-click a line, ⌘C; Select All while a program runs.
 - **[DONE 10/16] Device reports** — DA1, DA2, XTVERSION, DSR, DECRQM and the colour queries answered.
 - **[DONE 10/16] Alt as Meta off macOS** — Alt+key and Alt+Backspace as Escape-prefixed.
+- **[DONE 10/19] Copying joins soft wraps** — a line the text went on from carries `WRAPPED` on its last cell; a copy joins it to the next.
+- **[DONE 10/19] Glyphs for CJK and symbols** — fallback fonts merged into every face (`merge_font_file`, new in `bindings.imgui`); wide glyphs centred in their cells.
+- **[DONE 10/19] Combining marks** — kept with the cell before them, in the screen's table, drawn and copied after its rune.
+- **[DONE 10/19] Wide runes in the command line** — the editor's layout takes the grid's widths; a wide rune is drawn alone and wraps whole.
 
 ## Settings
 

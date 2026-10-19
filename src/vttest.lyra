@@ -18,6 +18,7 @@ import vt.{
   word_span,
   width_of,
   SPACER,
+  marks_of,
   indexed,
   rgb,
   DEFAULT,
@@ -267,6 +268,57 @@ let check_selection = () -> i64 => {
   // Lines that have left the scrollback are skipped.
   var small = run(4, 1, "a\r\nb\r\nc")
   failed += check("lines gone", selection_text(small, at(-5, 0), at(2, 4)), "a\nb\nc")
+  // A line the text wrapped off copies as one; one that only filled its row does not.
+  let wrapped = run(5, 3, "abcdefgh\r\nxy")
+  failed += check(
+    "a soft wrap joined",
+    selection_text(wrapped, at(0, 0), at(2, 5)),
+    "abcdefgh\nxy"
+  )
+  failed += check(
+    "from inside a wrapped line",
+    selection_text(wrapped, at(0, 3), at(1, 2)),
+    "defg"
+  )
+  let filled = run(5, 2, "abcde\r\nxy")
+  failed += check(
+    "a full line, not wrapped",
+    selection_text(filled, at(0, 0), at(1, 5)),
+    "abcde\nxy"
+  )
+  let spaced = run(5, 2, "ab   cd")
+  failed += check(
+    "blanks kept before a wrap",
+    selection_text(spaced, at(0, 0), at(1, 5)),
+    "ab   cd"
+  )
+  // Combining marks stay with the rune before them: its cell, and copied after it. The
+  // screen keeps "", the acute, the diaeresis, and the two together.
+  let marked = run(6, 2, "éẍ́中́")
+  failed += check(
+    "marks in their cells",
+    "${marked.line(0)[0].ch}|${marked.combining[marks_of(marked.line(0)[0])]}|${marked.combining[marks_of(marked.line(0)[1])]}",
+    "e|́|̈́"
+  )
+  failed += check(
+    "a mark on a wide rune",
+    marked.combining[marks_of(marked.line(0)[2])],
+    "́"
+  )
+  failed += check("marks copied", selection_text(marked, at(0, 0), at(0, 6)), "éẍ́中́")
+  failed += check(
+    "each run of marks kept once",
+    "${marked.combining.len()}",
+    "4"
+  )
+  let edge = run(2, 2, "ab́")
+  failed += check(
+    "a mark at the last column",
+    edge.combining[marks_of(edge.line(0)[1])],
+    "́"
+  )
+  let alone = run(4, 2, "́a")
+  failed += check("a mark with nothing before it", "${marks_of(alone.line(0)[0])}", "0")
   failed
 }
 
@@ -554,8 +606,26 @@ let check_editor = () -> i64 => {
     "${g.vertical(wrap, 1, false)}:${g.cursor}",
     "true:7"
   )
-  failed += check("click past a row's end", "${index_at(g.text, wrap, 0, 50)}", "2")
-  failed += check("click below the text", "${index_at(g.text, wrap, 9, 0)}", "7")
+  failed += check("click past a row's end", "${index_at(g.text, wrap, 0, 50.0)}", "2")
+  failed += check("click below the text", "${index_at(g.text, wrap, 9, 0.0)}", "7")
+  // A wide rune takes two columns, and one with no room for both starts the next row.
+  let tight = Wrap { first: 0, cols: 5 }
+  let wide = "ab中文".to_runes()
+  failed += check("after a wide rune", pos(position(wide, tight, 3)), "1,0")
+  failed += check("a wide rune wrapped whole", pos(position(wide, tight, 4)), "1,2")
+  failed += check("a wide rune's second cell", "${rune_at(wide, tight, 0, 3)}", "2")
+  let pair = "中x".to_runes()
+  failed += check(
+    "click past a wide rune's middle",
+    "${index_at(pair, wrap, 0, 1.6)}",
+    "1"
+  )
+  failed += check("click before its middle", "${index_at(pair, wrap, 0, 0.9)}", "0")
+  failed += check(
+    "a combining mark takes no column",
+    pos(position("éx".to_runes(), wrap, 2)),
+    "0,1"
+  )
 
   var p = editor()
   p.paste("a\r\nb\rc")

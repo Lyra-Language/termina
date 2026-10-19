@@ -18,6 +18,11 @@ import bindings.imgui.{
   set_next_window_size,
   Host,
   Vec2,
+  font_file,
+  merge_font_file,
+  push_font_float,
+  pop_font,
+  get_font_baked,
   WINDOW_FLAGS_NO_DECORATION,
   KEY_LEFT_ARROW,
   KEY_UP_ARROW,
@@ -100,6 +105,7 @@ import settings.{
   family_for,
   file_family,
   font_families,
+  fallback_fonts,
   Settings,
   FontFamily,
 }
@@ -135,6 +141,7 @@ let main = () -> u8 => {
   failed += check_mouse_reports()
   failed += check_meta_and_bright()
   failed += check_settings(host)
+  failed += check_fallback_fonts(host)
   destroy_host(host)
   if failed == 0 {
     println("uitest: all passed")
@@ -516,6 +523,35 @@ let check_edit_actions = (host: Host) -> i64 => {
 }
 
 // The settings: the file, the fonts found, the theme made of them, and the window.
+// A glyph the family lacks — 中 in SF Mono or DejaVu Sans Mono — comes from a fallback font
+// merged into it. Skipped where the machine has no family or no fallback.
+let check_fallback_fonts = (host: Host) -> i64 => {
+  let families = font_families()
+  let fallbacks = fallback_fonts()
+  if families.len() == 0 || fallbacks.len() == 0 { return 0 }
+  let Some(font) = font_file(host, families[0].regular, 14.0) else { return 0 }
+  var failed = 0
+  failed += check(
+    "a fallback merged",
+    "${merge_font_file(host, font, fallbacks[0])}",
+    "true"
+  )
+  failed += check("merged again", "${merge_font_file(host, font, fallbacks[0])}", "true")
+  failed += check(
+    "a missing file",
+    "${merge_font_file(host, font, "/nonexistent/font.ttf")}",
+    "false"
+  )
+  if begin_frame(host) {
+    push_font_float(font, 14.0)
+    let glyph = get_font_baked().find_glyph_no_fallback(u16(0x4E2D))
+    failed += check("a CJK glyph from the fallback", "${glyph != nullptr}", "true")
+    pop_font()
+    end_frame(host, 0.0, 0.0, 0.0)
+  }
+  failed
+}
+
 let check_settings = (host: Host) -> i64 => {
   var failed = 0
   let d = defaults()

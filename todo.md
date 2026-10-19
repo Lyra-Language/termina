@@ -16,10 +16,8 @@ milestones are in `CLAUDE.md` § Plan; finished items move to `done.md`.
 
 ## M1 — a classic terminal
 
-- **[OPEN] Copying keeps soft wraps as line breaks** — the screen does not record which lines wrapped, so a long line copies as several.
-- **[OPEN] Glyphs for CJK and emoji** — wide runes take their two cells, but SF Mono has no CJK glyphs and stb_truetype no colour emoji; a fallback font is needed.
-- **[OPEN] Combining marks** — dropped; a cell would need a rune and its marks.
-- **[OPEN] Wide runes in the command line** — the editor lays out a rune a column.
+- **[OPEN] Colour emoji** — CJK and symbols come from fallback fonts, but emoji need ImGui's FreeType loader with colour, and `IMGUI_USE_WCHAR32` (below) to reach them at all.
+- **[OPEN] Copies keep the filler before a wrapped wide rune** — a wide rune that wrapped early leaves a blank in the last column, which a joined copy includes as a space.
 
 ## Settings
 

@@ -8,8 +8,13 @@ module editor
 //! runes, as a caret is. The selection is the runes between the anchor and the cursor; with
 //! no selection the two are equal.
 //!
+//! **A rune takes the cells the grid gives it** ([cells_of]): a wide rune two, a combining
+//! mark none. Positions stay rune offsets; only [layout] knows columns.
+//!
 //! **Edits build new arrays.** An undo snapshot holds the text it saw, and arrays share
 //! their buffer, so writing a rune in place would rewrite history too.
+
+import vt.{ width_of }
 
 /// The text being edited, the caret, the selection and the history of edits.
 pub struct Editor {
@@ -243,7 +248,7 @@ impl Editor {
     let target = row + rows
     if target < 0 || target > row_count(self.text, wrap) - 1 { return false }
     let goal = if self.goal >= 0 { self.goal } else { col }
-    self.move_to(index_at(self.text, wrap, target, goal), select)
+    self.move_to(index_at(self.text, wrap, target, f32(goal)), select)
     self.goal = goal
     true
   }
@@ -364,77 +369,86 @@ impl Editor {
 
 // ── Layout ───────────────────────────────────────────────────────────────────
 
-/// The row and column of position `i` laid out by `wrap`: a `\n` starts a row, and so does a
-/// row that is full. Row 0 begins at `wrap.first`.
-pub let position = pure (text: []rune, wrap: Wrap, i: i64) -> (i64, i64) => {
-  var row = 0
-  var col = wrap.first
-  for k in 0..<i.min(text.len()) {
-    if text[k] == '\n' {
-      row += 1
-      col = 0
-    } else {
-      col += 1
-      if col >= wrap.cols {
-        row += 1
-        col = 0
-      }
-    }
-  }
-  (row, col)
-}
+/// The row and column of position `i` laid out by `wrap` ([layout]).
+pub let position = pure (text: []rune, wrap: Wrap, i: i64) -> (i64, i64) =>
+  layout(text, wrap)[i.clamp(0, text.len())]
 
 /// How many rows the text takes.
 pub let row_count = pure (text: []rune, wrap: Wrap) -> i64 =>
-  position(text, wrap, text.len()).0 + 1
+  layout(text, wrap)[text.len()].0 + 1
 
-/// The position nearest the left of row `row`, column `col` — where a click there puts the
-/// caret: the row's end when the column is past it, the start or end of the text when the
-/// row is above or below it.
-pub let index_at = pure (text: []rune, wrap: Wrap, row: i64, col: i64) -> i64 => {
+/// The position nearest column boundary `x` of row `row` (fractional: a click's place) —
+/// where a click there puts the caret, and where vertical motion lands: the row's end when
+/// `x` is past it, the start or end of the text when the row is above or below it. On a tie
+/// the left one.
+pub let index_at = pure (text: []rune, wrap: Wrap, row: i64, x: f32) -> i64 => {
   if row < 0 { return 0 }
+  let at = layout(text, wrap)
   var best = -1
-  var r = 0
-  var c = wrap.first
-  for k in 0..<=text.len() {
-    if r == row && c <= col { best = k }
-    if r > row { return if best < 0 { k - 1 } else { best } }
-    if k < text.len() {
-      if text[k] == '\n' {
-        r += 1
-        c = 0
-      } else {
-        c += 1
-        if c >= wrap.cols {
-          r += 1
-          c = 0
-        }
+  var off: f32 = 0.0
+  for k in 0..<at.len() {
+    let (r, c) = at[k]
+    if r == row {
+      let d = (f32(c) - x).abs()
+      if best < 0 || d < off {
+        best = k
+        off = d
       }
     }
   }
   if best < 0 { text.len() } else { best }
 }
 
-/// The rune in the cell at row `row`, column `col`, or the nearest position when no rune is
-/// there (past a line's end): what a double-click on that cell is on.
+/// The rune in the cell at row `row`, column `col` — a wide rune's either cell — or the
+/// nearest position when no rune is there (past a line's end): what a double-click on that
+/// cell is on.
 pub let rune_at = pure (text: []rune, wrap: Wrap, row: i64, col: i64) -> i64 => {
-  var r = 0
-  var c = wrap.first
+  let at = layout(text, wrap)
   for k in 0..<text.len() {
-    if r == row && c == col && text[k] != '\n' { return k }
-    if text[k] == '\n' {
-      r += 1
-      c = 0
+    let (r, c) = at[k]
+    if r == row && text[k] != '\n' && col >= c && col < c + cells_of(text[k]).max(1) {
+      return k
+    }
+  }
+  index_at(text, wrap, row, f32(col))
+}
+
+/// Where every position of `text` falls laid out by `wrap`, `text.len() + 1` of them, as
+/// `(row, column)`. Row 0 begins at `wrap.first`; a `\n` starts a row, and so does a row
+/// that is full. A rune takes the cells the grid gives it ([cells_of]): a wide rune that
+/// would hang past a row's end starts the next row, and a combining mark sits on the
+/// rune before it.
+pub let layout = pure (text: []rune, wrap: Wrap) -> [](i64, i64) => {
+  var out: [](i64, i64) = []
+  var row = 0
+  var col = wrap.first
+  for k in 0..<text.len() {
+    let r = text[k]
+    let w = cells_of(r)
+    if r != '\n' && col > 0 && col + w > wrap.cols {
+      row += 1
+      col = 0
+    }
+    out.push((row, col))
+    if r == '\n' {
+      row += 1
+      col = 0
     } else {
-      c += 1
-      if c >= wrap.cols {
-        r += 1
-        c = 0
+      col += w
+      if col >= wrap.cols {
+        row += 1
+        col = 0
       }
     }
   }
-  index_at(text, wrap, row, col)
+  out.push((row, col))
+  out
 }
+
+/// The cells rune `r` takes in the command line: the grid's ([width_of]), except that a
+/// control character (a tab pasted in) takes one, as it is drawn.
+pub let cells_of = pure (r: rune) -> i64 =>
+  if i64(r) < 0x20 || i64(r) == 0x7F { 1 } else { width_of(r) }
 
 // ── Words and lines ──────────────────────────────────────────────────────────
 

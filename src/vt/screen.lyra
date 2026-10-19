@@ -9,6 +9,8 @@ module vt
 //! the alternate screen, application cursor keys, autowrap, the cursor's shape and
 //! visibility, bracketed paste and the mouse's reporting modes.
 
+import std.collections.{ HashMap, hashmap_new }
+
 /// The screen, its cursor and its scrollback.
 pub struct Screen {
   cols: i64,
@@ -87,6 +89,11 @@ pub struct Screen {
   /// light scheme.
   fg_report: string,
   bg_report: string,
+  /// The combining marks written after cells' runes — accents, joiners, variation
+  /// selectors — each run of them once, its index what a cell's `attrs` holds
+  /// ([marks_of]); the first is none. `combining_ids` finds a run already kept.
+  combining: []string,
+  combining_ids: HashMap<string, i64>,
 }
 
 /// One completion the shell offered for the word at the caret (`../shell/shell.lyra`): the
@@ -154,6 +161,8 @@ pub let screen = pure (cols: i64, rows: i64) -> Screen => Screen {
   replies: [],
   fg_report: "e6e6/e1e1/dcdc",
   bg_report: "1818/1a1a/1e1e",
+  combining: [""],
+  combining_ids: hashmap_new(),
 }
 
 /// The most lines kept above the screen.
@@ -266,12 +275,14 @@ impl Screen {
   }
 
   // Text at the cursor, a cell a rune — two for a wide one (`width.lyra`), its second a
-  // [SPACER]; a zero-width rune is dropped, having no cell of its own.
+  // [SPACER]; a zero-width rune joins the cell before it ([combine]).
   let print = (self: mut, text: []rune) -> void => {
     for r in text {
       let w = width_of(r)
+      if w == 0 && i64(r) >= 0x300 { self.combine(r) }
       if w > 0 {
         if self.wrap_pending {
+          self.mark_wrapped()
           self.x = 0
           self.linefeed()
           self.wrap_pending = false
@@ -282,6 +293,7 @@ impl Screen {
           if self.autowrap && self.cols > 1 {
             self.clear_wide_at(self.y, self.x)
             self.lines[self.y][self.x] = blank_cell(self.pen.bg)
+            self.mark_wrapped()
             self.x = 0
             self.linefeed()
           } else {
@@ -309,6 +321,34 @@ impl Screen {
     } else {
       self.x = last + 1
     }
+  }
+
+  // A zero-width rune — a combining mark, a joiner, a variation selector — onto the cell
+  // just written (the first of a wide rune's two), as one more of its marks; dropped with
+  // no cell before it on the line, or once [COMBINING_LIMIT] runs of marks are kept.
+  let combine = (self: mut, r: rune) -> void => {
+    var x = if self.wrap_pending { self.x } else { self.x - 1 }
+    if x > 0 && self.lines[self.y][x].ch == SPACER { x -= 1 }
+    if x < 0 { return }
+    let c = self.lines[self.y][x]
+    let marks = "${self.combining[marks_of(c)]}${r}"
+    var id = 0
+    match self.combining_ids.get(marks) {
+      Some(n) => { id = n },
+      None => {
+        if self.combining.len() >= COMBINING_LIMIT { return }
+        id = self.combining.len()
+        self.combining.push(marks)
+        self.combining_ids.insert(marks, id)
+      },
+    }
+    self.lines[self.y][x].attrs = (c.attrs & STYLE_BITS) | (u32(id) << MARKS_SHIFT)
+  }
+
+  // The cursor's line goes on to the next: its last cell says so.
+  let mark_wrapped = (self: mut) -> void => {
+    let last = self.cols - 1
+    self.lines[self.y][last].attrs = self.lines[self.y][last].attrs | WRAPPED
   }
 
   // Before cell `x` of line `y` is written: if it is half of a wide rune, the other half
@@ -708,6 +748,13 @@ pub let runes_of = pure (line: []Cell) -> []rune => {
 
 /// The second cell of a wide rune: no rune of its own, drawn as part of the first.
 pub const SPACER: rune = '\x00'
+
+/// The runs of combining marks a screen keeps at most: what the bits above [MARKS_SHIFT]
+/// can count.
+const COMBINING_LIMIT: i64 = 1 << 20
+
+/// The bits of `attrs` below [MARKS_SHIFT]: the attributes themselves.
+const STYLE_BITS: u32 = 0xFFF
 
 /// The path of a `file://host/path` URL (OSC 7's form), its `%XX` escapes decoded; `""`
 /// when it is not one.

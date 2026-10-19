@@ -4,9 +4,9 @@ module vt
 //! rest — `wcwidth`'s answer, from Unicode's East Asian Width and emoji data.
 //!
 //! **What is left out**: the Indic scripts' many combining marks (their spacing marks are
-//! width 1, and terminals disagree); zero-width runes are dropped rather than combined
-//! into the cell before them, since a cell holds one rune; and a sequence joined by U+200D
-//! (a family emoji) is its parts, each wide.
+//! width 1, and terminals disagree); and a sequence joined by U+200D (a family emoji) is
+//! its parts, each wide. A zero-width rune joins the cell before it (`screen.lyra`'s
+//! `combine`).
 
 /// The cells `r` takes: 0, 1 or 2.
 pub let width_of = pure (r: rune) -> i64 => {

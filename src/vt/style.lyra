@@ -8,7 +8,8 @@ module vt
 //! (`../ui/theme.lyra`): the screen records what the program asked for, not what it looks
 //! like.
 
-/// One cell of the grid.
+/// One cell of the grid. Its combining marks, if any, are the screen's: `attrs` says which
+/// ([marks_of]), so that a cell stays four scalars.
 pub struct Cell {
   ch: rune,
   fg: u32,
@@ -42,6 +43,17 @@ pub const INVERSE: u32 = 128
 /// Drawn in the background's colour: there, but not shown.
 pub const HIDDEN: u32 = 256
 pub const STRIKE: u32 = 512
+/// Not a style: on a line's last cell, the line went on to the next one when the text
+/// reached it — a soft wrap, which a copy joins rather than breaks
+/// (`selection.lyra`). A cell written or erased loses it.
+pub const WRAPPED: u32 = 1024
+
+/// The bits of `attrs` from here up are not attributes but the combining marks after the
+/// cell's rune: an index into the screen's [Screen.combining], 0 for none ([marks_of]).
+pub const MARKS_SHIFT: u32 = 12
+
+/// Which of the screen's combining marks follow `c`'s rune; 0 for none.
+pub let marks_of = pure (c: Cell) -> i64 => i64(c.attrs >> MARKS_SHIFT)
 
 /// Every underline.
 pub const UNDERLINES: u32 = UNDERLINE | DOUBLE_UNDERLINE | CURLY_UNDERLINE

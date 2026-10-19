@@ -25,24 +25,40 @@ pub let selected_on = pure (a: Spot, b: Spot, line: i64, cols: i64) -> (i64, i64
 }
 
 /// The selected text: each line's selected runes without the blanks after them, a line
-/// break between lines. Lines scrolled out of the scrollback are skipped.
+/// break between lines — except after a line that wrapped onto the next ([WRAPPED]),
+/// which goes on into it whole, as the one line the program wrote. Lines scrolled out of
+/// the scrollback are skipped.
 pub let selection_text = pure (s: Screen, a: Spot, b: Spot) -> string => {
   let (from, to) = ordered(a, b)
-  var parts: []string = []
+  var out = ""
+  var joined = false
+  var leading = true
   for n in from.line..<=to.line {
     match s.line_at(n) {
       Some(i) => {
+        let cells = s.line(i)
         let (start, end) = selected_on(from, to, n, s.cols)
         var runes: []rune = []
-        for c in s.line(i).slice(start, end) { if c.ch != SPACER { runes.push(c.ch) } }
+        for c in cells.slice(start, end) {
+          if c.ch != SPACER {
+            runes.push(c.ch)
+            for m in s.combining[marks_of(c)].to_runes() { runes.push(m) }
+          }
+        }
+        let wraps = n < to.line && end == cells.len() && cells.len() > 0 && cells[
+          cells.len() - 1
+        ].attrs & WRAPPED != 0
         var kept = runes.len()
-        while kept > 0 && runes[kept - 1] == ' ' { kept -= 1 }
-        parts.push([r in runes.slice(0, kept) | "${r}"].join(""))
+        if !wraps { while kept > 0 && runes[kept - 1] == ' ' { kept -= 1 } }
+        if !leading && !joined { out = "${out}\n" }
+        out = "${out}${[r in runes.slice(0, kept) | "${r}"].join("")}"
+        joined = wraps
+        leading = false
       },
       None => {},
     }
   }
-  parts.join("\n")
+  out
 }
 
 /// The word around the cell at column `col` of line `line` (absolute), as columns `(start,

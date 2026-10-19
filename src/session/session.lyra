@@ -389,7 +389,7 @@ pub let draw_session = (
       text_dy: text_dy,
       pixel: pixel,
     }
-    draw_line(list, theme, fonts, at, s.shown.line(i), upto)
+    draw_line(list, theme, fonts, at, s.shown.line(i), s.shown.combining, upto)
   }
   let cursor = Vec2 {
     x: origin.x + f32(s.shown.x) * cell.x,
@@ -459,7 +459,15 @@ pub let draw_session = (
         text_dy: text_dy,
         pixel: pixel,
       }
-      draw_line(list, theme, fonts, prompt_at, s.shown.line(i), prompt_end)
+      draw_line(
+        list,
+        theme,
+        fonts,
+        prompt_at,
+        s.shown.line(i),
+        s.shown.combining,
+        prompt_end
+      )
       let place = Place {
         origin: Vec2 { x: origin.x + BOX_INSET, y: box_top + BOX_PADDING + cell.y + BOX_GAP },
         cell: cell,

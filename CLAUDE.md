@@ -90,9 +90,23 @@ shell ⇄ bindings.pty ──bytes──▶ vt.Parser ──[]Action──▶ vt
 - **The alternate screen keeps no scrollback and shows none**: lines leaving it are not
   history, and a session draws from the screen's first row while it is on (`base`). The main
   screen behind it is fitted on resize.
-- **A wide rune is a cell and a `SPACER`**; writing over either half blanks the other, a wide
-  rune with one column left wraps first, and a zero-width rune is dropped. Drawing puts a
-  wide glyph on its two cells alone.
+- **A wide rune is a cell and a `SPACER`**; writing over either half blanks the other, and a
+  wide rune with one column left wraps first. Drawing puts a wide glyph on its two cells
+  alone, centred. The command line lays runes out the same way (`editor.layout`, `cells_of`):
+  a wide rune two columns, wrapped whole, a combining mark none.
+- **A zero-width rune joins the cell before it** (`Screen.combine`): a cell's combining marks
+  are the screen's `combining` table, and the bits of its `attrs` above `MARKS_SHIFT` say
+  which run (`marks_of`, 0 for none) — so a cell stays four scalars and width, words and
+  selection read its base rune as before. Drawing and copying put the marks after it; a
+  marked cell is drawn alone, so a mark's own advance cannot move what follows.
+- **A soft wrap is `WRAPPED` on a line's last cell**, set as the text goes on to the next
+  line; a copy joins such a line to the next, its trailing blanks kept. Being a cell's bit
+  it travels with the line through scrolls, scrollback and inserts, and a write or erase of
+  that cell clears it.
+- **Glyphs a family lacks come from fallback fonts** (`settings.fallback_fonts`: Arial
+  Unicode or Noto Sans CJK, then Apple Symbols or DejaVu Sans), merged into every face
+  (`bindings.imgui`'s `merge_font_file`). Colour emoji are not drawn: stb_truetype has no
+  colour, and ImGui's 16-bit `ImWchar` reaches only the BMP.
 - **The grid's selection is absolute lines and column boundaries** (`vt.Spot`), so it stays
   on its text as output scrolls. The mouse selects above the command line at a prompt, and
   with Shift when a program has asked for the mouse (`?1000`/`?1002`/`?1003`, SGR `?1006` or

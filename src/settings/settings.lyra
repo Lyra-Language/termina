@@ -370,6 +370,35 @@ pub let family_named = pure (
   if families.len() > 0 { Some(families[0]) } else { None }
 }
 
+/// The fonts drawn from for the glyphs a family lacks — CJK, then symbols: of each group in
+/// [FALLBACKS] the first installed. Merged into every face, in this order
+/// (`../sulafat.lyra`).
+pub let fallback_fonts = () -> []string => {
+  var out: []string = []
+  for group in FALLBACKS {
+    var found = ""
+    for path in group { if found == "" && exists(path) { found = path } }
+    if found != "" { out.push(found) }
+  }
+  out
+}
+
+/// The fallback fonts, a group each, where macOS and the Linux distributions keep them.
+/// Arial Unicode covers Chinese, Japanese and Korean in one file of 23 MB (Hangul alone
+/// is 55 MB in Apple SD Gothic Neo); Noto Sans CJK likewise on Linux.
+const FALLBACKS: [][]string = [
+  [
+    "/System/Library/Fonts/Supplemental/Arial Unicode.ttf",
+    "/System/Library/Fonts/Hiragino Sans GB.ttc",
+    "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc",
+    "/usr/share/fonts/noto-cjk/NotoSansCJK-Regular.ttc",
+    "/usr/share/fonts/google-noto-cjk/NotoSansCJK-Regular.ttc",
+    "/usr/share/fonts/google-noto-sans-cjk-vf-fonts/NotoSansCJK-VF.ttc",
+    "/usr/share/fonts/truetype/droid/DroidSansFallbackFull.ttf",
+  ],
+  ["/System/Library/Fonts/Apple Symbols.ttf", "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf"],
+]
+
 /// The families Sulafat knows by name and where each platform keeps them.
 const KNOWN: []FontFamily = [
   FontFamily {

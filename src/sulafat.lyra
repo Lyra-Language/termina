@@ -22,6 +22,7 @@ import bindings.imgui.{
   destroy_host,
   set_window_title,
   font_file,
+  merge_font_file,
   push_font_float,
   pop_font,
   begin,
@@ -73,6 +74,7 @@ import settings.{
   save_settings,
   settings_to_json,
   font_families,
+  fallback_fonts,
   family_for,
   Settings,
   FontFamily,
@@ -367,12 +369,24 @@ let load_fonts = (host: Host, families: []FontFamily, s: Settings) -> Fonts => {
   }
   let Some(family) = family_for(s, families) else { return none }
   match face(host, family.regular, s.font_size) {
-    Some(regular) => Fonts {
-      regular: Some(regular),
-      bold: face(host, family.bold, s.font_size),
-      italic: face(host, family.italic, s.font_size),
-      bold_italic: face(host, family.bold_italic, s.font_size),
-      size: s.font_size,
+    Some(regular) => {
+      let fonts = Fonts {
+        regular: Some(regular),
+        bold: face(host, family.bold, s.font_size),
+        italic: face(host, family.italic, s.font_size),
+        bold_italic: face(host, family.bold_italic, s.font_size),
+        size: s.font_size,
+      }
+      // What the family lacks — CJK, symbols — drawn from the fallback fonts, in every face.
+      let fallbacks = fallback_fonts()
+      for f in [fonts.regular, fonts.bold, fonts.italic, fonts.bold_italic] {
+        match f {
+          Some(font) =>
+            for path in fallbacks { let _ = merge_font_file(host, font, path) },
+          None => {},
+        }
+      }
+      fonts
     },
     None => none,
   }

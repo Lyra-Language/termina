@@ -69,6 +69,8 @@ import editor.{
   Wrap,
   position,
   row_count,
+  layout,
+  cells_of,
   index_at,
   rune_at,
   shell_word_at,
@@ -401,8 +403,8 @@ impl CommandLine {
     }
     let over = is_window_hovered() && row >= 0
     if over { set_mouse_cursor(MOUSE_CURSOR_TEXT_INPUT) }
-    // A caret goes to the nearer edge of a cell; a word is the rune in the cell.
-    let caret = index_at(self.edit.text, at.wrap, row, (fx + 0.5).floor())
+    // A caret goes to the nearer edge of a rune; a word is the rune in the cell.
+    let caret = index_at(self.edit.text, at.wrap, row, fx)
     let under = rune_at(self.edit.text, at.wrap, row, fx.floor())
     if over && is_mouse_clicked(0) {
       let clicks = get_mouse_clicked_count(0)
@@ -567,30 +569,46 @@ impl CommandLine {
   let draw = (self, at: Place, list: DrawList, style: Style, focused: bool) -> void => {
     let text = self.edit.text
     let (a, b) = self.edit.selection()
-    var row = 0
-    var col = at.wrap.first
+    let places = layout(text, at.wrap)
+    // Text in runs of runes a cell wide on one row; a wide rune alone, across its two
+    // cells, as the grid draws one — a run's glyphs are spaced by the font, not the grid.
     var run: []u8 = []
-    var run_col = col
-    for k in 0..<=text.len() {
-      let ends_row = k == text.len() || text[k] == '\n'
+    var run_row = 0
+    var run_col = 0
+    var run_end = 0
+    for k in 0..<text.len() {
+      let (row, col) = places[k]
+      let r = text[k]
+      let w = cells_of(r)
       if k >= a && k < b {
         // A selected line break shows as a sliver, so the selection visibly spans it.
-        let w = if ends_row { at.cell.x * 0.5 } else { at.cell.x }
+        let width = if r == '\n' { at.cell.x * 0.5 } else { f32(w) * at.cell.x }
         let p = cell_pos(at, row, col)
-        list.add_rect_filled(p, Vec2 { x: p.x + w, y: p.y + at.cell.y }, style.selection)
+        list.add_rect_filled(
+          p,
+          Vec2 { x: p.x + width, y: p.y + at.cell.y },
+          style.selection
+        )
       }
-      if ends_row || col + 1 >= at.wrap.cols {
-        if !ends_row { push_rune(run, i64(text[k])) }
-        flush(list, at, row, run_col, run, style.text)
+      let apart = r == '\n' || w == 2 || row != run_row || col != run_end
+      if apart && run.len() > 0 {
+        flush(list, at, run_row, run_col, run, style.text)
         run = []
-        row += 1
-        col = 0
-        run_col = 0
-      } else {
-        push_rune(run, i64(text[k]))
-        col += 1
+      }
+      if r != '\n' {
+        if run.len() == 0 {
+          run_row = row
+          run_col = col
+        }
+        push_rune(run, i64(r))
+        run_end = col + w
+        if w == 2 {
+          flush(list, at, run_row, run_col, run, style.text)
+          run = []
+        }
       }
     }
+    flush(list, at, run_row, run_col, run, style.text)
     if focused {
       let (r, c) = position(text, at.wrap, self.edit.cursor)
       let p = cell_pos(at, r, c)
