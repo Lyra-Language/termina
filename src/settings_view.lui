@@ -1,0 +1,107 @@
+<!--
+  Termina's settings, as markup: `../lyra/build/lui src/settings_view.lui` writes
+  settings_view.lyra beside it. The Settings tab draws it (`ui.settings_panel`), with the
+  sliders and colour editors — which bindings.imgui.ui has no elements for yet — drawn in
+  its Slots, and carries out its events.
+-->
+
+<script>
+  import settings.{ Settings, FontFamily, file_family, can_save_as, saved_colours, THEME_NAMES }
+
+  /// What the settings can be asked to do; the Settings tab carries it out. The sliders and
+  /// colours are drawn in Slots and change the settings themselves.
+  pub data SettingsEvent =
+    UseFamily(string)
+    | ChooseFontFile
+    | UseTheme(string)
+    | UseSavedTheme(string)
+    | NameTheme(string)
+    | SaveThemeAs
+    | DeleteSavedTheme
+    | ToggleBoldBright
+    | ResetSettings
+
+  /// The font the Family list shows: a chosen file's own name, else the family's.
+  let family_shown = pure (s: Settings) -> string =>
+    if s.font_file != "" { file_family(s.font_file).name } else { s.font_family }
+
+  /// The colours the settings edit, by label and the Slot drawing each (`colour <name>`),
+  /// in their groups: the grid's own, the sections', the tabs', the command line's.
+  const COLOURS = [("Text", "fg"), ("Background", "bg"), ("Cursor", "cursor"), ("Selection", "selection")]
+  const SECTION_COLOURS = [("Input", "input"), ("Output", "output"), ("Input text", "input_text")]
+  const TAB_COLOURS = [("Tab", "tab"), ("Under the pointer", "tab_hovered"), ("Shown", "tab_selected")]
+  const COMMAND_LINE_COLOURS = [("Text", "editor_text"), ("Completion menu", "menu"), ("Chosen completion", "menu_chosen")]
+
+  /// Whether the theme in use is one the user saved.
+  let is_saved = pure (s: Settings) -> bool => saved_colours(s.themes, s.theme_name) != None
+</script>
+
+<!-- The whole of the Settings tab, for the settings as they are and the name typed to
+     save a theme as. -->
+<component name="settings_view" props="s: Settings, families: []FontFamily, typed: string" event="SettingsEvent">
+  <style>
+    Text.group { color: #9aa0a6 }
+  </style>
+  <SeparatorText>Font</SeparatorText>
+  <Form>
+    <Field label="Family">
+      <Combo label="##family" id="combo Family" preview={family_shown(s)}>
+        <for each={f in families}>
+          <Selectable selected={s.font_file == "" && f.name == s.font_family} on_select={UseFamily(f.name)}>{f.name}</Selectable>
+        </for>
+      </Combo>
+      <Button id="button Other Font File" on_click={ChooseFontFile}>Other Font File…</Button>
+    </Field>
+    <Field label="Size">
+      <Slot name="font size"/>
+    </Field>
+    <Field label="Line spacing">
+      <Slot name="line spacing"/>
+    </Field>
+  </Form>
+
+  <SeparatorText>Colours</SeparatorText>
+  <Form>
+    <Field label="Theme">
+      <Combo label="##theme" id="combo Theme" preview={s.theme_name}>
+        <for each={name in THEME_NAMES}>
+          <Selectable selected={name == s.theme_name} on_select={UseTheme(name)}>{name}</Selectable>
+        </for>
+        <if test={s.themes.len() > 0}>
+          <Separator/>
+        </if>
+        <for each={t in s.themes}>
+          <Selectable id="saved {t.name}" selected={t.name == s.theme_name} on_select={UseSavedTheme(t.name)}>{t.name}</Selectable>
+        </for>
+      </Combo>
+    </Field>
+    <Field label="Theme name">
+      <InputText label="##themename" id="field Theme name" value={typed} on_change={NameTheme} style="width: 14em"/>
+      <Button id="button Save Theme As" enabled={can_save_as(typed)} on_click={SaveThemeAs}>Save Theme As…</Button>
+      <if test={is_saved(s)}>
+        <Button id="button Delete Theme" on_click={DeleteSavedTheme}>Delete</Button>
+      </if>
+    </Field>
+    <for each={c in COLOURS}>
+      <Field label={c.0}><Slot name="colour {c.1}"/></Field>
+    </for>
+    <Text class="group">Sections</Text>
+    <for each={c in SECTION_COLOURS}>
+      <Field label={c.0}><Slot name="colour {c.1}"/></Field>
+    </for>
+    <Text class="group">Tabs</Text>
+    <for each={c in TAB_COLOURS}>
+      <Field label={c.0}><Slot name="colour {c.1}"/></Field>
+    </for>
+    <Text class="group">Command line</Text>
+    <for each={c in COMMAND_LINE_COLOURS}>
+      <Field label={c.0}><Slot name="colour {c.1}"/></Field>
+    </for>
+  </Form>
+  <Text class="group">ANSI colours</Text>
+  <Slot name="ansi"/>
+  <Checkbox id="checkbox Bold is bright" checked={s.bold_is_bright} on_toggle={ToggleBoldBright}>Draw bold text in bright colours</Checkbox>
+
+  <Separator/>
+  <Button id="button Reset" on_click={ResetSettings}>Reset to Defaults</Button>
+</component>

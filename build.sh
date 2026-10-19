@@ -19,6 +19,16 @@ if [ ! -x "$LYRAC" ]; then
   exit 1
 fi
 
+# The settings and menus are markup (src/*.lui), generated into the modules beside them by
+# lui, which sits beside lyrac: a module older than its markup is refused here rather than
+# built. `../lyra/build/lui src/<name>.lui` regenerates one.
+readonly LUI="$(dirname "$LYRAC")/lui"
+if [ -x "$LUI" ]; then
+  "$LUI" --check "$ROOT"/src/*.lui
+else
+  printf 'lui not found beside lyrac: the markup is not checked against its modules\n' >&2
+fi
+
 mkdir -p "$ROOT/build"
 "$LYRAC" build -o "$ROOT/build/termina" "$ROOT/src/termina.lyra"
 "$LYRAC" build -o "$ROOT/build/vttest" "$ROOT/src/vttest.lyra"

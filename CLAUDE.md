@@ -25,6 +25,8 @@ SDL_VIDEODRIVER=dummy build/uitest   # the command line on a headless ImGui host
                             #    injected keys, typing and clicks (double-click included)
 build/menutest              # the Mac's menu bar, installed and read back (SDL's real video
                             #    driver, no window)
+../lyra/build/lui src/menus_view.lui     # regenerate a markup's module after editing it
+                            #    (or `lui --watch src/*.lui`); build.sh refuses a stale one
 ```
 
 ## Architecture
@@ -42,8 +44,9 @@ shell ⇄ bindings.pty ──bytes──▶ vt.Parser ──[]Action──▶ vt
 | `src/termina.lyra` | `main`: the ImGui host, the frame loop, the tabs and their bar, fonts |
 | `assets/` | the icon: `termina.svg` the source; `Termina.icns` (the app's) and `termina.png` made from it (`assets/README.md`) |
 | `src/session/session.lyra` | one tab: its PTY, screen, `Mode` and command line; read each frame, drawn and given keys when shown |
-| `src/ui/tabs.lyra` | the tab bar (reorderable, its order read back), the tab shortcuts, and the Mac's menu bar |
-| `src/ui/menu_bar.lyra` | the menu bar Termina draws off macOS: the Mac's menus as ImGui's main menu bar |
+| `src/ui/tabs.lyra` | the tab bar (reorderable, its order read back) and the tab shortcuts |
+| `src/menus_view.lui` | the menus as `.lui` markup, one tree for both bars; `menus_view.lyra` is generated from it (edit the `.lui`) |
+| `src/menus/menus.lyra` | the menus shown: installed in the Mac's bar (once, greyed each frame) or drawn as ImGui's main menu bar elsewhere |
 | `src/menutest.lyra` | the menu bar installed and read back |
 | `src/shell/shell.lyra` | shell integration (zsh's `.zshenv` through `ZDOTDIR`, bash's rc file through `--rcfile`): the marks, Tab's completion widget and its request file, the history files, what Return sends |
 | `src/editor/editor.lyra` | the command line's editor — text, caret, selection, motions, words, undo, layout; **pure** |
@@ -57,7 +60,8 @@ shell ⇄ bindings.pty ──bytes──▶ vt.Parser ──[]Action──▶ vt
 | `src/vt/selection.lyra` | a selection on the screen and scrollback: its text, a word's span; **pure** |
 | `src/vt/style.lyra` | a `Cell`'s colours and attributes, and SGR on the `Pen` that writes them; **pure** |
 | `src/settings/settings.lyra` | the user's settings, the themes offered, the file (read leniently), the monospaced families found |
-| `src/ui/settings_window.lyra` | the settings, drawn in the Settings tab: font family or file, size, spacing, theme (saved ones too), every colour, bold as bright |
+| `src/settings_view.lui` | the Settings tab as `.lui` markup — font family or file, size, spacing, theme (saved ones too), every colour, bold as bright; `settings_view.lyra` is generated from it |
+| `src/ui/settings_window.lyra` | the Settings tab drawn: the markup rendered, its events carried out, its Slots (sliders, colour editors) drawn |
 | `src/ui/theme.lyra` | recorded colours → pixels: the theme's own pair, ANSI 16, xterm's 256; inverse, dim, hidden |
 | `src/ui/grid.lyra` | a screen line drawn: background runs, text runs of one style, faces, underlines, strike |
 | `src/vttest.lyra` | the checks: byte strings against actions and screens, the editor on text, real programs, zsh and bash on a PTY (each skipped, and said so, where not installed) |
@@ -77,21 +81,25 @@ shell ⇄ bindings.pty ──bytes──▶ vt.Parser ──[]Action──▶ vt
   changing title must not move. The grid is a child window under the bar, so it scrolls
   alone; focus is asked of root and child (`FOCUSED_FLAGS_ROOT_AND_CHILD_WINDOWS`), and a
   frame whose keys were a tab shortcut gives the tab none.
-- **On a Mac the menu bar is Termina's own** (`ui.install_menus`, through `bindings.menubar`),
-  replacing SDL's, whose Window ▸ Close took ⌘W and closed the window — the app — not the
-  tab. Shell holds New Tab ⌘T, Show Previous/Next Tab ⌘⇧[ ⌘⇧] (spelled `{` `}`, as AppKit
-  matches shifted keys) and Close Tab ⌘W; they arrive through `poll_menu`, and
-  `tab_command` leaves those keys alone when the bar is there, since AppKit hands a key
-  equivalent to SDL too. ⌘1–⌘9 have no items and stay keys. View holds the font's size —
-  Default Font Size ⌘0, Bigger ⌘=, Smaller ⌘- — a point at a time within the settings'
-  range, kept as any setting is (`FontBigger`, `FontSmaller`, `FontDefault`).
-- **Off macOS Termina draws the same menus** (`ui.menu_bar`, ImGui's main menu bar): Termina
-  (Settings…, Quit), Shell, Edit, View, and Window (Minimize, Maximize, the tabs). A choice
-  answers the Mac's tag (`MENU_*`; a tab is `MENU_TAB + k`), so the loop carries out both
-  bars' choices in one place; Quit, Minimize and Maximize are the host's, done in the bar.
-  There the keys stay keys and an item only shows them (Ctrl+Shift+…, Ctrl+Z for Undo; the
-  font's size Ctrl+Shift+= - 0, since Ctrl+- is readline's undo).
-  The bar takes its height off the viewport's work area, which the terminal's window fills.
+- **The menus are one tree** (`menus_view.lui`, built each frame), shown two ways by
+  `menus/menus.lyra`; a choice is a `MenuChoice`, carried out in one place in the loop.
+  An item's choice must not depend on the frame (Show Previous Tab, not the tab it was):
+  the Mac's bar sends what it was installed with.
+- **On a Mac the menu bar is Termina's own** (`menus.install_native`, through
+  `bindings.menubar`), replacing SDL's, whose Window ▸ Close took ⌘W and closed the window —
+  the app — not the tab. Installed once — its shape never changes there, the tabs being
+  listed only in the drawn bar — and greyed each frame from the tree (`sync_native`). Shell
+  holds New Tab ⌘T, Show Previous/Next Tab ⌘⇧[ ⌘⇧] (spelled `{` `}`, as AppKit matches
+  shifted keys) and Close Tab ⌘W, and `tab_command` leaves those keys alone when the bar is
+  there, since AppKit hands a key equivalent to SDL too. ⌘1–⌘9 have no items and stay keys.
+  View holds the font's size — Default Font Size ⌘0, Bigger ⌘=, Smaller ⌘- — a point at a
+  time within the settings' range, kept as any setting is (`FontBigger`, `FontSmaller`,
+  `FontDefault`). The Window menu is macOS's standard one.
+- **Off macOS Termina draws the same tree** (`menus.draw_menu_bar`, ImGui's main menu bar),
+  with Quit in the Termina menu and a Window menu (Minimize, Maximize, the tabs, Alt+1–9).
+  There the keys stay keys and an item only shows them (Ctrl+Shift+…, Ctrl+Z for Undo,
+  Ctrl+PgUp/PgDn; the font's size Ctrl+Shift+= - 0, since Ctrl+- is readline's undo). The
+  bar takes its height off the viewport's work area, which the terminal's window fills.
 - **Edit's items are one path with their keys** (`EditAction`): `CommandLine.edit_action` at a
   prompt, and while a program runs only Paste, sent bracketed when the program set
   `?2004` (`session.pasted`). With the menu bar the command line leaves ⌘Z/⌘X/⌘C/⌘V/⌘A to
@@ -172,7 +180,11 @@ shell ⇄ bindings.pty ──bytes──▶ vt.Parser ──[]Action──▶ vt
   its background, a light one's darken it (`sections_of`). The settings edit each, and an
   edit makes the theme `Custom`. Only ImGui's own widgets — the settings' fields, the
   menus — keep ImGui's style.
-- **The settings are a tab** (`ui.settings_panel` in `draw_window`): Settings… opens a
+- **The settings are a tab** (`ui.settings_panel` in `draw_window`), written as markup
+  (`settings_view.lui`): `bindings.imgui.ui` has no slider or colour editor yet, so those
+  are drawn by hand in the markup's Slots, on a module-level copy of the settings
+  (`drawing`) — `render`'s `seen` cannot reach the caller's locals — and the rest are
+  events (`SettingsEvent`, `carry_out`). Settings… opens a
   Settings tab at the tab bar's right end, out of the tabs' order (`TAB_ITEM_FLAGS_TRAILING`,
   as `+` is), and shows it; it fills the tabs' area in the interface's font. Its × or ⌘W
   while it is shown closes it; a terminal's tab chosen by a key or a click takes over. The

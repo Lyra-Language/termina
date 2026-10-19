@@ -16,6 +16,10 @@
 
 import std.env.{ lookup }
 import bindings.imgui.{
+  request_quit,
+  minimize,
+  toggle_maximized,
+  is_maximized,
   create_host,
   begin_frame,
   end_frame,
@@ -68,7 +72,22 @@ import session.{
   Session,
   Look,
 }
-import bindings.menubar.{ poll_menu, set_enabled }
+import menus.{
+  install_native,
+  sync_native,
+  native_choices,
+  draw_menu_bar,
+  tab_command_of
+}
+import menus_view.{
+  menus_view,
+  MenuChoice,
+  Edit,
+  QuitApp,
+  MinimizeWindow,
+  ToggleMaximized,
+  EDIT_ACTIONS
+}
 import bindings.sdl3.{ platform }
 import settings.{
   settings_path,
@@ -93,14 +112,9 @@ import ui.{
   FontSmaller,
   FontDefault,
   tab_command,
-  menu_command,
-  install_menus,
-  menu_bar,
   tab_bar,
   TabBar,
   TabLabel,
-  edit_action_of,
-  EDIT_ITEMS,
   Fonts,
   Theme,
   TabCommand,
@@ -120,8 +134,13 @@ let main = () -> void => {
   // unhinted, and so does Termina there.
   if platform() != "macOS" { set_font_hinting(host, true) }
   // On a Mac, Termina's own menu bar in place of SDL's, whose Window ▸ Close takes ⌘W and
-  // would close the window, and so quit, rather than the tab.
-  let menus = install_menus()
+  // would close the window, and so quit, rather than the tab; elsewhere Termina draws it.
+  let installed = if platform() == "macOS" {
+    install_native([menus_view([], 0, [], true, false)])
+  } else {
+    None
+  }
+  let menus = installed != None
   // The user's settings, the font families on offer, and the faces and theme made of them.
   let settings_file = settings_path()
   var settings = load_settings(settings_file)
@@ -169,23 +188,27 @@ let main = () -> void => {
     if sessions.len() == 0 { break }
 
     var command = tab_command(active, sessions.len(), menus)
-    // The menus' choices: the Mac's bar, or off macOS the one Termina draws, its items the
-    // same and carried out the same.
-    var chosen: []i32 = []
-    while let Some(tag) = poll_menu() { chosen.push(tag) }
-    if !menus {
-      var enabled: []bool = []
-      for (_, a) in EDIT_ITEMS { enabled.push(sessions[active].can(a)) }
-      match menu_bar(host, tab_labels(sessions, home), active, enabled, (_) => {}) {
-        Some(tag) => chosen.push(tag),
-        None => {},
-      }
+    // The menus' choices: the Mac's bar, or off macOS the one Termina draws — one tree, its
+    // items carried out the same. Edit's would-do-nothing items are greyed either way.
+    let can = [a in EDIT_ACTIONS | sessions[active].can(a) | a]
+    let tree = [
+      menus_view(tab_labels(sessions, home), active, can, menus, is_maximized(host))
+    ]
+    let chosen = match installed {
+      Some(choices) => {
+        sync_native(tree)
+        native_choices(choices)
+      },
+      None => draw_menu_bar(tree, (_) => {}),
     }
-    for tag in chosen {
-      match edit_action_of(tag) {
+    for choice in chosen {
+      match choice {
         // Edit's items act on the tab shown.
-        Some(a) => sessions[active].edit_action(a),
-        None => match menu_command(tag, active, sessions.len()) {
+        Edit(a) => sessions[active].edit_action(a),
+        QuitApp => request_quit(host),
+        MinimizeWindow => minimize(host),
+        ToggleMaximized => toggle_maximized(host),
+        _ => match tab_command_of(choice, active, sessions.len()) {
           NoCommand => {},
           c => { command = c },
         },
@@ -294,10 +317,6 @@ let main = () -> void => {
         None => {},
       }
       next_id += 1
-    }
-    // Edit's items greyed out while they would do nothing in the tab shown.
-    if menus {
-      for (tag, a) in EDIT_ITEMS { set_enabled(tag, sessions[active].can(a)) }
     }
     let now = tab_title(sessions[active], home)
     if now != title {
