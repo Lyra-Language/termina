@@ -80,12 +80,15 @@ shell ⇄ bindings.pty ──bytes──▶ vt.Parser ──[]Action──▶ vt
   tab. Shell holds New Tab ⌘T, Show Previous/Next Tab ⌘⇧[ ⌘⇧] (spelled `{` `}`, as AppKit
   matches shifted keys) and Close Tab ⌘W; they arrive through `poll_menu`, and
   `tab_command` leaves those keys alone when the bar is there, since AppKit hands a key
-  equivalent to SDL too. ⌘1–⌘9 have no items and stay keys.
+  equivalent to SDL too. ⌘1–⌘9 have no items and stay keys. View holds the font's size —
+  Default Font Size ⌘0, Bigger ⌘=, Smaller ⌘- — a point at a time within the settings'
+  range, kept as any setting is (`FontBigger`, `FontSmaller`, `FontDefault`).
 - **Off macOS Sulafat draws the same menus** (`ui.menu_bar`, ImGui's main menu bar): Sulafat
-  (Settings…, Quit), Shell, Edit, and Window (Minimize, Maximize, the tabs). A choice
+  (Settings…, Quit), Shell, Edit, View, and Window (Minimize, Maximize, the tabs). A choice
   answers the Mac's tag (`MENU_*`; a tab is `MENU_TAB + k`), so the loop carries out both
   bars' choices in one place; Quit, Minimize and Maximize are the host's, done in the bar.
-  There the keys stay keys and an item only shows them (Ctrl+Shift+…, Ctrl+Z for Undo).
+  There the keys stay keys and an item only shows them (Ctrl+Shift+…, Ctrl+Z for Undo; the
+  font's size Ctrl+Shift+= - 0, since Ctrl+- is readline's undo).
   The bar takes its height off the viewport's work area, which the terminal's window fills.
 - **Edit's items are one path with their keys** (`EditAction`): `CommandLine.edit_action` at a
   prompt, and while a program runs only Paste, sent bracketed when the program set
@@ -110,6 +113,12 @@ shell ⇄ bindings.pty ──bytes──▶ vt.Parser ──[]Action──▶ vt
   line; a copy joins such a line to the next, its trailing blanks kept. Being a cell's bit
   it travels with the line through scrolls, scrollback and inserts, and a write or erase of
   that cell clears it.
+- **The terminal's text is hinted off macOS** (`bindings.imgui`'s `set_font_hinting`:
+  FreeType for the fonts from files, the faces and their fallbacks): a Linux display is most
+  often a pixel a point, where stb_truetype's unhinted stems straddle two columns and look
+  soft. The interface — tabs, menus, settings — keeps ImGui's own font as stb_truetype
+  draws it, hinted only where the cells are. A Mac draws text unhinted, and Sulafat there does
+  too. Hinted advances are whole pixels, so a cell is.
 - **Glyphs a family lacks come from fallback fonts** (`settings.fallback_fonts`: Arial
   Unicode or Noto Sans CJK, then Apple Symbols or DejaVu Sans), merged into every face
   (`bindings.imgui`'s `merge_font_file`). Colour emoji are not drawn: stb_truetype has no

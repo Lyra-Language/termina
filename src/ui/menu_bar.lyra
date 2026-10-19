@@ -1,6 +1,7 @@
 module ui
 //! The menu bar off macOS, drawn by Sulafat along the window's top: the Mac's menus —
-//! Sulafat (Settings…, Quit), Shell (the tabs), Edit and Window — with the same items. A
+//! Sulafat (Settings…, Quit), Shell (the tabs), Edit, View (the font's size) and Window —
+//! with the same items. A
 //! choice answers the tag the Mac's bar sends for it (`tabs.lyra`'s `MENU_*`), so one piece
 //! of `../sulafat.lyra` carries out both; Quit, Minimize and Maximize are the host's and
 //! done here. ImGui's main menu bar takes its height off the viewport's work area, which
@@ -15,6 +16,11 @@ import bindings.imgui.{
   Host,
   begin_main_menu_bar,
   end_main_menu_bar,
+  push_style_var_vec2,
+  pop_style_var,
+  get_style,
+  Vec2,
+  STYLE_VAR_FRAME_PADDING,
   begin_menu,
   end_menu,
   menu_item,
@@ -37,7 +43,18 @@ pub let menu_bar = (
   after_item: (string) -> void
 ) -> Maybe<i32> => {
   var chosen: Maybe<i32> = None
-  if !begin_main_menu_bar() { return None }
+  // Taller than ImGui's own, the menus' names with room above and below: the bar's height
+  // is its frame padding's, around the text, and the names are placed by it too — so it
+  // stays pushed until the bar ends.
+  let pad = get_style().frame_padding()
+  push_style_var_vec2(
+    STYLE_VAR_FRAME_PADDING,
+    Vec2 { x: pad.x, y: pad.y + MENU_BAR_EXTRA }
+  )
+  if !begin_main_menu_bar() {
+    pop_style_var()
+    return None
+  }
   if open_menu("Sulafat", after_item) {
     if menu_choice(
       "Settings…",
@@ -91,6 +108,24 @@ pub let menu_bar = (
     }
     end_menu()
   }
+  if open_menu("View", after_item) {
+    if menu_choice("Default Font Size", "Ctrl+Shift+0", true, after_item) {
+      chosen = Some(MENU_DEFAULT_SIZE)
+    }
+    if menu_choice(
+      "Bigger",
+      "Ctrl+Shift+=",
+      true,
+      after_item
+    ) { chosen = Some(MENU_BIGGER) }
+    if menu_choice(
+      "Smaller",
+      "Ctrl+Shift+-",
+      true,
+      after_item
+    ) { chosen = Some(MENU_SMALLER) }
+    end_menu()
+  }
   if open_menu("Window", after_item) {
     if menu_choice("Minimize", "", true, after_item) { minimize(host) }
     let zoom = if is_maximized(host) { "Restore" } else { "Maximize" }
@@ -107,8 +142,12 @@ pub let menu_bar = (
     end_menu()
   }
   end_main_menu_bar()
+  pop_style_var()
   chosen
 }
+
+/// Points added above and below the menus' names on the bar.
+const MENU_BAR_EXTRA: f32 = 4.0
 
 /// Window ▸ a tab: the first's tag, the rest after it ([menu_command] reads them).
 pub const MENU_TAB: i32 = 100

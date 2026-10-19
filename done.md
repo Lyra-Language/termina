@@ -19,6 +19,7 @@ Finished work, moved from `todo.md` with its section; the rules it left behind a
 - **[DONE 10/16] Tabs in the Mac menu bar** — Shell ▸ New Tab, Show Previous/Next Tab, Close Tab; replaces SDL's bar, whose ⌘W closed the app.
 - **[DONE 10/16] An Edit menu** — Undo, Redo, Cut, Copy, Paste, Select All; greyed when they would do nothing.
 - **[DONE 10/16] Copy from the grid** — the grid's selection; Edit ▸ Copy takes it when the command line has none.
+- **[DONE 10/19] The font's size from the keyboard** — View ▸ Bigger ⌘=, Smaller ⌘-, Default Font Size ⌘0 (Ctrl+Shift+= - 0 off macOS).
 - **[DONE 10/19] A menu bar off macOS** — the Mac's menus drawn as ImGui's main menu bar, its choices the same tags; Settings… is in it.
 
 ## M1 — a classic terminal
@@ -33,6 +34,7 @@ Finished work, moved from `todo.md` with its section; the rules it left behind a
 - **[DONE 10/16] Alt as Meta off macOS** — Alt+key and Alt+Backspace as Escape-prefixed.
 - **[DONE 10/19] Copying joins soft wraps** — a line the text went on from carries `WRAPPED` on its last cell; a copy joins it to the next.
 - **[DONE 10/19] Glyphs for CJK and symbols** — fallback fonts merged into every face (`merge_font_file`, new in `bindings.imgui`); wide glyphs centred in their cells.
+- **[DONE 10/19] Crisp text on Linux** — hinted through FreeType, built into `bindings.imgui` from a pinned download; macOS unchanged.
 - **[DONE 10/19] Combining marks** — kept with the cell before them, in the screen's table, drawn and copied after its rune.
 - **[DONE 10/19] Wide runes in the command line** — the editor's layout takes the grid's widths; a wide rune is drawn alone and wraps whole.
 

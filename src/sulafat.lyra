@@ -23,6 +23,7 @@ import bindings.imgui.{
   set_window_title,
   font_file,
   merge_font_file,
+  set_font_hinting,
   push_font_float,
   pop_font,
   begin,
@@ -68,6 +69,7 @@ import session.{
   Look,
 }
 import bindings.menubar.{ poll_menu, set_enabled }
+import bindings.sdl3.{ platform }
 import settings.{
   settings_path,
   load_settings,
@@ -76,14 +78,19 @@ import settings.{
   font_families,
   fallback_fonts,
   family_for,
+  defaults,
   Settings,
   FontFamily,
+  FONT_SIZE_RANGE,
 }
 import ui.{
   settings_window,
   theme_of,
   clear_colour,
   OpenSettings,
+  FontBigger,
+  FontSmaller,
+  FontDefault,
   tab_command,
   menu_command,
   install_menus,
@@ -107,6 +114,10 @@ let main = () -> void => {
   // The keyboard is the shell's: ImGui's own navigation would take the arrows and Tab.
   let io = get_io()
   io.set_config_flags(io.config_flags() & ~CONFIG_FLAGS_NAV_ENABLE_KEYBOARD)
+  // Text hinted off macOS — FreeType's hinting, as the Linux desktop draws its own — where a
+  // display is most often a pixel a point and unhinted glyphs are soft. A Mac draws text
+  // unhinted, and so does Sulafat there.
+  if platform() != "macOS" { set_font_hinting(host, true) }
   // On a Mac, Sulafat's own menu bar in place of SDL's, whose Window ▸ Close takes ⌘W and
   // would close the window, and so quit, rather than the tab.
   let menus = install_menus()
@@ -192,8 +203,14 @@ let main = () -> void => {
         select = Some(n)
       },
       OpenSettings => { settings_open = true },
+      // A point at a time, within the settings' range; kept as any setting is.
+      FontBigger => { settings.font_size = (settings.font_size + 1.0).min(FONT_SIZE_RANGE.1) },
+      FontSmaller => { settings.font_size = (settings.font_size - 1.0).max(FONT_SIZE_RANGE.0) },
+      FontDefault => { settings.font_size = defaults().font_size },
       NoCommand => {},
     }
+    // The faces are drawn at the size pushed: a new one takes at once.
+    fonts.size = settings.font_size
 
     let bar = draw_window(
       sessions,

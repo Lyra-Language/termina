@@ -39,6 +39,11 @@ let main = () -> u8 => {
     )
     failed += check("Select All", key_of(bar, "Select All") == "Cmd+A", bar)
     failed += check(
+      "View's font sizes",
+      "${key_of(bar, "Default Font Size")} ${key_of(bar, "Bigger")} ${key_of(bar, "Smaller")}" == "Cmd+0 Cmd+= Cmd+-",
+      bar
+    )
+    failed += check(
       "Settings in the application menu",
       key_of(bar, "Settings…") == "Cmd+,",
       bar
