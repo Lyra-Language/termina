@@ -108,7 +108,7 @@ pub struct Completion {
   description: string,
 }
 
-/// Where a shell with Sulafat's integration is (OSC 133 — `shell/shell.lyra`), and the
+/// Where a shell with Termina's integration is (OSC 133 — `shell/shell.lyra`), and the
 /// screen erased whole.
 pub data Mark =
   /// A prompt is being drawn (`A`), from this absolute line and column.
@@ -493,7 +493,7 @@ impl Screen {
     }
   }
 
-  // OSC 7770, Sulafat's own: the shell reporting completions.
+  // OSC 7770, Termina's own: the shell reporting completions.
   let completion_report = (self: mut, report: string) -> void => {
     if report.starts_with("t;") { self.typed_ahead.push(percent_decode(report.slice(
       2,
@@ -529,7 +529,7 @@ impl Screen {
       self.replies.push("\e[>1;1;0c")
     } else if seq.marker == ">" && plain && f == 'q' {
       // XTVERSION — its name and version.
-      self.replies.push("\eP>|Sulafat 0.1\e\\")
+      self.replies.push("\eP>|Termina 0.1\e\\")
     } else if seq.marker == "" && plain && f == 'n' && seq.param_or(0, 0) == 5 {
       // DSR — all is well.
       self.replies.push("\e[0n")

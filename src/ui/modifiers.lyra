@@ -2,7 +2,7 @@ module ui
 //! The modifier keys held, as the keyboard has them. **ImGui swaps Ctrl and ⌘ on macOS**
 //! (`ConfigMacOSXBehaviors`, since 1.90.7): its `KeyCtrl` is "the shortcut key", ⌘ on a Mac,
 //! so that its own widgets' Ctrl+C is ⌘C there. A terminal needs the keys themselves —
-//! Ctrl+A is zsh's line start and ⌘A is select-all — so every key decision in Sulafat asks
+//! Ctrl+A is zsh's line start and ⌘A is select-all — so every key decision in Termina asks
 //! [held], which undoes the swap when ImGui made it.
 
 import bindings.imgui.{ get_io }

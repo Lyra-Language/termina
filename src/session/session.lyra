@@ -1,7 +1,7 @@
 module session
 //! One tab: a program on a pseudo-terminal (the user's shell, usually), what it has drawn,
 //! where its shell is, and its command line — read every frame whether it is shown or not,
-//! drawn and given the keys when it is the tab shown (`../sulafat.lyra` keeps the tabs).
+//! drawn and given the keys when it is the tab shown (`../termina.lyra` keeps the tabs).
 
 import std.env.{ lookup }
 import std.io.{ remove_file }
@@ -80,7 +80,7 @@ import ui.{
 }
 import editor.{ Wrap, text_of }
 
-/// A tab's program and everything Sulafat keeps for it.
+/// A tab's program and everything Termina keeps for it.
 pub struct Session {
   pty: Pty,
   parse: Parser,
@@ -141,7 +141,7 @@ pub struct Block {
   ended: i64,
 }
 
-/// Start a tab: `program` (the login shell with Sulafat's integration when empty) in `dir`
+/// Start a tab: `program` (the login shell with Termina's integration when empty) in `dir`
 /// (the home directory when `None`). `None` when it cannot be started.
 pub let open_session = (
   program: []string,
@@ -165,7 +165,7 @@ pub let open_session = (
   let env = [
     "TERM=xterm-256color",
     "COLORTERM=truecolor",
-    "TERM_PROGRAM=Sulafat",
+    "TERM_PROGRAM=Termina",
     ...integration_env,
   ]
   let start_in = match dir {
@@ -756,13 +756,13 @@ pub let draw_session = (
   if follow { set_scroll_y(page) }
 }
 
-/// Where the shell is, as far as Sulafat can tell.
+/// Where the shell is, as far as Termina can tell.
 data Mode =
   /// A program is running, the shell is drawing its prompt, or it has no integration: the
   /// keys go to it as typed.
   Raw
   /// At a prompt whose input begins at this absolute line and column: the command line
-  /// there is Sulafat's editor.
+  /// there is Termina's editor.
   | AtPrompt(i64, i64)
 
 /// The mouse on the grid: a click sets where a selection starts (and drops one), a drag
@@ -1189,7 +1189,7 @@ let draw_box = (
 
 /// A right prompt (zsh's `RPROMPT`) in the box: what the shell drew on input line `i` after
 /// input column `prompt_end` — the shell's input itself is empty, the command line being
-/// Sulafat's — right-aligned in the row `at` begins, `cols` wide; left out where it would
+/// Termina's — right-aligned in the row `at` begins, `cols` wide; left out where it would
 /// meet the prompt, `prompt_cols` wide on that row.
 let draw_right_prompt = (
   s: Session,

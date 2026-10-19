@@ -1,11 +1,11 @@
 module settings
 //! What the user has chosen — the font, its size, the line spacing, the colours — kept in
-//! `$XDG_CONFIG_HOME/sulafat/settings.json` (else `~/.config/…`) and read at start. The
+//! `$XDG_CONFIG_HOME/termina/settings.json` (else `~/.config/…`) and read at start. The
 //! settings window (`../ui/settings_window.lyra`) changes it; the theme and the faces are
-//! made from it (`../ui/theme.lyra`'s [theme_of], `../sulafat.lyra`).
+//! made from it (`../ui/theme.lyra`'s [theme_of], `../termina.lyra`).
 //!
 //! **A file is read leniently**: a setting missing, of the wrong kind or out of range keeps
-//! its default, so a file written by an older or newer Sulafat, or edited by hand, still
+//! its default, so a file written by an older or newer Termina, or edited by hand, still
 //! starts — with what of it makes sense.
 //!
 //! A colour is `0xRRGGBB` here, as people write them; `#rrggbb` in the file.
@@ -41,7 +41,7 @@ pub struct Settings {
   bold_is_bright: bool,
 }
 
-/// A theme the user saved: its name, none of Sulafat's own, and its colours.
+/// A theme the user saved: its name, none of Termina's own, and its colours.
 pub struct SavedTheme {
   name: string,
   colours: Colours,
@@ -80,8 +80,8 @@ pub let defaults = pure () -> Settings => Settings {
   font_file: "",
   font_size: 14.0,
   line_spacing: 1.2,
-  theme_name: "Sulafat Dark",
-  colours: theme_colours("Sulafat Dark"),
+  theme_name: "Termina Dark",
+  colours: theme_colours("Termina Dark"),
   themes: [],
   bold_is_bright: false,
 }
@@ -94,8 +94,8 @@ pub const LINE_SPACING_RANGE: (f32, f32) = (1.0, 2.0)
 
 /// The themes offered, by name, in the window's order.
 pub const THEME_NAMES: []string = [
-  "Sulafat Dark",
-  "Sulafat Light",
+  "Termina Dark",
+  "Termina Light",
   "Solarized Dark",
   "Solarized Light",
   "Dracula",
@@ -104,9 +104,9 @@ pub const THEME_NAMES: []string = [
   "Gruvbox Light",
 ]
 
-/// A theme's colours by name; Sulafat Dark's for a name not known.
+/// A theme's colours by name; Termina Dark's for a name not known.
 pub let theme_colours = pure (name: string) -> Colours => {
-  if name == "Sulafat Light" {
+  if name == "Termina Light" {
     return colours_of(
       0x2B2D33,
       0xFAF8F5,
@@ -183,7 +183,7 @@ pub let theme_colours = pure (name: string) -> Colours => {
       ]
     )
   }
-  // Sulafat Dark: the window's #181A1E behind #E6E1DC, an ANSI set in the spirit of One Dark.
+  // Termina Dark: the window's #181A1E behind #E6E1DC, an ANSI set in the spirit of One Dark.
   colours_of(
     0xE6E1DC,
     0x181A1E,
@@ -226,7 +226,7 @@ let colours_of = pure (
   ansi: ansi,
 }
 
-/// Whether `name` may be a saved theme's: not empty, not one of Sulafat's own, not
+/// Whether `name` may be a saved theme's: not empty, not one of Termina's own, not
 /// `Custom` — a saved theme of that name is replaced.
 pub let can_save_as = pure (name: string) -> bool =>
   name.trim() != "" && name.trim() != "Custom" && !THEME_NAMES.contains(name.trim())
@@ -289,21 +289,31 @@ let mix = pure (a: u32, b: u32, t: f32) -> u32 => {
 
 // ── The file ─────────────────────────────────────────────────────────────────
 
-/// Where the settings are kept: `$XDG_CONFIG_HOME/sulafat/settings.json`, else
-/// `~/.config/sulafat/settings.json`.
-pub let settings_path = () -> string => {
-  let base = match lookup("XDG_CONFIG_HOME") {
-    Some(d) => if d == "" { "${lookup("HOME") ?? "/tmp"}/.config" } else { d },
-    None => "${lookup("HOME") ?? "/tmp"}/.config",
+/// Where the settings are kept: `$XDG_CONFIG_HOME/termina/settings.json`, else
+/// `~/.config/termina/settings.json`.
+pub let settings_path = () -> string => config_dir().join("termina").join("settings.json")
+
+/// The settings kept at `path`, or the defaults when there are none to read. With none at
+/// `path`, the settings the terminal kept before it was renamed (`~/.config/sulafat/`) are
+/// read instead — saved at `path` the next time anything changes.
+pub let load_settings = (path: string) -> Settings => {
+  match read_file(path) {
+    Some(text) => settings_from_json(text),
+    None => match read_file(config_dir().join(OLD_NAME).join("settings.json")) {
+      Some(text) => settings_from_json(text),
+      None => defaults(),
+    },
   }
-  base.join("sulafat").join("settings.json")
 }
 
-/// The settings kept at `path`, or the defaults when there are none to read.
-pub let load_settings = (path: string) -> Settings => {
-  let Some(text) = read_file(path) else { return defaults() }
-  settings_from_json(text)
+/// The directory settings go under: `$XDG_CONFIG_HOME`, else `~/.config`.
+let config_dir = () -> string => match lookup("XDG_CONFIG_HOME") {
+  Some(d) => if d == "" { "${lookup("HOME") ?? "/tmp"}/.config" } else { d },
+  None => "${lookup("HOME") ?? "/tmp"}/.config",
 }
+
+/// The terminal's name before it was Termina, where its settings may still be.
+const OLD_NAME: string = "sulafat"
 
 /// Keep `s` at `path`, making its directory; whether it was written.
 pub let save_settings = (path: string, s: Settings) -> bool => {
@@ -349,7 +359,7 @@ pub let settings_from_json = pure (text: string) -> Settings => {
     }
   }
   let theme = text_field(doc, "theme") ?? d.theme_name
-  // The theme's colours first — a saved one's or one of Sulafat's — then any written out
+  // The theme's colours first — a saved one's or one of Termina's — then any written out
   // over them.
   let base = if theme == "Custom" { d.colours } else { saved_colours(
     themes,
@@ -474,10 +484,10 @@ pub struct FontFamily {
   bold_italic: string,
 }
 
-/// The monospaced families on this machine: the ones Sulafat knows by name (SF Mono,
+/// The monospaced families on this machine: the ones Termina knows by name (SF Mono,
 /// Menlo, DejaVu Sans Mono) that are installed, then any others found in the font
 /// directories whose files say they are monospaced (`Mono`, `Code`, `Courier`, `Consol` in
-/// the name), sorted. The first is what Sulafat starts with.
+/// the name), sorted. The first is what Termina starts with.
 pub let font_families = () -> []FontFamily => {
   var out: []FontFamily = []
   var known_files: []string = []
@@ -564,7 +574,7 @@ pub let family_named = pure (
 
 /// The fonts drawn from for the glyphs a family lacks — CJK, then symbols: of each group in
 /// [FALLBACKS] the first installed. Merged into every face, in this order
-/// (`../sulafat.lyra`).
+/// (`../termina.lyra`).
 pub let fallback_fonts = () -> []string => {
   var out: []string = []
   for group in FALLBACKS {
@@ -591,7 +601,7 @@ const FALLBACKS: [][]string = [
   ["/System/Library/Fonts/Apple Symbols.ttf", "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf"],
 ]
 
-/// The families Sulafat knows by name and where each platform keeps them.
+/// The families Termina knows by name and where each platform keeps them.
 const KNOWN: []FontFamily = [
   FontFamily {
     name: "SF Mono",

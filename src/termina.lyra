@@ -1,8 +1,8 @@
-// sulafat — a terminal: the user's shell on a pseudo-terminal, its output drawn in a window
+// termina — a terminal: the user's shell on a pseudo-terminal, its output drawn in a window
 // and the keyboard sent back to it.
 //
-//   build/sulafat              the login shell ($SHELL, else /bin/sh), in the home directory
-//   build/sulafat CMD [ARG…]   that program instead, in this directory (as `xterm -e`)
+//   build/termina              the login shell ($SHELL, else /bin/sh), in the home directory
+//   build/termina CMD [ARG…]   that program instead, in this directory (as `xterm -e`)
 //
 // A classic terminal, in colour, in tabs, whose command line is an editor of its own while
 // zsh is at a prompt (its integration says when — shell/shell.lyra; the keys are in
@@ -111,15 +111,15 @@ import ui.{
 }
 
 let main = () -> void => {
-  let Some(host) = create_host("Sulafat", 960, 600, 0) else { return }
+  let Some(host) = create_host("Termina", 960, 600, 0) else { return }
   // The keyboard is the shell's: ImGui's own navigation would take the arrows and Tab.
   let io = get_io()
   io.set_config_flags(io.config_flags() & ~CONFIG_FLAGS_NAV_ENABLE_KEYBOARD)
   // Text hinted off macOS — FreeType's hinting, as the Linux desktop draws its own — where a
   // display is most often a pixel a point and unhinted glyphs are soft. A Mac draws text
-  // unhinted, and so does Sulafat there.
+  // unhinted, and so does Termina there.
   if platform() != "macOS" { set_font_hinting(host, true) }
-  // On a Mac, Sulafat's own menu bar in place of SDL's, whose Window ▸ Close takes ⌘W and
+  // On a Mac, Termina's own menu bar in place of SDL's, whose Window ▸ Close takes ⌘W and
   // would close the window, and so quit, rather than the tab.
   let menus = install_menus()
   // The user's settings, the font families on offer, and the faces and theme made of them.
@@ -137,7 +137,7 @@ let main = () -> void => {
   var theme_name_typed = ""
   let home = lookup("HOME") ?? ""
   // A program given on the command line runs in the first tab instead of the shell,
-  // without the shell's integration, where Sulafat was started; tabs opened after it run
+  // without the shell's integration, where Termina was started; tabs opened after it run
   // the shell.
   let given = program_args().slice(1, program_args().len())
   var next_id = 0
@@ -169,7 +169,7 @@ let main = () -> void => {
     if sessions.len() == 0 { break }
 
     var command = tab_command(active, sessions.len(), menus)
-    // The menus' choices: the Mac's bar, or off macOS the one Sulafat draws, its items the
+    // The menus' choices: the Mac's bar, or off macOS the one Termina draws, its items the
     // same and carried out the same.
     var chosen: []i32 = []
     while let Some(tag) = poll_menu() { chosen.push(tag) }

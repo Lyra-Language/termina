@@ -430,7 +430,7 @@ let check_reports = () -> i64 => {
   failed += check("DA1", replies("\e[c"), "\\e[?62;22c")
   failed += check("DA1 with a 0", replies("\e[0c"), "\\e[?62;22c")
   failed += check("DA2", replies("\e[>c"), "\\e[>1;1;0c")
-  failed += check("XTVERSION", replies("\e[>q"), "\\eP>|Sulafat 0.1\\e\\")
+  failed += check("XTVERSION", replies("\e[>q"), "\\eP>|Termina 0.1\\e\\")
   failed += check("DSR status", replies("\e[5n"), "\\e[0n")
   failed += check("cursor position", replies("ab\r\nc\e[6n"), "\\e[2;2R")
   failed += check("DECRQM set", replies("\e[?2004h\e[?2004$p"), "\\e[?2004;1$y")
@@ -712,7 +712,7 @@ let with_text = pure (s: string) -> Editor => {
   e
 }
 
-// zsh with Sulafat's integration: its marks arrive, and input begins after the prompt.
+// zsh with Termina's integration: its marks arrive, and input begins after the prompt.
 let check_marks = () -> i64 => {
   var p = parser()
   var s = screen(40, 4)
@@ -867,7 +867,7 @@ let check_completion_reports = () -> i64 => {
 // and bash's give the same answers.
 let check_completion = (shell: string) -> i64 => {
   let name = shell.base()
-  let dir = (lookup("TMPDIR") ?? "/tmp").join("sulafat-vttest-${wall_clock_nanos()}")
+  let dir = (lookup("TMPDIR") ?? "/tmp").join("termina-vttest-${wall_clock_nanos()}")
   if !create_dir_all(dir.join("sub dir")) { return check(
     "scratch dir",
     "not made",
@@ -1005,7 +1005,7 @@ let check_typed_ahead = (shell: string) -> i64 => {
 // questions answered — then quit, and the main screen back. vim is skipped where it is not
 // installed (a minimal Ubuntu has only vi).
 let check_full_screen = () -> i64 => {
-  let dir = (lookup("TMPDIR") ?? "/tmp").join("sulafat-full-${wall_clock_nanos()}")
+  let dir = (lookup("TMPDIR") ?? "/tmp").join("termina-full-${wall_clock_nanos()}")
   if !create_dir_all(dir) { return check("scratch dir", "not made", "made") }
   let file = dir.join("words.txt")
   let _ = write_file(file, "alpha\nbeta\ngamma\n")

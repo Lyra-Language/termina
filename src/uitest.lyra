@@ -633,7 +633,7 @@ let check_edit_actions = (host: Host) -> i64 => {
 }
 
 // The settings: the file, the fonts found, the theme made of them, and the window.
-// The menu bar Sulafat draws off macOS: a menu opened and an item clicked answer the
+// The menu bar Termina draws off macOS: a menu opened and an item clicked answer the
 // item's tag, as the Mac's bar sends it; a greyed item answers nothing; the bar takes its
 // height off the work area the terminal's window fills.
 let check_menu_bar = (host: Host) -> i64 => {
@@ -856,11 +856,11 @@ let check_settings = (host: Host) -> i64 => {
     hex(theme_of(greened).for_input().fg),
     hex(abgr(0x00FF00))
   )
-  // Saved themes: the colours under a name of the user's (not one of Sulafat's), chosen
+  // Saved themes: the colours under a name of the user's (not one of Termina's), chosen
   // then; kept in the file, a theme named there found among them; deleted, Custom.
   var mine = Settings { d | colours: Colours { d.colours | bg: 0x101010 } }
   failed += check(
-    "Sulafat's names are not to save as",
+    "Termina's names are not to save as",
     "${can_save_as("Nord")}|${can_save_as(" ")}|${can_save_as("Mine")}",
     "false|false|true"
   )
@@ -1172,7 +1172,7 @@ let bar_frame = (host: Host, tabs: []TabLabel, active: i64) -> TabBar => {
   bar
 }
 
-/// The tabs put in the bar's order, and the shown one followed, as Sulafat's loop does.
+/// The tabs put in the bar's order, and the shown one followed, as Termina's loop does.
 let follow = pure (tabs: []TabLabel, active: i64, bar: TabBar) -> ([]TabLabel, i64) => {
   var moved: []TabLabel = []
   var now = active

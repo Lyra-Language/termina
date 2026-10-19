@@ -1,6 +1,6 @@
-# Sulafat — open work
+# Termina — open work
 
-Open work for Sulafat only (compiler and binding gaps it finds go in `../lyra/todo.md`). The
+Open work for Termina only (compiler and binding gaps it finds go in `../lyra/todo.md`). The
 milestones are in `CLAUDE.md` § Plan; finished items move to `done.md`.
 
 ## Blocks (M2)
@@ -9,7 +9,7 @@ milestones are in `CLAUDE.md` § Plan; finished items move to `done.md`.
 
 ## The command line (M3)
 
-- **[OPEN] A command that does not exist** — syntax colouring could show it red, but Sulafat cannot see the shell's aliases and functions; asking the shell (`type`) per command word would.
+- **[OPEN] A command that does not exist** — syntax colouring could show it red, but Termina cannot see the shell's aliases and functions; asking the shell (`type`) per command word would.
 
 ## Tabs
 

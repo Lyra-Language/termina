@@ -1,4 +1,4 @@
-# Sulafat — done
+# Termina — done
 
 Finished work, moved from `todo.md` with its section; the rules it left behind are in
 `CLAUDE.md`.
@@ -7,8 +7,8 @@ Finished work, moved from `todo.md` with its section; the rules it left behind a
 
 - **[DONE 10/19] Blocks** — each command's input on the box's tint, its output plain; its duration, and a failure's status and red bar.
 - **[DONE 10/19] The settings in a tab** — opened by Settings…, at the tab bar's right end, the whole area its own.
-- **[DONE 10/19] Gruvbox Dark and Light** — among Sulafat's themes, in Gruvbox's own shades.
-- **[DONE 10/19] Saved themes** — the colours under a name, in the Theme list after Sulafat's; replaced by saving again, deleted.
+- **[DONE 10/19] Gruvbox Dark and Light** — among Termina's themes, in Gruvbox's own shades.
+- **[DONE 10/19] Saved themes** — the colours under a name, in the Theme list after Termina's; replaced by saving again, deleted.
 - **[DONE 10/19] Section, tab and command-line colours in the theme** — each theme's own, made from its colours where it does not name them; all in the settings window.
 - **[DONE 10/19] Blocks as cards** — padding inside, a margin between; rows laid out by `Rows`, which everything that maps lines to heights asks.
 
@@ -56,4 +56,4 @@ Finished work, moved from `todo.md` with its section; the rules it left behind a
 
 ## Settings
 
-- **[DONE 10/17] A settings window** — font family or file, size, line spacing, six themes, every colour, bold as bright; kept in `~/.config/sulafat/settings.json`.
+- **[DONE 10/17] A settings window** — font family or file, size, line spacing, six themes, every colour, bold as bright; kept in `~/.config/termina/settings.json`.

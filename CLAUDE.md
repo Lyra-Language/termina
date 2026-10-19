@@ -1,6 +1,6 @@
-# Sulafat — Project Context
+# Termina — Project Context
 
-Sulafat (γ Lyrae) is a terminal emulator written in Lyra, after Warp: commands and their
+Termina (γ Lyrae) is a terminal emulator written in Lyra, after Warp: commands and their
 output as **blocks**, and a command line that edits like a text editor rather than a shell's
 line editor. **Open source, MIT** (`LICENSE`); the repository is private until published, and
 contributions are not being accepted yet. Lives in the Lyra workspace beside `lyra/`; the
@@ -11,15 +11,15 @@ workspace's `CLAUDE.md` rules apply here too. **macOS and Linux** — Windows wa
 
 ```bash
 ../lyra/build.sh            # the compiler, std/, bindings/ and lib/liblyra-{pty,imgui}.a
-./build.sh                  # -> build/: sulafat (and Sulafat.app on macOS), vttest, uitest
-build/sulafat               # the login shell ($SHELL -l) in a window of tabs: ⌘T new (in the
+./build.sh                  # -> build/: termina (and Termina.app on macOS), vttest, uitest
+build/termina               # the login shell ($SHELL -l) in a window of tabs: ⌘T new (in the
                             #    shown tab's directory), ⌘W close, ⌘1–⌘9, ⌘⇧[ ⌘⇧]; a tab
                             #    closes when its shell ends, the window with the last
-build/sulafat CMD [ARG…]    # that program instead (as xterm -e), no integration — a test
+build/termina CMD [ARG…]    # that program instead (as xterm -e), no integration — a test
                             #    script's colours, say, seen without typing
-open build/Sulafat.app      # the same, as a Mac app
+open build/Termina.app      # the same, as a Mac app
                             # Settings… (⌘,; Ctrl+, off macOS): font, size, spacing, colours —
-                            #    kept in ~/.config/sulafat/settings.json ($XDG_CONFIG_HOME)
+                            #    kept in ~/.config/termina/settings.json ($XDG_CONFIG_HOME)
 build/vttest                # parser, screen, editor, PTY, zsh and bash checks; exit 1 on a failure
 SDL_VIDEODRIVER=dummy build/uitest   # the command line on a headless ImGui host, driven by
                             #    injected keys, typing and clicks (double-click included)
@@ -39,10 +39,11 @@ shell ⇄ bindings.pty ──bytes──▶ vt.Parser ──[]Action──▶ vt
 
 | file | what |
 |---|---|
-| `src/sulafat.lyra` | `main`: the ImGui host, the frame loop, the tabs and their bar, fonts |
+| `src/termina.lyra` | `main`: the ImGui host, the frame loop, the tabs and their bar, fonts |
+| `assets/` | the icon: `termina.svg` the source; `Termina.icns` (the app's) and `termina.png` made from it (`assets/README.md`) |
 | `src/session/session.lyra` | one tab: its PTY, screen, `Mode` and command line; read each frame, drawn and given keys when shown |
 | `src/ui/tabs.lyra` | the tab bar (reorderable, its order read back), the tab shortcuts, and the Mac's menu bar |
-| `src/ui/menu_bar.lyra` | the menu bar Sulafat draws off macOS: the Mac's menus as ImGui's main menu bar |
+| `src/ui/menu_bar.lyra` | the menu bar Termina draws off macOS: the Mac's menus as ImGui's main menu bar |
 | `src/menutest.lyra` | the menu bar installed and read back |
 | `src/shell/shell.lyra` | shell integration (zsh's `.zshenv` through `ZDOTDIR`, bash's rc file through `--rcfile`): the marks, Tab's completion widget and its request file, the history files, what Return sends |
 | `src/editor/editor.lyra` | the command line's editor — text, caret, selection, motions, words, undo, layout; **pure** |
@@ -76,7 +77,7 @@ shell ⇄ bindings.pty ──bytes──▶ vt.Parser ──[]Action──▶ vt
   changing title must not move. The grid is a child window under the bar, so it scrolls
   alone; focus is asked of root and child (`FOCUSED_FLAGS_ROOT_AND_CHILD_WINDOWS`), and a
   frame whose keys were a tab shortcut gives the tab none.
-- **On a Mac the menu bar is Sulafat's own** (`ui.install_menus`, through `bindings.menubar`),
+- **On a Mac the menu bar is Termina's own** (`ui.install_menus`, through `bindings.menubar`),
   replacing SDL's, whose Window ▸ Close took ⌘W and closed the window — the app — not the
   tab. Shell holds New Tab ⌘T, Show Previous/Next Tab ⌘⇧[ ⌘⇧] (spelled `{` `}`, as AppKit
   matches shifted keys) and Close Tab ⌘W; they arrive through `poll_menu`, and
@@ -84,7 +85,7 @@ shell ⇄ bindings.pty ──bytes──▶ vt.Parser ──[]Action──▶ vt
   equivalent to SDL too. ⌘1–⌘9 have no items and stay keys. View holds the font's size —
   Default Font Size ⌘0, Bigger ⌘=, Smaller ⌘- — a point at a time within the settings'
   range, kept as any setting is (`FontBigger`, `FontSmaller`, `FontDefault`).
-- **Off macOS Sulafat draws the same menus** (`ui.menu_bar`, ImGui's main menu bar): Sulafat
+- **Off macOS Termina draws the same menus** (`ui.menu_bar`, ImGui's main menu bar): Termina
   (Settings…, Quit), Shell, Edit, View, and Window (Minimize, Maximize, the tabs). A choice
   answers the Mac's tag (`MENU_*`; a tab is `MENU_TAB + k`), so the loop carries out both
   bars' choices in one place; Quit, Minimize and Maximize are the host's, done in the bar.
@@ -118,7 +119,7 @@ shell ⇄ bindings.pty ──bytes──▶ vt.Parser ──[]Action──▶ vt
   FreeType for the fonts from files, the faces and their fallbacks): a Linux display is most
   often a pixel a point, where stb_truetype's unhinted stems straddle two columns and look
   soft. The interface — tabs, menus, settings — keeps ImGui's own font as stb_truetype
-  draws it, hinted only where the cells are. A Mac draws text unhinted, and Sulafat there does
+  draws it, hinted only where the cells are. A Mac draws text unhinted, and Termina there does
   too. Hinted advances are whole pixels, so a cell is.
 - **Glyphs a family lacks come from fallback fonts** (`settings.fallback_fonts`: Arial
   Unicode or Noto Sans CJK, then Apple Symbols or DejaVu Sans), merged into every face
@@ -152,13 +153,16 @@ shell ⇄ bindings.pty ──bytes──▶ vt.Parser ──[]Action──▶ vt
   the screen followed by `\e[K` loses its last character (less's status on a long path).
 - **Nothing blocks**: `Pty.read` is non-blocking and drained once a frame, at most
   `READS_PER_FRAME` reads, so a program that never stops writing cannot freeze the window.
+- **Settings live in `~/.config/termina/settings.json`** (`$XDG_CONFIG_HOME` first); with
+  none there, the file the terminal kept as Sulafat (`~/.config/sulafat/`, `OLD_NAME`) is
+  read, and the next save writes the new one. The old file is left alone.
 - **Settings take at once and are kept when the mouse is let go**: a change rebuilds the
   theme (`ui.theme_of`), reloads the faces only when the family or file changed (ImGui keeps
   a face per file; its size is chosen as it is pushed), and is written to the file once no
   button is held, not every frame of a slider's drag. The file is read leniently — a
   setting missing or wrong keeps its default — and a theme named in it gives the colours a
   `colours` object does not. Programs asking the colours (OSC 10/11) are told the theme's.
-- **A theme is every colour Sulafat draws**, not only the grid's: the sections' input (the
+- **A theme is every colour Termina draws**, not only the grid's: the sections' input (the
   box, a block's prompt and command) and output, the input's text (where a program gave
   it no colour: `Theme.for_input`, for the rows in view a block's input takes and the
   box's prompt), the tabs (a tab, under the pointer, shown —
@@ -174,11 +178,11 @@ shell ⇄ bindings.pty ──bytes──▶ vt.Parser ──[]Action──▶ vt
   while it is shown closes it; a terminal's tab chosen by a key or a click takes over. The
   terminals go on being read behind it.
 - **The user's themes are saved in the settings file** (`Settings.themes`, `SavedTheme`):
-  the colours under a name not Sulafat's own nor `Custom` (`can_save_as`; a saved one of
-  that name replaced), listed after Sulafat's, deleted to `Custom` with the colours kept.
-  A theme named in the file is looked for among them before Sulafat's.
+  the colours under a name not Termina's own nor `Custom` (`can_save_as`; a saved one of
+  that name replaced), listed after Termina's, deleted to `Custom` with the colours kept.
+  A theme named in the file is looked for among them before Termina's.
 - **Font families are found by file name** (`Mono`, `Code`, `Courier`, `Consol`, as
-  capitalised; faces by `-Bold`/` Bold`/`Bold` suffixes), after the ones Sulafat knows by path
+  capitalised; faces by `-Bold`/` Bold`/`Bold` suffixes), after the ones Termina knows by path
   (SF Mono, Menlo, DejaVu Sans Mono), whose files are not offered twice.
 - **A colour is one `u32`** (`DEFAULT`, a palette index, or RGB — `vt/style.lyra`): the
   screen records what the program asked for; the theme decides what it looks like.
@@ -209,7 +213,7 @@ shell ⇄ bindings.pty ──bytes──▶ vt.Parser ──[]Action──▶ vt
   command's first line — the keys are the program's, as in any terminal — but not on the
   alternate screen, where a full-screen program has the window. zsh's echo of the command still lands in
   the transcript as `prompt command`.
-- **The command line is Sulafat's only between `B` and the next mark.** zsh and bash report
+- **The command line is Termina's only between `B` and the next mark.** zsh and bash report
   `A`/`B`/`C`/`D` (OSC 133) through `shell/shell.lyra`'s hooks; at `B`, `Mode` becomes
   `AtPrompt(line, col)` and the editor is drawn from that cell, the shell's empty input
   hidden under it; any other mark is `Raw`. **A `B` where the command was just sent from is
@@ -217,7 +221,7 @@ shell ⇄ bindings.pty ──bytes──▶ vt.Parser ──[]Action──▶ vt
   of several lines, before `C` — and is not a new prompt. A shell without integration (a
   bash older than 4.4, another shell, a remote one over ssh) never reaches `AtPrompt` — a
   classic terminal.
-- **bash is started `bash --rcfile <Sulafat's> -i`** — an rc file is read only by an
+- **bash is started `bash --rcfile <Termina's> -i`** — an rc file is read only by an
   interactive non-login shell — and the file reads what `bash -l` would (`/etc/profile`, then
   the first of `~/.bash_profile`, `~/.bash_login`, `~/.profile`). `D`, OSC 7 and `A` come
   from the front of `PROMPT_COMMAND`, `B` is added to the end of `PS1` from its back, `C`
@@ -240,8 +244,8 @@ shell ⇄ bindings.pty ──bytes──▶ vt.Parser ──[]Action──▶ vt
   in the grid, drawn up to there — and a right prompt (zsh's `RPROMPT`: what follows the
   input column on `B`'s line, the shell's own input being empty) right-aligned in the last
   row. An `A` repeated with its line (a redraw) does not clear `Session.sent_from`.
-- **Tab completion is the shell's, run in the live shell.** Sulafat writes `caret\ntext` to
-  the window's request file (`SULAFAT_COMPLETE_FILE`) and sends `\e[9898~`, bound to a widget
+- **Tab completion is the shell's, run in the live shell.** Termina writes `caret\ntext` to
+  the window's request file (`TERMINA_COMPLETE_FILE`) and sends `\e[9898~`, bound to a widget
   that reports matches as OSC 7770 (`b`, `m;prefix;insert;suffix;shown;description`
   percent-encoded, `e`) — none inserted, none listed. zsh's (bound once the user's `.zshrc`
   has chosen emacs or vi keys) loads the text into `BUFFER` and runs `complete-word` with
@@ -253,7 +257,7 @@ shell ⇄ bindings.pty ──bytes──▶ vt.Parser ──[]Action──▶ vt
   stand-in notes `nospace`, `filenames` and the rest. **The function is given the word
   unquoted** (`COMP_WORDS`, `COMP_LINE` and `$2`): bash-completion quotes it again for
   `compgen`, counting on readline's dequoting too, which a widget does not have. bash's
-  matches have no descriptions; file names are `%q`-quoted, a directory gets `/`. **Sulafat finds the word itself** (`editor.shell_word_at`, quotes and escapes
+  matches have no descriptions; file names are `%q`-quoted, a directory gets `/`. **Termina finds the word itself** (`editor.shell_word_at`, quotes and escapes
   included): inside quotes zsh measures positions with the quote removed. The answer for a
   line edited since the request is dropped. **Typing asks the shell again** (`refreshing`):
   its answer is the menu as given — a case-insensitive or substring `matcher-list`
@@ -262,7 +266,7 @@ shell ⇄ bindings.pty ──bytes──▶ vt.Parser ──[]Action──▶ vt
   when the shell finds nothing, the word is typed in full, or the caret moves off. **A
   completion's `/` or space gives way** to the next key when that would double it or end
   the word (`suffix_left`): zsh's `AUTO_REMOVE_SLASH`. `compinit` is loaded only if the
-  user's config has not, its dump in Sulafat's cache.
+  user's config has not, its dump in Termina's cache.
 - **The command line is coloured by its syntax** (`editor.kinds`, a small lexer that only
   ever chooses a colour): commands, options, quoted text, variables, operators and comments,
   in the theme's ANSI green, cyan, yellow, magenta, blue and its faint grey. `$(…)` is
@@ -272,9 +276,9 @@ shell ⇄ bindings.pty ──bytes──▶ vt.Parser ──[]Action──▶ vt
   the newest last and chosen; ↑/Ctrl+R older, ↓/Ctrl+S newer, Return or Tab puts one in,
   Escape or Ctrl+G puts back what was there. A bash compspec's `-C` command is run as
   readline runs it.
-- **Keys typed while a command runs go to it; what it leaves unread is Sulafat's.** At each
-  new line zsh's `zle-line-init` (Sulafat's, running the user's first) reads what is waiting
-  — before zsh's own line editor would take it into a buffer hidden under Sulafat's — and
+- **Keys typed while a command runs go to it; what it leaves unread is Termina's.** At each
+  new line zsh's `zle-line-init` (Termina's, running the user's first) reads what is waiting
+  — before zsh's own line editor would take it into a buffer hidden under Termina's — and
   reports it raw (OSC 7770 `t`). `ui.typed_lines` makes lines of it; at the prompt the first
   line ended by Return runs, as in any terminal, the next at the next prompt, and the
   unended rest goes into the editor.
@@ -296,7 +300,7 @@ shell ⇄ bindings.pty ──bytes──▶ vt.Parser ──[]Action──▶ vt
    padded, with room between cards — its duration and a failure's status at its right, a
    red bar down a failed one. Next: selecting, copying and folding a block whole.
 4. **M3 — the editor (begun 10/16, before M1 and the block cards)**: zsh's integration,
-   then the command line as Sulafat's editor — multi-line, soft wrap, the mouse (click,
+   then the command line as Termina's editor — multi-line, soft wrap, the mouse (click,
    drag, double-click a word, triple-click a line), word and line motions, undo, the
    clipboard, history from `~/.zsh_history`, Tab completion (zsh's own, in a menu); bash's
    integration and its completion, syntax colouring, Ctrl+R history search, prompts of

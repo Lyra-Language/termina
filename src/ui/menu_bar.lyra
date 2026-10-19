@@ -1,9 +1,9 @@
 module ui
-//! The menu bar off macOS, drawn by Sulafat along the window's top: the Mac's menus —
-//! Sulafat (Settings…, Quit), Shell (the tabs), Edit, View (the font's size) and Window —
+//! The menu bar off macOS, drawn by Termina along the window's top: the Mac's menus —
+//! Termina (Settings…, Quit), Shell (the tabs), Edit, View (the font's size) and Window —
 //! with the same items. A
 //! choice answers the tag the Mac's bar sends for it (`tabs.lyra`'s `MENU_*`), so one piece
-//! of `../sulafat.lyra` carries out both; Quit, Minimize and Maximize are the host's and
+//! of `../termina.lyra` carries out both; Quit, Minimize and Maximize are the host's and
 //! done here. ImGui's main menu bar takes its height off the viewport's work area, which
 //! the terminal's window fills, so the tabs move down below it.
 //!
@@ -55,7 +55,7 @@ pub let menu_bar = (
     pop_style_var()
     return None
   }
-  if open_menu("Sulafat", after_item) {
+  if open_menu("Termina", after_item) {
     if menu_choice(
       "Settings…",
       "Ctrl+,",

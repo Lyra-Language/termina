@@ -1,4 +1,4 @@
-// menutest — Sulafat's menu bar on a Mac, installed and read back: Shell's tab items and
+// menutest — Termina's menu bar on a Mac, installed and read back: Shell's tab items and
 // Edit's with their keys, greying, and none of SDL's own Window ▸ Close, whose ⌘W closed the window, and with
 // it the app, rather than the tab. Needs SDL's real video driver (AppKit's application),
 // not the dummy one; no window is opened. Elsewhere there is no menu bar, and it passes.

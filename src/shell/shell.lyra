@@ -1,14 +1,14 @@
 module shell
 //! Shell integration: what a shell is given at start so that it tells the terminal where its
-//! prompts and commands are. With it, Sulafat knows when the shell is waiting for a command —
-//! and the command line is Sulafat's editor — and when a program is running and the keys are
+//! prompts and commands are. With it, Termina knows when the shell is waiting for a command —
+//! and the command line is Termina's editor — and when a program is running and the keys are
 //! that program's.
 //!
 //! The shell reports through OSC 133 (FinalTerm's marks, as iTerm2, kitty and WezTerm use
 //! them): `A` a prompt begins, `B` the prompt has been drawn and input begins, `C` a command
 //! is running and its output begins, `D;status` it ended. OSC 7 reports the directory.
 //!
-//! **Tab completion is the shell's own.** Sulafat writes the command line to a request file
+//! **Tab completion is the shell's own.** Termina writes the command line to a request file
 //! and sends a key bound to a widget here. zsh's loads it into zsh's buffer and runs zsh's
 //! completion system with `compadd` captured; bash's runs what readline would — the
 //! command's compspec (`complete -p`, bash-completion's loaded on demand), its `-F`
@@ -19,16 +19,16 @@ module shell
 //!
 //! **Keys typed ahead** — typed while a command ran, and not read by it — are still on the
 //! terminal when zsh starts its next line, and zsh's own line editor would take them into
-//! a buffer hidden under Sulafat's. A `zle-line-init` hook (wrapping the user's own) reads
-//! them first and reports them raw, as OSC 7770 `t;<keys>` (percent-encoded); Sulafat
+//! a buffer hidden under Termina's. A `zle-line-init` hook (wrapping the user's own) reads
+//! them first and reports them raw, as OSC 7770 `t;<keys>` (percent-encoded); Termina
 //! interprets them (`../ui/typeahead.lyra`).
 //!
-//! **zsh** is reached through `ZDOTDIR`: zsh reads `$ZDOTDIR/.zshenv` first, and Sulafat's
+//! **zsh** is reached through `ZDOTDIR`: zsh reads `$ZDOTDIR/.zshenv` first, and Termina's
 //! puts the user's `ZDOTDIR` back, reads their `.zshenv`, and adds two hooks — so their
 //! `.zprofile`, `.zshrc` and `.zlogin` are read from their own directory as always.
 //!
-//! **bash** is started `bash --rcfile <Sulafat's> -i`: an rc file is read only by an
-//! interactive shell that is not a login one, so Sulafat's reads what `bash -l` would —
+//! **bash** is started `bash --rcfile <Termina's> -i`: an rc file is read only by an
+//! interactive shell that is not a login one, so Termina's reads what `bash -l` would —
 //! `/etc/profile`, then the first of `~/.bash_profile`, `~/.bash_login` and `~/.profile`
 //! (Ubuntu's reads `~/.bashrc`) — and then adds the marks: `D` and OSC 7 from the front of
 //! `PROMPT_COMMAND`, `A` at the start of `PS1` and `B` at its end from its back (after a
@@ -46,7 +46,7 @@ import std.env.{ lookup }
 import std.io.{ write_file, create_dir_all, read_bytes }
 import std.path
 
-/// What a shell with Sulafat's integration is started with: its command line, its
+/// What a shell with Termina's integration is started with: its command line, its
 /// environment, as `NAME=value` entries for `bindings.pty`'s `spawn`, and the file
 /// completion requests are written to.
 pub struct Integration {
@@ -67,9 +67,9 @@ pub let integration = (shell: string, id: string) -> Maybe<Integration> => {
       args: [shell, "-l"],
       env: [
         "ZDOTDIR=${dir}",
-        "SULAFAT_ORIG_ZDOTDIR=${lookup("ZDOTDIR") ?? ""}",
-        "SULAFAT_SHELL_INTEGRATION=1",
-        "SULAFAT_COMPLETE_FILE=${request}",
+        "TERMINA_ORIG_ZDOTDIR=${lookup("ZDOTDIR") ?? ""}",
+        "TERMINA_SHELL_INTEGRATION=1",
+        "TERMINA_COMPLETE_FILE=${request}",
       ],
       request: request,
     })
@@ -79,7 +79,7 @@ pub let integration = (shell: string, id: string) -> Maybe<Integration> => {
     let request = dir.join("request-${id}")
     return Some(Integration {
       args: [shell, "--rcfile", dir.join("rc.bash"), "-i"],
-      env: ["SULAFAT_SHELL_INTEGRATION=1", "SULAFAT_COMPLETE_FILE=${request}"],
+      env: ["TERMINA_SHELL_INTEGRATION=1", "TERMINA_COMPLETE_FILE=${request}"],
       request: request,
     })
   }
@@ -200,14 +200,14 @@ let strip_extended = pure (line: string) -> string => {
 }
 
 /// The directory holding a shell's integration, its file `name` written there now as `text`
-/// (each start, so that a newer Sulafat's replaces an older one's):
-/// `$XDG_CACHE_HOME/sulafat/<shell>`, else `~/.cache/…`.
+/// (each start, so that a newer Termina's replaces an older one's):
+/// `$XDG_CACHE_HOME/termina/<shell>`, else `~/.cache/…`.
 let integration_dir = (shell: string, name: string, text: string) -> Maybe<string> => {
   let cache = match lookup("XDG_CACHE_HOME") {
     Some(d) => if d == "" { "${lookup("HOME") ?? "/tmp"}/.cache" } else { d },
     None => "${lookup("HOME") ?? "/tmp"}/.cache",
   }
-  let dir = cache.join("sulafat").join(shell)
+  let dir = cache.join("termina").join(shell)
   if !create_dir_all(dir) { return None }
   if !write_file(dir.join(name), text) { return None }
   Some(dir)
@@ -220,35 +220,35 @@ let integration_dir = (shell: string, name: string, text: string) -> Maybe<strin
 /// `PS1` in its own hook (powerlevel10k, starship) has done so before the marks are added —
 /// from the second prompt on; the first may lack them under such a theme, and is then a
 /// classic prompt.
-const ZSHENV: string = ##`# Sulafat's shell integration, loaded through ZDOTDIR, which is put back first.
-# Written by Sulafat at each start; edits here are lost.
-if [[ -n "$SULAFAT_ORIG_ZDOTDIR" ]]; then ZDOTDIR="$SULAFAT_ORIG_ZDOTDIR"; else builtin unset ZDOTDIR; fi
-builtin unset SULAFAT_ORIG_ZDOTDIR
+const ZSHENV: string = ##`# Termina's shell integration, loaded through ZDOTDIR, which is put back first.
+# Written by Termina at each start; edits here are lost.
+if [[ -n "$TERMINA_ORIG_ZDOTDIR" ]]; then ZDOTDIR="$TERMINA_ORIG_ZDOTDIR"; else builtin unset ZDOTDIR; fi
+builtin unset TERMINA_ORIG_ZDOTDIR
 [[ -f "${ZDOTDIR:-$HOME}/.zshenv" ]] && builtin source "${ZDOTDIR:-$HOME}/.zshenv"
 if [[ -o interactive ]]; then
   builtin autoload -Uz add-zsh-hook
-  typeset -g _sulafat_ran=
-  _sulafat_precmd() {
+  typeset -g _termina_ran=
+  _termina_precmd() {
     local s=$?
-    [[ -n $_sulafat_ran ]] && builtin printf '\e]133;D;%s\a' $s
-    _sulafat_ran=
+    [[ -n $_termina_ran ]] && builtin printf '\e]133;D;%s\a' $s
+    _termina_ran=
     builtin printf '\e]7;file://%s%s\a' "${HOST}" "${PWD}"
-    if [[ ${precmd_functions[-1]} != _sulafat_precmd ]]; then
-      precmd_functions=(${precmd_functions:#_sulafat_precmd} _sulafat_precmd)
+    if [[ ${precmd_functions[-1]} != _termina_precmd ]]; then
+      precmd_functions=(${precmd_functions:#_termina_precmd} _termina_precmd)
     fi
     [[ $PS1 == *$'\e]133;A\a'* ]] || PS1="%{"$'\e]133;A\a'"%}${PS1}"
     [[ $PS1 == *$'\e]133;B\a'* ]] || PS1="${PS1}%{"$'\e]133;B\a'"%}"
   }
-  _sulafat_preexec() {
-    _sulafat_ran=1
+  _termina_preexec() {
+    _termina_ran=1
     builtin printf '\e]133;C\a'
   }
-  add-zsh-hook precmd _sulafat_precmd
-  add-zsh-hook preexec _sulafat_preexec
+  add-zsh-hook precmd _termina_precmd
+  add-zsh-hook preexec _termina_preexec
 
-  # Tab completion for the command line Sulafat edits: the request file holds the caret's
+  # Tab completion for the command line Termina edits: the request file holds the caret's
   # offset, a newline and the text; each match is reported (OSC 7770) and none is added.
-  _sulafat_enc() {
+  _termina_enc() {
     local s=${1//\%/%25}
     s=${s//;/%3B}
     s=${s//$'\n'/%0A}
@@ -257,7 +257,7 @@ if [[ -o interactive ]]; then
     s=${s//$'\a'/}
     REPLY=$s
   }
-  _sulafat_capture() {
+  _termina_capture() {
     compadd() {
       # A compadd that only asks (-O, -A, -D) is a completion function's own business.
       if [[ ${@[1,(i)(-|--)]} == *-(O|A|D)\ * ]]; then builtin compadd "$@"; return; fi
@@ -270,8 +270,8 @@ if [[ -o interactive ]]; then
       local h i=0 ins shown suf desc dir pre
       for h in $hits; do
         (( i++ ))
-        (( _sulafat_count >= 500 )) && return 0
-        (( _sulafat_count++ ))
+        (( _termina_count >= 500 )) && return 0
+        (( _termina_count++ ))
         if (( $+o[-Q] )) || [[ -n $QIPREFIX ]]; then ins=$h; shown=${(Q)h}; else ins=${(q)h}; shown=$h; fi
         ins="${o[-P]}${o[-p]}${ins}"
         suf=${o[-S]- }
@@ -283,11 +283,11 @@ if [[ -o interactive ]]; then
         [[ -n $QIPREFIX && $suf != / ]] && suf="${QIPREFIX[1]}${suf}"
         desc=${dscr[i]}
         if [[ $desc == *' -- '* ]]; then desc=${desc#* -- }; else desc=; fi
-        _sulafat_enc "${QIPREFIX}${IPREFIX}"; pre=$REPLY
-        _sulafat_enc "$ins"; ins=$REPLY
-        _sulafat_enc "$suf"; suf=$REPLY
-        _sulafat_enc "$shown"; shown=$REPLY
-        _sulafat_enc "$desc"; desc=$REPLY
+        _termina_enc "${QIPREFIX}${IPREFIX}"; pre=$REPLY
+        _termina_enc "$ins"; ins=$REPLY
+        _termina_enc "$suf"; suf=$REPLY
+        _termina_enc "$shown"; shown=$REPLY
+        _termina_enc "$desc"; desc=$REPLY
         builtin printf '\e]7770;m;%s;%s;%s;%s;%s\a' "$pre" "$ins" "$suf" "$shown" "$desc"
       done
       return 0
@@ -297,26 +297,26 @@ if [[ -o interactive ]]; then
     compstate[insert]=''
     compstate[list]=''
   }
-  _sulafat_complete() {
+  _termina_complete() {
     if (( ! $+functions[_main_complete] )); then
-      builtin autoload -Uz compinit && compinit -i -d "${SULAFAT_COMPLETE_FILE:h}/zcompdump"
+      builtin autoload -Uz compinit && compinit -i -d "${TERMINA_COMPLETE_FILE:h}/zcompdump"
     fi
-    local f=$SULAFAT_COMPLETE_FILE data
+    local f=$TERMINA_COMPLETE_FILE data
     [[ -r $f ]] || return 0
     data=$(<$f)
     BUFFER=${data#*$'\n'}
     CURSOR=${data%%$'\n'*}
-    typeset -gi _sulafat_count=0
+    typeset -gi _termina_count=0
     builtin printf '\e]7770;b\a'
-    zle _sulafat_complete_word
+    zle _termina_complete_word
     builtin printf '\e]7770;e\a'
     BUFFER=
     CURSOR=0
   }
   # Keys typed ahead: at the start of each line, before zsh's line editor reads them, read
   # whatever is waiting and report it (OSC 7770 t), controls and `%`/`;` as %XX.
-  _sulafat_line_init() {
-    (( $+widgets[_sulafat_orig_line_init] )) && zle _sulafat_orig_line_init -- "$@"
+  _termina_line_init() {
+    (( $+widgets[_termina_orig_line_init] )) && zle _termina_orig_line_init -- "$@"
     (( PENDING )) || return 0
     local c h out=
     while builtin read -k 1 -s -t 0 c; do
@@ -330,20 +330,20 @@ if [[ -o interactive ]]; then
     [[ -n $out ]] && builtin printf '\e]7770;t;%s\a' "$out"
     return 0
   }
-  _sulafat_bind() {
-    zle -C _sulafat_complete_word complete-word _sulafat_capture
-    zle -N _sulafat_complete
+  _termina_bind() {
+    zle -C _termina_complete_word complete-word _termina_capture
+    zle -N _termina_complete
     # The user's own zle-line-init, if their .zshrc made one, still runs — first.
-    if (( $+widgets[zle-line-init] )) && [[ ${widgets[zle-line-init]} != *_sulafat_line_init* ]]; then
-      zle -A zle-line-init _sulafat_orig_line_init
+    if (( $+widgets[zle-line-init] )) && [[ ${widgets[zle-line-init]} != *_termina_line_init* ]]; then
+      zle -A zle-line-init _termina_orig_line_init
     fi
-    zle -N zle-line-init _sulafat_line_init
+    zle -N zle-line-init _termina_line_init
     # Bound once the user's .zshrc has chosen emacs or vi keys, in every keymap.
     local m
-    for m in emacs viins vicmd; do builtin bindkey -M $m '\e[9898~' _sulafat_complete; done
-    add-zsh-hook -d precmd _sulafat_bind
+    for m in emacs viins vicmd; do builtin bindkey -M $m '\e[9898~' _termina_complete; done
+    add-zsh-hook -d precmd _termina_bind
   }
-  add-zsh-hook precmd _sulafat_bind
+  add-zsh-hook precmd _termina_bind
 fi
 `##
 
@@ -352,10 +352,10 @@ fi
 /// arithmetic expression: its whole length while no command has run since the prompt,
 /// noting that one has as it is worked out, and nothing after.
 /// Each hook gives back the `$?` it found, for the user's prompt commands after it.
-const BASHRC: string = ##`# Sulafat's bash integration, read through --rcfile in place of ~/.bashrc.
-# Written by Sulafat at each start; edits here are lost.
+const BASHRC: string = ##`# Termina's bash integration, read through --rcfile in place of ~/.bashrc.
+# Written by Termina at each start; edits here are lost.
 # What a login shell reads, as `bash -l` would: an --rcfile is read only by a shell that
-# is interactive and not a login one, which is how Sulafat starts bash.
+# is interactive and not a login one, which is how Termina starts bash.
 [ -r /etc/profile ] && . /etc/profile
 if [ -r "$HOME/.bash_profile" ]; then . "$HOME/.bash_profile"
 elif [ -r "$HOME/.bash_login" ]; then . "$HOME/.bash_login"
@@ -363,18 +363,18 @@ elif [ -r "$HOME/.profile" ]; then . "$HOME/.profile"
 fi
 # The hooks need PS0 (bash 4.4); an older bash is a classic terminal.
 if (( BASH_VERSINFO[0] > 4 || (BASH_VERSINFO[0] == 4 && BASH_VERSINFO[1] >= 4) )); then
-  _sulafat_ran=
-  _sulafat_precmd() {
+  _termina_ran=
+  _termina_precmd() {
     local s=$?
-    [[ -n $_sulafat_ran ]] && builtin printf '\e]133;D;%s\a' "$s"
-    _sulafat_ran=
+    [[ -n $_termina_ran ]] && builtin printf '\e]133;D;%s\a' "$s"
+    _termina_ran=
     builtin printf '\e]7;file://%s%s\a' "$HOSTNAME" "$PWD"
     return $s
   }
   # Last: A at the start of PS1 and B at its end, which a prompt command before may have
   # rebuilt; then keys typed ahead, read before readline would take them (OSC 7770 t),
   # controls and %/; as %XX.
-  _sulafat_prompt() {
+  _termina_prompt() {
     local s=$? c h out=
     [[ $PS1 == *'133;A'* ]] || PS1='\[\e]133;A\a\]'"${PS1}"
     [[ $PS1 == *'133;B'* ]] || PS1="${PS1}"'\[\e]133;B\a\]'
@@ -392,20 +392,20 @@ if (( BASH_VERSINFO[0] > 4 || (BASH_VERSINFO[0] == 4 && BASH_VERSINFO[1] >= 4) )
     return $s
   }
   if [[ $(builtin declare -p PROMPT_COMMAND 2>/dev/null) == "declare -a"* ]]; then
-    PROMPT_COMMAND=(_sulafat_precmd "${PROMPT_COMMAND[@]}" _sulafat_prompt)
+    PROMPT_COMMAND=(_termina_precmd "${PROMPT_COMMAND[@]}" _termina_prompt)
   else
-    PROMPT_COMMAND=$'_sulafat_precmd\n'"${PROMPT_COMMAND}"$'\n_sulafat_prompt'
+    PROMPT_COMMAND=$'_termina_precmd\n'"${PROMPT_COMMAND}"$'\n_termina_prompt'
   fi
   # C once for what was entered, though a paste of several lines runs as several commands:
   # all of it the first time, which notes that a command ran, and none of it after.
-  _sulafat_c=$'\e]133;C\a'
-  PS0="${PS0}"'${_sulafat_c:0:$((_sulafat_ran ? 0 : (_sulafat_ran = 1, 99)))}'
-  # Tab completion for the command line Sulafat edits: the request file holds the caret's
+  _termina_c=$'\e]133;C\a'
+  PS0="${PS0}"'${_termina_c:0:$((_termina_ran ? 0 : (_termina_ran = 1, 99)))}'
+  # Tab completion for the command line Termina edits: the request file holds the caret's
   # offset, a newline and the text; the word's matches are reported (OSC 7770) as zsh's are,
   # none inserted. What readline would run is run: the command's compspec (`complete -p`,
   # loaded on demand through bash-completion's -D loader), its -F function with COMP_* set,
   # its other options through compgen; commands for the first word; else file names.
-  _sulafat_enc() {
+  _termina_enc() {
     local s=${1//\%/%25}
     s=${s//;/%3B}
     s=${s//$'\n'/%0A}
@@ -414,15 +414,15 @@ if (( BASH_VERSINFO[0] > 4 || (BASH_VERSINFO[0] == 4 && BASH_VERSINFO[1] >= 4) )
     s=${s//$'\a'/}
     REPLY=$s
   }
-  _sulafat_complete() {
-    local f=$SULAFAT_COMPLETE_FILE data
+  _termina_complete() {
+    local f=$TERMINA_COMPLETE_FILE data
     [[ -r $f ]] || return 0
     data=$(<"$f")
     local point=${data%%$'\n'*} line=${data#*$'\n'}
     local before=${line:0:point}
     # The command the caret is in (from `start`), its words as readline makes them — a
     # break character in COMP_WORDBREAKS (`=`, `:`) a word of its own — and the shell word
-    # under the caret, which is what Sulafat replaces.
+    # under the caret, which is what Termina replaces.
     local breaks=${COMP_WORDBREAKS-$' \t\n"\'><=;|&(:'}
     local -a words=()
     local w= word= q= esc= c i start=0 broke=
@@ -466,13 +466,13 @@ if (( BASH_VERSINFO[0] > 4 || (BASH_VERSINFO[0] == 4 && BASH_VERSINFO[1] >= 4) )
     local fline=${before:start}
     fline=${fline:0:${#fline}-${#typed}}$bare
     local -a hits=()
-    local -A _sulafat_opts=()
+    local -A _termina_opts=()
     # compopt outside a real completion fails: this one notes the options for the report.
     compopt() {
       while (( $# )); do
         case $1 in
-          -o) _sulafat_opts[$2]=1; shift ;;
-          +o) unset "_sulafat_opts[$2]"; shift ;;
+          -o) _termina_opts[$2]=1; shift ;;
+          +o) unset "_termina_opts[$2]"; shift ;;
         esac
         shift
       done
@@ -480,7 +480,7 @@ if (( BASH_VERSINFO[0] > 4 || (BASH_VERSINFO[0] == 4 && BASH_VERSINFO[1] >= 4) )
     }
     if (( cword == 0 )); then
       if [[ $bare == */* ]]; then
-        _sulafat_opts[filenames]=1
+        _termina_opts[filenames]=1
         mapfile -t hits < <(compgen -f -- "$bare")
       else
         mapfile -t hits < <(compgen -c -- "$bare")
@@ -503,7 +503,7 @@ if (( BASH_VERSINFO[0] > 4 || (BASH_VERSINFO[0] == 4 && BASH_VERSINFO[1] >= 4) )
         for (( k = 0; k < ${#sw[@]} - 1; k++ )); do
           case ${sw[k]} in
             -F) fn=${sw[k + 1]}; (( k++ )) ;;
-            -o) _sulafat_opts[${sw[k + 1]}]=1; (( k++ )) ;;
+            -o) _termina_opts[${sw[k + 1]}]=1; (( k++ )) ;;
             -C) gencmd=${sw[k + 1]}; (( k++ )) ;;
             -A|-G|-W|-X|-P|-S) gen+=("${sw[k]}" "${sw[k + 1]}"); (( k++ )) ;;
             *) gen+=("${sw[k]}") ;;
@@ -526,29 +526,29 @@ if (( BASH_VERSINFO[0] > 4 || (BASH_VERSINFO[0] == 4 && BASH_VERSINFO[1] >= 4) )
             eval "$gencmd"' "$cmd" "$bare" "$prev"' 2>/dev/null </dev/null
           )
         fi
-        if (( ${#hits[@]} == 0 )) && [[ -n ${_sulafat_opts[default]}${_sulafat_opts[bashdefault]} ]]; then
-          _sulafat_opts[filenames]=1
+        if (( ${#hits[@]} == 0 )) && [[ -n ${_termina_opts[default]}${_termina_opts[bashdefault]} ]]; then
+          _termina_opts[filenames]=1
           mapfile -t hits < <(compgen -f -- "$bare")
         fi
-        if (( ${#hits[@]} == 0 )) && [[ -n ${_sulafat_opts[dirnames]} ]]; then
-          _sulafat_opts[filenames]=1
+        if (( ${#hits[@]} == 0 )) && [[ -n ${_termina_opts[dirnames]} ]]; then
+          _termina_opts[filenames]=1
           mapfile -t hits < <(compgen -d -- "$bare")
         fi
-        if [[ -n ${_sulafat_opts[plusdirs]} ]]; then
-          _sulafat_opts[filenames]=1
+        if [[ -n ${_termina_opts[plusdirs]} ]]; then
+          _termina_opts[filenames]=1
           mapfile -t -O ${#hits[@]} hits < <(compgen -d -- "$bare")
         fi
       else
-        _sulafat_opts[filenames]=1
+        _termina_opts[filenames]=1
         mapfile -t hits < <(compgen -f -- "$bare")
       fi
     fi
     builtin unset -f compopt
     # Sorted and each once, as readline lists them (but -o nosort), at most 500.
-    if [[ -z ${_sulafat_opts[nosort]} ]] && (( ${#hits[@]} )); then
+    if [[ -z ${_termina_opts[nosort]} ]] && (( ${#hits[@]} )); then
       mapfile -t hits < <(builtin printf '%s\n' "${hits[@]}" | LC_ALL=C sort -u)
     fi
-    # Sulafat's word is replaced: what of it comes before readline's (`--opt=` before a
+    # Termina's word is replaced: what of it comes before readline's (`--opt=` before a
     # value), the match, and after it a space — a `/` after a directory, nothing under
     # -o nospace, a closing quote first inside quotes.
     local pre=${word:0:${#word}-${#typed}}$quote
@@ -558,23 +558,23 @@ if (( BASH_VERSINFO[0] > 4 || (BASH_VERSINFO[0] == 4 && BASH_VERSINFO[1] >= 4) )
       [[ -z $h ]] && continue
       (( n++ >= 500 )) && break
       ins=$h; shown=$h; suf=' '
-      if [[ -n ${_sulafat_opts[filenames]} ]]; then
+      if [[ -n ${_termina_opts[filenames]} ]]; then
         path=$h
         [[ $path == '~/'* ]] && path=$HOME/${path:2}
         if [[ $h == */ ]]; then suf=; elif [[ -d $path ]]; then suf=/; fi
         shown=${h%/}; shown=${shown##*/}
         [[ $h == */ || $suf == / ]] && shown+=/
-        if [[ -z $quote && -z ${_sulafat_opts[noquote]} ]]; then
+        if [[ -z $quote && -z ${_termina_opts[noquote]} ]]; then
           if [[ $h == '~/'* ]]; then builtin printf -v ins '~/%q' "${h:2}"
           else builtin printf -v ins '%q' "$h"; fi
         fi
       fi
-      [[ -n ${_sulafat_opts[nospace]} && $suf == ' ' ]] && suf=
+      [[ -n ${_termina_opts[nospace]} && $suf == ' ' ]] && suf=
       [[ -n $quote && $suf != / ]] && suf=$quote$suf
-      _sulafat_enc "$pre"; local e_pre=$REPLY
-      _sulafat_enc "$ins"; ins=$REPLY
-      _sulafat_enc "$suf"; suf=$REPLY
-      _sulafat_enc "$shown"; shown=$REPLY
+      _termina_enc "$pre"; local e_pre=$REPLY
+      _termina_enc "$ins"; ins=$REPLY
+      _termina_enc "$suf"; suf=$REPLY
+      _termina_enc "$shown"; shown=$REPLY
       builtin printf '\e]7770;m;%s;%s;%s;%s;\a' "$e_pre" "$ins" "$suf" "$shown"
     done
     builtin printf '\e]7770;e\a'
@@ -582,9 +582,9 @@ if (( BASH_VERSINFO[0] > 4 || (BASH_VERSINFO[0] == 4 && BASH_VERSINFO[1] >= 4) )
     READLINE_POINT=0
   }
   # In every keymap, whichever the user's files chose.
-  for _sulafat_m in emacs vi-insert vi-command; do
-    builtin bind -m "$_sulafat_m" -x '"\e[9898~": _sulafat_complete' 2>/dev/null
+  for _termina_m in emacs vi-insert vi-command; do
+    builtin bind -m "$_termina_m" -x '"\e[9898~": _termina_complete' 2>/dev/null
   done
-  builtin unset _sulafat_m
+  builtin unset _termina_m
 fi
 `##

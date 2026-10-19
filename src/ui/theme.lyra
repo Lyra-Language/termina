@@ -68,7 +68,7 @@ pub let theme_of = pure (s: Settings) -> Theme => Theme {
   bold_is_bright: s.bold_is_bright,
 }
 
-/// Sulafat's own theme, before any settings: Sulafat Dark.
+/// Termina's own theme, before any settings: Termina Dark.
 pub let dark_theme = pure () -> Theme => theme_of(defaults())
 
 impl Theme {

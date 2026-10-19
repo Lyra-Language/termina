@@ -2,9 +2,9 @@ module ui
 //! The settings: the font — its family, size and line spacing — and the colours —
 //! a theme to start from, then the text, background, cursor, selection, the sections'
 //! (input and output), the tabs', the command line's and the 16 ANSI colours one by one,
-//! and bold as bright. Changes take at once; `../sulafat.lyra` keeps
+//! and bold as bright. Changes take at once; `../termina.lyra` keeps
 //! them (`../settings/settings.lyra`). Drawn in a Settings tab of the tab bar, opened by
-//! Sulafat ▸ Settings… (⌘,, or Ctrl+, off macOS).
+//! Termina ▸ Settings… (⌘,, or Ctrl+, off macOS).
 
 import bindings.imgui.{
   begin_combo,
@@ -109,7 +109,7 @@ pub let settings_panel = (
         changed = true
       }
     }
-    // The user's own, after Sulafat's.
+    // The user's own, after Termina's.
     if s.themes.len() > 0 { themes_rule() }
     for t in s.themes {
       if selectable("${t.name}##saved", t.name == s.theme_name) {
@@ -121,7 +121,7 @@ pub let settings_panel = (
     end_combo()
   }
   // The colours as they are, saved under a name of the user's — one of theirs replaced,
-  // Sulafat's own not; and a saved theme deleted.
+  // Termina's own not; and a saved theme deleted.
   set_next_item_width(180.0)
   let _ = input_text_with_hint("##themename", "Theme name", theme_name)
   same_line()

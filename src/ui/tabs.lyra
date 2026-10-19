@@ -1,13 +1,13 @@
 module ui
 //! The tabs' bar and shortcuts: the bar drawn and what was done to it, and which shortcut,
-//! if any, was pressed this frame. The tabs themselves are `../sulafat.lyra`'s.
+//! if any, was pressed this frame. The tabs themselves are `../termina.lyra`'s.
 //!
 //! **Tabs are dragged into a new order by ImGui**, which keeps its own display order and
 //! does not tell it. [tab_bar] reads it back — each tab's place on the bar, after it is
 //! drawn — and answers it as [TabBar.order], for the caller to put its tabs in, so that the
 //! order shown, ⌘1–9's and ⌘⇧[ ⌘⇧]'s stay one.
 //!
-//! **On a Mac with Sulafat's menu bar, ⌘T, ⌘W, ⌘⇧[ and ⌘⇧] are its menu items'**, and
+//! **On a Mac with Termina's menu bar, ⌘T, ⌘W, ⌘⇧[ and ⌘⇧] are its menu items'**, and
 //! come as menu choices: AppKit hands a key equivalent to the menu as well as to SDL, so
 //! reading them here too would open two tabs, or close two. ⌘1–⌘9 have no items and stay
 //! keys.
@@ -278,7 +278,7 @@ pub const MENU_SMALLER: i32 = 7
 pub const MENU_DEFAULT_SIZE: i32 = 8
 
 /// The tab command a menu item stands for, with `active` shown of `count`: the Mac's bar's
-/// or Sulafat's own (`menu_bar.lyra`, whose Window menu lists the tabs from [MENU_TAB]).
+/// or Termina's own (`menu_bar.lyra`, whose Window menu lists the tabs from [MENU_TAB]).
 pub let menu_command = pure (tag: i32, active: i64, count: i64) -> TabCommand =>
   if tag >= MENU_TAB && i64(tag - MENU_TAB) < count { ShowTab(i64(tag - MENU_TAB)) }
   else if tag == MENU_NEW_TAB { NewTab }
@@ -295,7 +295,7 @@ pub let menu_command = pure (tag: i32, active: i64, count: i64) -> TabCommand =>
 /// Next Tab ⌘⇧[ and ⌘⇧] — Edit's (Undo, Redo, Cut, Copy, Paste, Select All, read by
 /// [edit_action_of]), View's (the font's size: Default Font Size ⌘0, Bigger ⌘=, Smaller
 /// ⌘-), and the standard Window menu. Whether there is one (`false`
-/// elsewhere, where the tab keys are read as keys and Sulafat draws its own bar,
+/// elsewhere, where the tab keys are read as keys and Termina draws its own bar,
 /// [menu_bar]).
 pub let install_menus = () -> bool => {
   app_menu()
@@ -321,7 +321,7 @@ pub let install_menus = () -> bool => {
   item("Bigger", "=", COMMAND, MENU_BIGGER)
   item("Smaller", "-", COMMAND, MENU_SMALLER)
   window_menu()
-  install("Sulafat")
+  install("Termina")
 }
 
 /// The Edit menu's items, by tag.
