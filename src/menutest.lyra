@@ -61,7 +61,7 @@ let main = () -> u8 => {
 
 /// The key equivalent of the bar's item titled exactly `title` — `describe` writes each as
 /// `title<tab>key` — `""` for an item without one, `"missing"` for no such item.
-let key_of = (bar: string, title: string) -> string => {
+let key_of = pure (bar: string, title: string) -> string => {
   for line in bar.split("\n") {
     let parts = line.trim().split("\t")
     if parts[0] == title { return if parts.len() > 1 { parts[1] } else { "" } }

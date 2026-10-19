@@ -128,7 +128,7 @@ pub data Outcome =
   | Complete(string, i64)
 
 /// An empty command line over `history` (oldest first).
-pub let command_line = (history: []string) -> CommandLine => CommandLine {
+pub let command_line = pure (history: []string) -> CommandLine => CommandLine {
   edit: editor(),
   history: history,
   browsing: history.len(),
@@ -645,7 +645,7 @@ impl CommandLine {
   }
 }
 
-let cell_pos = (at: Place, row: i64, col: i64) -> Vec2 => Vec2 {
+let cell_pos = pure (at: Place, row: i64, col: i64) -> Vec2 => Vec2 {
   x: at.origin.x + f32(col) * at.cell.x,
   y: at.origin.y + f32(row) * at.cell.y,
 }

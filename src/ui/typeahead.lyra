@@ -11,7 +11,7 @@ import editor.{ text_of }
 
 /// What `keys` typed: lines, each ended by a Return, joined by `\n` — the last one unended
 /// when no Return followed it.
-pub let typed_lines = (keys: string) -> string => {
+pub let typed_lines = pure (keys: string) -> string => {
   // DEL is what Backspace sends, and the parser drops it in text: made BS first.
   let bytes = [b in keys.encode_utf8() | if b == 0x7F { u8(0x08) } else { b }]
   var p = parser()
@@ -38,7 +38,7 @@ pub let typed_lines = (keys: string) -> string => {
 }
 
 /// `line` with its last word, and the spaces after it, taken off — Ctrl+W.
-let without_last_word = (line: []rune) -> []rune => {
+let without_last_word = pure (line: []rune) -> []rune => {
   var n = line.len()
   while n > 0 && line[n - 1] == ' ' { n -= 1 }
   while n > 0 && line[n - 1] != ' ' { n -= 1 }

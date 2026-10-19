@@ -408,13 +408,13 @@ let check_completion = (host: Host) -> i64 => {
 }
 
 /// The completions a menu shows, in order.
-let shown = (line: CommandLine) -> string => [c in line.menu | c.shown].join(" ")
+let shown = pure (line: CommandLine) -> string => [c in line.menu | c.shown].join(" ")
 
 /// The one chosen.
-let chosen = (line: CommandLine) -> string =>
+let chosen = pure (line: CommandLine) -> string =>
   if line.menu.len() == 0 { "" } else { line.menu[line.chosen].shown }
 
-let offer = (
+let offer = pure (
   prefix: string,
   insert: string,
   suffix: string,
@@ -717,7 +717,7 @@ let check_mouse_reports = () -> i64 => {
 
 /// Bytes as text: an ESC as `\e`, the printable rest as itself, other bytes after `[M` by
 /// their numbers (X10's place bytes).
-let shown_bytes = (bytes: []u8) -> string => {
+let shown_bytes = pure (bytes: []u8) -> string => {
   if bytes.len() == 6 && bytes[2] == 0x4D {
     return "\\e[M ${bytes[3]} ${bytes[4]} ${bytes[5]}"
   }
@@ -789,7 +789,7 @@ let bar_frame = (host: Host, tabs: []TabLabel, active: i64) -> TabBar => {
 }
 
 /// The tabs put in the bar's order, and the shown one followed, as Sulafat's loop does.
-let follow = (tabs: []TabLabel, active: i64, bar: TabBar) -> ([]TabLabel, i64) => {
+let follow = pure (tabs: []TabLabel, active: i64, bar: TabBar) -> ([]TabLabel, i64) => {
   var moved: []TabLabel = []
   var now = active
   for i in 0..<bar.order.len() {
@@ -799,9 +799,9 @@ let follow = (tabs: []TabLabel, active: i64, bar: TabBar) -> ([]TabLabel, i64) =
   (moved, now)
 }
 
-let ints = (xs: []i64) -> string => [x in xs | "${x}"].join(" ")
+let ints = pure (xs: []i64) -> string => [x in xs | "${x}"].join(" ")
 
-let names = (tabs: []TabLabel) -> string => [t in tabs | t.name].join(" ")
+let names = pure (tabs: []TabLabel) -> string => [t in tabs | t.name].join(" ")
 
 // The tab shortcuts on a Mac, with ImGui's Ctrl/⌘ swap on as the real window has it.
 let check_tab_keys = (host: Host) -> i64 => {
@@ -896,7 +896,7 @@ let tab_key_menus = (
 ) -> string =>
   tab_key_with(host, mods, key, active, count, true)
 
-let describe_tab = (c: TabCommand) -> string => match c {
+let describe_tab = pure (c: TabCommand) -> string => match c {
   NoCommand => "none",
   NewTab => "new",
   CloseTab => "close",
@@ -1072,7 +1072,7 @@ let check_theme = () -> i64 => {
   failed
 }
 
-let hex = (c: u32) -> string => "${c}"
+let hex = pure (c: u32) -> string => "${c}"
 
 // ── Driving ──────────────────────────────────────────────────────────────────
 
@@ -1134,7 +1134,7 @@ let press = (host: Host, line: mut CommandLine, mods: []i32, key: i32) -> Outcom
 }
 
 /// The middle of the cell at `row`, `col`.
-let at = (row: i64, col: i64) -> Vec2 => Vec2 {
+let at = pure (row: i64, col: i64) -> Vec2 => Vec2 {
   x: PLACE.origin.x + (f32(col) + 0.5) * PLACE.cell.x,
   y: PLACE.origin.y + (f32(row) + 0.5) * PLACE.cell.y,
 }
@@ -1202,7 +1202,7 @@ let double_click_and_drag = (
   for _ in 0..<30 { let _ = frame(host, line) }
 }
 
-let describe = (o: Outcome) -> string => match o {
+let describe = pure (o: Outcome) -> string => match o {
   Nothing => "nothing",
   Submit(c) => "submit ${c}",
   Send(b) => "send ${b}",

@@ -270,9 +270,9 @@ let check_selection = () -> i64 => {
   failed
 }
 
-let at = (line: i64, col: i64) -> Spot => Spot { line: line, col: col }
+let at = pure (line: i64, col: i64) -> Spot => Spot { line: line, col: col }
 
-let span = (p: (i64, i64)) -> string => "${p.0},${p.1}"
+let span = pure (p: (i64, i64)) -> string => "${p.0},${p.1}"
 
 // Wide runes take two cells; zero-width ones none.
 let check_wide = () -> i64 => {
@@ -327,7 +327,7 @@ let check_reports = () -> i64 => {
 }
 
 /// The answers to `input`, joined by `|`, with ESC shown as `\e`.
-let replies = (input: string) -> string => {
+let replies = pure (input: string) -> string => {
   var s = run(10, 3, input)
   [r in s.take_replies() | r.replace("\e", "\\e")].join("|")
 }
@@ -376,12 +376,12 @@ let check_modes = () -> i64 => {
 }
 
 /// The style of cell `col` on the first line after `input`, as `fg/bg/attrs`.
-let style_at = (input: string, col: i64) -> string => {
+let style_at = pure (input: string, col: i64) -> string => {
   let c = run(8, 2, input).line(0)[col]
   style(c.fg, c.bg, c.attrs)
 }
 
-let style = (fg: u32, bg: u32, attrs: u32) -> string => "${fg}/${bg}/${attrs}"
+let style = pure (fg: u32, bg: u32, attrs: u32) -> string => "${fg}/${bg}/${attrs}"
 
 // `printf` on a pseudo-terminal: a real program's bytes through the PTY, parser and screen.
 let check_pty = () -> i64 => {
@@ -565,9 +565,9 @@ let check_editor = () -> i64 => {
   failed
 }
 
-let pos = (p: (i64, i64)) -> string => "${p.0},${p.1}"
+let pos = pure (p: (i64, i64)) -> string => "${p.0},${p.1}"
 
-let with_text = (s: string) -> Editor => {
+let with_text = pure (s: string) -> Editor => {
   var e = editor()
   e.paste(s)
   e
@@ -652,13 +652,13 @@ let check_words = () -> i64 => {
   failed
 }
 
-let word = (text: string, at: i64) -> string => {
+let word = pure (text: string, at: i64) -> string => {
   let runes = text.to_runes()
   let (a, b) = shell_word_at(runes, at)
   text_of_runes(runes.slice(a, b))
 }
 
-let text_of_runes = (r: []rune) -> string => text(r)
+let text_of_runes = pure (r: []rune) -> string => text(r)
 
 // OSC 7770: a list begun, matches with percent-encoded fields, and its end.
 let check_completion_reports = () -> i64 => {
@@ -924,11 +924,11 @@ let full_screen = (
 }
 
 /// Row `y` of the screen (not the scrollback), its trailing blanks off.
-let screen_row = (s: Screen, y: i64) -> string =>
+let screen_row = pure (s: Screen, y: i64) -> string =>
   line_text(s.line(s.scrollback_len() + y)).trim_end()
 
 /// How many of the screen's rows have something on them.
-let drawn_rows = (s: Screen) -> i64 =>
+let drawn_rows = pure (s: Screen) -> i64 =>
   [y in 0..<s.rows | screen_row(s, y) != "" | 1].len()
 
 let describe_marks = (s: mut Screen) -> string => [m in s.take_marks() | match m {
@@ -945,10 +945,10 @@ let check = (name: string, got: string, want: string) -> i64 => {
   }
 }
 
-let feed_all = (pieces: []string) -> []Action =>
+let feed_all = pure (pieces: []string) -> []Action =>
   feed_bytes([p in pieces | p.encode_utf8()])
 
-let feed_bytes = (pieces: [][]u8) -> []Action => {
+let feed_bytes = pure (pieces: [][]u8) -> []Action => {
   var p = parser()
   var out: []Action = []
   for piece in pieces {
@@ -957,24 +957,25 @@ let feed_bytes = (pieces: [][]u8) -> []Action => {
   out
 }
 
-let run = (cols: i64, rows: i64, input: string) -> Screen => {
+let run = pure (cols: i64, rows: i64, input: string) -> Screen => {
   var p = parser()
   var s = screen(cols, rows)
   s.apply(p.feed(input.encode_utf8()))
   s
 }
 
-let rows = (s: Screen) -> string =>
+let rows = pure (s: Screen) -> string =>
   [y in 0..<s.rows | line_text(s.line(s.scrollback_len() + y))].join("|")
 
 /// A screen line's text.
-let line_text = (line: []Cell) -> string => text(runes_of(line))
+let line_text = pure (line: []Cell) -> string => text(runes_of(line))
 
-let text = (line: []rune) -> string => [r in line | "${r}"].join("")
+let text = pure (line: []rune) -> string => [r in line | "${r}"].join("")
 
-let describe = (actions: []Action) -> string => [a in actions | describe_one(a)].join(" ")
+let describe = pure (actions: []Action) -> string =>
+  [a in actions | describe_one(a)].join(" ")
 
-let describe_one = (a: Action) -> string => match a {
+let describe_one = pure (a: Action) -> string => match a {
   Print(t) => "P(${text(t)})",
   Execute(c) => "X${c}",
   Csi(seq) => "C(${seq.marker};${[n in seq.params | "${n}"].join(",")};${seq.intermediates}${seq.final})",
@@ -982,7 +983,7 @@ let describe_one = (a: Action) -> string => match a {
   Osc(t) => "O(${t})",
 }
 
-let subs = (actions: []Action) -> string => match actions[0] {
+let subs = pure (actions: []Action) -> string => match actions[0] {
   Csi(seq) => [s in seq.sub | if s { "T" } else { "F" }].join(""),
   _ => "not a CSI",
 }

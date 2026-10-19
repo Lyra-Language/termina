@@ -72,7 +72,7 @@ const COMPLETE_KEY: string = "\e[9898~"
 /// on (zsh does at its prompt), so that a command of several lines reaches the shell's line
 /// editor as one, its line breaks literal; then Return. The paste's own end marker cannot
 /// be in it: ESC is dropped.
-pub let submission = (command: string, bracketed: bool) -> string => {
+pub let submission = pure (command: string, bracketed: bool) -> string => {
   if command == "" { return "\r" }
   if bracketed { "\e[200~${command.replace("\e", "")}\e[201~\r" } else { "${command}\r" }
 }
