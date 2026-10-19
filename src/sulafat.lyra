@@ -279,7 +279,7 @@ let draw_window = (
   let viewport = get_main_viewport()
   set_next_window_pos(viewport.work_pos())
   set_next_window_size(viewport.work_size())
-  push_style_var_vec2(STYLE_VAR_WINDOW_PADDING, Vec2 { x: PADDING, y: PADDING / 2.0 })
+  push_style_var_vec2(STYLE_VAR_WINDOW_PADDING, Vec2 { x: PADDING, y: PADDING })
   let flags = WINDOW_FLAGS_NO_DECORATION | WINDOW_FLAGS_NO_NAV_INPUTS |
     WINDOW_FLAGS_NO_BACKGROUND | WINDOW_FLAGS_NO_SAVED_SETTINGS | WINDOW_FLAGS_NO_SCROLLBAR |
     WINDOW_FLAGS_NO_SCROLL_WITH_MOUSE | WINDOW_FLAGS_NO_BRING_TO_FRONT_ON_FOCUS

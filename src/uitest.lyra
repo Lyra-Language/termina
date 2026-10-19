@@ -378,7 +378,7 @@ let check_completion = (host: Host) -> i64 => {
   // In the box at the window's foot the menu opens upward, above the prompt's row: its
   // second row is two rows above that.
   var above = command_line([])
-  let box_place = Place { PLACE | menu_above: true, rows_above: 1 }
+  let box_place = Place { PLACE | menu_above: true, lift: PLACE.cell.y }
   above.edit.paste("ls s")
   let _ = frame_at(host, above, box_place)
   above.pending = Some(("ls s", 4))

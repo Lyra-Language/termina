@@ -130,8 +130,10 @@ shell ⇄ bindings.pty ──bytes──▶ vt.Parser ──[]Action──▶ vt
   off macOS) is the terminal's own; Ctrl+letter is the control character.
 - **At a prompt the command line is a box pinned to the window's foot**, as Warp has it: the
   shell's prompt (the `B` line's cells before the input column) on its first row, the
-  editor from column 0 below, the completion menu opening upward (`Place.menu_above`). The
-  grid draws only the lines above the prompt's, and the page counts the box's height so the
+  editor from column 0 below, the completion menu opening upward (`Place.menu_above`, its
+  foot `Place.lift` points over the text: just above the box). Both rows are set in
+  `BOX_INSET` from the grid's sides, so the command wraps a few columns before the grid
+  does. The grid draws only the lines above the prompt's, and the page counts the box's height so the
   last line rests on it at the bottom; the box is drawn opaque at the view's foot
   (`origin.y + scroll + avail.y`), wherever the view is scrolled, and grid clicks stop at
   its top. While a program runs there is no box. zsh's echo of the command still lands in

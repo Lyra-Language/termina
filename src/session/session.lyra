@@ -352,10 +352,14 @@ pub let draw_session = (
     None => -1,
   }
   // At a prompt the command line is a box pinned to the window's foot, as Warp has it: the
-  // prompt's row, then the command's rows from the first column.
-  let wrap = Wrap { first: 0, cols: cols }
+  // prompt's row, then the command's rows from the first column, inset from the box's sides
+  // and so a little narrower than the grid.
+  let inset_cols = (2.0 * BOX_INSET / cell.x).ceil()
+  let wrap = Wrap { first: 0, cols: (cols - inset_cols).max(1) }
   let box_rows = if input_line >= 0 { 1 + s.line.rows(wrap) } else { 0 }
-  let box_height = if box_rows > 0 { f32(box_rows) * cell.y + 2.0 * BOX_PADDING } else { 0.0 }
+  let box_height = if box_rows > 0 {
+    f32(box_rows) * cell.y + 2.0 * BOX_PADDING + BOX_GAP
+  } else { 0.0 }
 
   // Following the output: the view was at the bottom before this frame's scroll.
   let at_bottom = get_scroll_y() >= get_scroll_max_y() - 1.0
@@ -446,23 +450,24 @@ pub let draw_session = (
         Vec2 { x: x0, y: box_top },
         Vec2 { x: x1, y: view_bottom + BOX_MARGIN },
         INPUT_BAND,
-        6.0
+        BOX_ROUNDING
       )
       list.add_line_h(x0, x1, box_top, BOX_RULE, 1.0)
       let prompt_at = LineAt {
-        origin: Vec2 { x: origin.x, y: box_top + BOX_PADDING },
+        origin: Vec2 { x: origin.x + BOX_INSET, y: box_top + BOX_PADDING },
         cell: cell,
         text_dy: text_dy,
         pixel: pixel,
       }
       draw_line(list, theme, fonts, prompt_at, s.shown.line(i), prompt_end)
       let place = Place {
-        origin: Vec2 { x: origin.x, y: box_top + BOX_PADDING + cell.y },
+        origin: Vec2 { x: origin.x + BOX_INSET, y: box_top + BOX_PADDING + cell.y + BOX_GAP },
         cell: cell,
         text_dy: text_dy,
         wrap: wrap,
         menu_above: true,
-        rows_above: 1,
+        // The menu rests just above the box.
+        lift: cell.y + BOX_PADDING + BOX_GAP + BOX_MENU_GAP,
       }
       let style = Style {
         text: theme.fg,
@@ -712,10 +717,16 @@ const INPUT_BAND: u32 = 0x10FFFFFF
 const MENU: u32 = 0xFF2E2A25
 const MENU_CHOSEN: u32 = 0xFF4A4038
 
-/// The command line's box: how far it reaches past the grid on each side, the space inside
-/// it above and below its rows, and the rule along its top.
-const BOX_MARGIN: f32 = 5.0
-const BOX_PADDING: f32 = 6.0
+/// The command line's box: how far it reaches past the grid on each side, how far its text
+/// is set in from the grid's sides, the space inside it above and below its rows, between
+/// the prompt's row and the command's, and between it and a completion menu above it, its
+/// corners' rounding, and the rule along its top.
+const BOX_MARGIN: f32 = 6.0
+const BOX_INSET: f32 = 8.0
+const BOX_PADDING: f32 = 12.0
+const BOX_GAP: f32 = 4.0
+const BOX_MENU_GAP: f32 = 4.0
+const BOX_ROUNDING: f32 = 8.0
 const BOX_RULE: u32 = 0x30FFFFFF
 
 /// Reads per frame at most — a megabyte — so that a program writing without end (`yes`)

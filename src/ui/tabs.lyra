@@ -31,7 +31,12 @@ import bindings.imgui.{
   tab_item_button,
   get_item_rect_min,
   get_item_rect_max,
+  push_style_var_vec2,
+  pop_style_var,
   Vec2,
+  STYLE_VAR_FRAME_PADDING,
+  STYLE_VAR_ITEM_INNER_SPACING,
+  STYLE_VAR_ITEM_SPACING,
   TAB_BAR_FLAGS_FITTING_POLICY_SHRINK,
   TAB_BAR_FLAGS_REORDERABLE,
   TAB_ITEM_FLAGS_SET_SELECTED,
@@ -77,6 +82,11 @@ pub let tab_bar = (tabs: []TabLabel, active: i64, select: Maybe<i64>) -> TabBar 
   var add = false
   var lefts: []f32 = []
   var centres: []Vec2 = []
+  // Roomier than ImGui's own: the inside of a tab, the gap between tabs and between a
+  // tab's name and its close button, and the space under the bar.
+  push_style_var_vec2(STYLE_VAR_FRAME_PADDING, TAB_PADDING)
+  push_style_var_vec2(STYLE_VAR_ITEM_INNER_SPACING, TAB_SPACING)
+  push_style_var_vec2(STYLE_VAR_ITEM_SPACING, TAB_SPACING)
   if begin_tab_bar(
     "tabs",
     TAB_BAR_FLAGS_FITTING_POLICY_SHRINK | TAB_BAR_FLAGS_REORDERABLE
@@ -105,6 +115,7 @@ pub let tab_bar = (tabs: []TabLabel, active: i64, select: Maybe<i64>) -> TabBar 
     ) { add = true }
     end_tab_bar()
   }
+  pop_style_var(3)
   // A tab chosen by a key this frame is shown now, whatever the bar has yet caught up with.
   match select {
     Some(n) => { shown = n },
@@ -134,6 +145,12 @@ pub let order_by = pure (lefts: []f32) -> []i64 => {
   }
   order
 }
+
+/// Points between a tab's edge and its name, across and up and down.
+const TAB_PADDING: Vec2 = Vec2 { x: 14.0, y: 7.0 }
+
+/// Points between tabs, between a name and its close button, and under the bar.
+const TAB_SPACING: Vec2 = Vec2 { x: 6.0, y: 8.0 }
 
 /// A tab shortcut pressed this frame.
 pub data TabCommand =

@@ -167,10 +167,11 @@ pub struct Place {
   /// How far down its cell a line's text is drawn.
   text_dy: f32,
   wrap: Wrap,
-  /// The completion menu opens upward, above `rows_above` rows over the text (the prompt's,
-  /// when the command line is a box at the window's foot), rather than below it.
+  /// The completion menu opens upward, its foot `lift` points above the text (over the
+  /// prompt's row and the box's padding, when the command line is a box at the window's
+  /// foot), rather than below it.
   menu_above: bool = false,
-  rows_above: i64 = 0,
+  lift: f32 = 0.0,
 }
 
 impl CommandLine {
@@ -261,9 +262,9 @@ impl CommandLine {
     if self.chosen >= self.menu_top + MENU_ROWS { self.menu_top = self.chosen - MENU_ROWS + 1 }
   }
 
-  // Where the menu is: its first row (below the command line's last), its column (the
-  // word's, moved left to fit), and its width — in cells.
-  let menu_layout = pure (self, at: Place) -> (i64, i64, i64) => {
+  // Where the menu is: its top left on the screen (below the command line's last row, or
+  // above it by `lift`), its column (the word's, moved left to fit), and its width in cells.
+  let menu_layout = pure (self, at: Place) -> (Vec2, i64, i64) => {
     let wrap = at.wrap
     var shown_w = 0
     var desc_w = 0
@@ -275,11 +276,12 @@ impl CommandLine {
     let width = (shown_w + 2 + gap).min(wrap.cols)
     let (start, _) = shell_word_at(self.edit.text, self.edit.cursor)
     let (_, col) = position(self.edit.text, wrap, start)
-    let row = if at.menu_above { -(at.rows_above + self.menu_rows()) } else { row_count(
-      self.edit.text,
-      wrap
-    ) }
-    (row, col.min(wrap.cols - width).max(0), width)
+    let left = col.min(wrap.cols - width).max(0)
+    let under = cell_pos(at, row_count(self.edit.text, wrap), left)
+    let top = if at.menu_above {
+      Vec2 { x: under.x, y: at.origin.y - at.lift - f32(self.menu_rows()) * at.cell.y }
+    } else { under }
+    (top, left, width)
   }
 
   /// Undo, cut, paste and the rest: the same whether chosen from the Edit menu or pressed.
@@ -385,8 +387,8 @@ impl CommandLine {
     let row = ((m.y - at.origin.y) / at.cell.y).floor()
     let fx = (m.x - at.origin.x) / at.cell.x
     if self.menu.len() > 0 {
-      let (menu_row, menu_col, width) = self.menu_layout(at)
-      let k = row - menu_row
+      let (menu_top, menu_col, width) = self.menu_layout(at)
+      let k = ((m.y - menu_top.y) / at.cell.y).floor()
       let inside = k >= 0 &&
         k < self.menu_rows() &&
         fx >= f32(menu_col) &&
@@ -599,8 +601,7 @@ impl CommandLine {
 
   // The completion menu: a row each, the chosen one marked, descriptions fainter.
   let draw_menu = (self, at: Place, list: DrawList, style: Style) -> void => {
-    let (row, col, width) = self.menu_layout(at)
-    let top = cell_pos(at, row, col)
+    let (top, _, width) = self.menu_layout(at)
     let shown_rows = self.menu_rows()
     let pad = at.cell.x * 0.5
     list.add_rect_filled(
