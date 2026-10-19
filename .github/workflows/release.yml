@@ -1,0 +1,175 @@
+name: Release
+
+# A release is a tag: pushing `v0.2.0` builds Termina on each platform, runs its checks, and
+# publishes a GitHub release of that name with an archive per platform (package.sh). Run by
+# hand (Actions ▸ Release ▸ Run workflow), it builds and keeps the archives as the run's
+# artifacts, publishing nothing — a dry run before tagging.
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      lyra_ref:
+        description: "lyra branch, tag or commit to build with"
+        default: main
+      grammar_ref:
+        description: "tree-sitter-lyra branch, tag or commit to build with"
+        default: main
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    name: ${{ matrix.name }}
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: macos-arm64
+            runner: macos-15
+          - name: linux-x86_64
+            runner: ubuntu-24.04
+          - name: linux-arm64
+            runner: ubuntu-24.04-arm
+    env:
+      # The SDK setup-go installs, not a module toolchain fetched behind it (lyra's CI says why).
+      GOTOOLCHAIN: local
+      # The oldest macOS the app runs on: clang, SDL3's CMake and ImGui's build all read it.
+      MACOSX_DEPLOYMENT_TARGET: "13.0"
+      LYRA_REF: ${{ inputs.lyra_ref || 'main' }}
+      GRAMMAR_REF: ${{ inputs.grammar_ref || 'main' }}
+    steps:
+      # Termina beside the compiler and its grammar, as the workspace has them: build.sh
+      # finds lyrac at ../lyra/build/lyrac, and lyra's go.mod the grammar at
+      # ../tree-sitter-lyra.
+      - name: Checkout termina
+        uses: actions/checkout@v7
+        with:
+          path: termina
+      - name: Checkout lyra
+        uses: actions/checkout@v7
+        with:
+          repository: Lyra-Language/lyra
+          ref: ${{ env.LYRA_REF }}
+          path: lyra
+      - name: Checkout tree-sitter-lyra
+        uses: actions/checkout@v7
+        with:
+          repository: Lyra-Language/tree-sitter-lyra
+          ref: ${{ env.GRAMMAR_REF }}
+          path: tree-sitter-lyra
+
+      - name: Set up Go
+        uses: actions/setup-go@v7
+        with:
+          go-version-file: lyra/go.mod
+          cache-dependency-path: lyra/go.sum
+
+      # SDL3's build needs the headers of every Linux video and audio system it supports
+      # (it loads them at run time, so the archive needs none of them): SDL's
+      # docs/README-linux.md, trimmed of what a terminal never touches.
+      - name: Install build tools (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          # Only Ubuntu's own repositories: a broken third-party index fails apt-get update
+          # (lyra's CI, 09/09).
+          sudo grep -rlE 'dl\.google\.com|packages\.microsoft\.com' \
+            /etc/apt/sources.list.d/ 2>/dev/null | xargs -r sudo rm -f
+          sudo apt-get update
+          sudo apt-get install -y clang cmake ninja-build pkg-config patchelf fonts-dejavu-core \
+            libx11-dev libxext-dev libxrandr-dev libxcursor-dev libxfixes-dev libxi-dev \
+            libxss-dev libxtst-dev libxkbcommon-dev libwayland-dev wayland-protocols \
+            libdecor-0-dev libegl1-mesa-dev libgl1-mesa-dev libgles2-mesa-dev libdrm-dev \
+            libgbm-dev libdbus-1-dev libibus-1.0-dev libudev-dev libasound2-dev libpulse-dev \
+            libpipewire-0.3-dev
+
+      - name: Install build tools (macOS)
+        if: runner.os == 'macOS'
+        run: brew install ninja
+
+      - name: Build SDL3
+        run: |
+          termina/tools/sdl3.sh "$RUNNER_TEMP/sdl3"
+          echo "PKG_CONFIG_PATH=$RUNNER_TEMP/sdl3/lib/pkgconfig" >> "$GITHUB_ENV"
+          # The checks run the programs as built, before package.sh points them at their
+          # own copy; a Mac's SDL3 is named by its full path, Linux's needs telling.
+          echo "LD_LIBRARY_PATH=$RUNNER_TEMP/sdl3/lib" >> "$GITHUB_ENV"
+
+      # lyrac, lui and bindings.imgui's C half (lyrafmt is skipped without the tree-sitter
+      # runtime, which a release does not need). build.sh only notes an ImGui it could not
+      # build, so the archive is checked for here.
+      - name: Build lyra
+        working-directory: lyra
+        run: |
+          ./build.sh
+          test -f build/lib/liblyra-imgui.a || { echo "bindings.imgui did not build"; exit 1; }
+
+      - name: Build Termina
+        working-directory: termina
+        run: ./build.sh
+
+      - name: Check Termina
+        working-directory: termina
+        run: |
+          build/vttest
+          SDL_VIDEODRIVER=dummy build/uitest
+          build/menutest
+
+      - name: Package
+        working-directory: termina
+        run: |
+          if [ "$GITHUB_REF_TYPE" = tag ]; then
+            version="${GITHUB_REF_NAME#v}"
+          else
+            version="dev-$(git rev-parse --short HEAD)"
+          fi
+          ./package.sh "$version"
+          {
+            echo "${{ matrix.name }}: termina $(git rev-parse --short HEAD)," \
+              "lyra $(git -C ../lyra rev-parse --short HEAD)," \
+              "tree-sitter-lyra $(git -C ../tree-sitter-lyra rev-parse --short HEAD)"
+          } > build/release/built-with-${{ matrix.name }}.txt
+
+      - name: Keep the archive
+        uses: actions/upload-artifact@v7
+        with:
+          name: termina-${{ matrix.name }}
+          path: termina/build/release/*
+          if-no-files-found: error
+
+  release:
+    name: Publish the release
+    if: github.ref_type == 'tag'
+    needs: build
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - name: Fetch the archives
+        uses: actions/download-artifact@v7
+        with:
+          path: archives
+          merge-multiple: true
+
+      # The notes say what each archive was built from, lyra's commits among them, since a
+      # tag of Termina pins nothing of the compiler's.
+      - name: Publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          {
+            echo "Built from:"
+            echo
+            for f in archives/built-with-*.txt; do echo "- $(cat "$f")"; done
+            echo
+            echo "The Mac app is signed ad hoc, not notarized: open it the first time with"
+            echo "right-click ▸ Open. On Linux, unpack the archive and run \`./termina\`."
+          } > notes.md
+          gh release create "$GITHUB_REF_NAME" \
+            --repo "$GITHUB_REPOSITORY" \
+            --title "Termina ${GITHUB_REF_NAME#v}" \
+            --notes-file notes.md \
+            archives/*.zip archives/*.tar.gz

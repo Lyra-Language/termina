@@ -19,4 +19,8 @@ come next (`CLAUDE.md` § Plan).
 build/termina
 ```
 
+Releases (`git tag vX.Y.Z` and push it) carry Termina.app for Apple silicon, signed ad hoc
+— open it the first time with right-click ▸ Open — and archives for Linux on x86_64 and
+arm64: unpack and run `./termina`. Each has SDL3 inside.
+
 MIT licensed (`LICENSE`).
