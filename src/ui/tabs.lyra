@@ -33,6 +33,16 @@ import bindings.imgui.{
   get_item_rect_max,
   push_style_var_vec2,
   pop_style_var,
+  push_style_color,
+  pop_style_color,
+  COL_TEXT,
+  COL_TAB,
+  COL_TAB_HOVERED,
+  COL_TAB_SELECTED,
+  COL_TAB_SELECTED_OVERLINE,
+  COL_TAB_DIMMED,
+  COL_TAB_DIMMED_SELECTED,
+  COL_TAB_DIMMED_SELECTED_OVERLINE,
   Vec2,
   STYLE_VAR_FRAME_PADDING,
   STYLE_VAR_ITEM_INNER_SPACING,
@@ -77,18 +87,42 @@ pub struct TabBar {
   order: []i64,
   /// Each tab's middle on the screen.
   centres: []Vec2,
+  /// Whether the Settings tab is the one shown, and whether its close button was pressed.
+  settings_shown: bool,
+  settings_closed: bool,
 }
 
 /// Draw the tab bar for `tabs`, `active` shown and `select` (a tab chosen by a key, or just
-/// opened) made the shown one; its tabs dragged into another order as the user likes.
-pub let tab_bar = (tabs: []TabLabel, active: i64, select: Maybe<i64>) -> TabBar => {
+/// opened) made the shown one, in `theme`'s tab colours; its tabs dragged into another
+/// order as the user likes. With `settings`, a Settings tab at the bar's right end — made
+/// the shown one by `select_settings`.
+pub let tab_bar = (
+  tabs: []TabLabel,
+  active: i64,
+  select: Maybe<i64>,
+  theme: Theme,
+  settings: bool,
+  select_settings: bool
+) -> TabBar => {
   var shown = active
   var closing: Maybe<i64> = None
   var add = false
   var lefts: []f32 = []
   var centres: []Vec2 = []
+  var settings_shown = false
+  var settings_closed = false
   // Roomier than ImGui's own: the inside of a tab, the gap between tabs and between a
   // tab's name and its close button, and the space under the bar.
+  // The theme's tabs, the same while the window is not focused, labelled in its text's
+  // colour, the shown one's overline its selection's.
+  push_style_color(COL_TAB, theme.tab)
+  push_style_color(COL_TAB_DIMMED, theme.tab)
+  push_style_color(COL_TAB_HOVERED, theme.tab_hovered)
+  push_style_color(COL_TAB_SELECTED, theme.tab_selected)
+  push_style_color(COL_TAB_DIMMED_SELECTED, theme.tab_selected)
+  push_style_color(COL_TAB_SELECTED_OVERLINE, theme.cursor)
+  push_style_color(COL_TAB_DIMMED_SELECTED_OVERLINE, theme.tab_selected)
+  push_style_color(COL_TEXT, theme.fg)
   push_style_var_vec2(STYLE_VAR_FRAME_PADDING, TAB_PADDING)
   push_style_var_vec2(STYLE_VAR_ITEM_INNER_SPACING, TAB_SPACING)
   push_style_var_vec2(STYLE_VAR_ITEM_SPACING, TAB_SPACING)
@@ -114,6 +148,20 @@ pub let tab_bar = (tabs: []TabLabel, active: i64, select: Maybe<i64>) -> TabBar 
       centres.push(Vec2 { x: (lo.x + hi.x) / 2.0, y: (lo.y + hi.y) / 2.0 })
       if !open { closing = Some(k) }
     }
+    // The Settings tab, at the right end with `+`, out of the tabs' order.
+    if settings {
+      var open = true
+      let chosen = if select_settings { TAB_ITEM_FLAGS_SET_SELECTED } else { 0 }
+      if begin_tab_item_closable(
+        "Settings###settings",
+        open,
+        TAB_ITEM_FLAGS_TRAILING | chosen
+      ) {
+        settings_shown = true
+        end_tab_item()
+      }
+      if !open { settings_closed = true }
+    }
     if tab_item_button(
       "+",
       TAB_ITEM_FLAGS_TRAILING | TAB_ITEM_FLAGS_NO_TOOLTIP
@@ -121,6 +169,7 @@ pub let tab_bar = (tabs: []TabLabel, active: i64, select: Maybe<i64>) -> TabBar 
     end_tab_bar()
   }
   pop_style_var(3)
+  pop_style_color(8)
   // A tab chosen by a key this frame is shown now, whatever the bar has yet caught up with.
   match select {
     Some(n) => { shown = n },
@@ -132,6 +181,8 @@ pub let tab_bar = (tabs: []TabLabel, active: i64, select: Maybe<i64>) -> TabBar 
     add: add,
     order: order_by(lefts),
     centres: centres,
+    settings_shown: settings_shown,
+    settings_closed: settings_closed,
   }
 }
 

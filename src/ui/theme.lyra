@@ -27,6 +27,21 @@ pub struct Theme {
   /// The cursor's colour, and the selection's (drawn over the text, so translucent).
   cursor: u32,
   selection: u32,
+  /// The sections' backgrounds: the input's (the box, a block's prompt and command) and a
+  /// block's output's; and the rule along the box's top, the text's colour faintly.
+  input: u32,
+  output: u32,
+  /// The input section's text, where a program gave it no colour ([Theme.for_input]).
+  input_text: u32,
+  rule: u32,
+  /// The tabs' backgrounds — a tab, the one under the pointer, the one shown — and the
+  /// command line's text, completion menu and chosen completion.
+  tab: u32,
+  tab_hovered: u32,
+  tab_selected: u32,
+  editor_text: u32,
+  menu: u32,
+  menu_chosen: u32,
   palette: []u32,
   /// Draw bold text in colours 0–7 as their bright versions (8–15), as older programs that
   /// used bold *for* brightness expect. Off: bold is a heavier face, the colour as asked.
@@ -39,6 +54,16 @@ pub let theme_of = pure (s: Settings) -> Theme => Theme {
   bg: abgr(s.colours.bg),
   cursor: abgr(s.colours.cursor),
   selection: (abgr(s.colours.selection) & 0x00FFFFFF) | 0x99000000,
+  input: abgr(s.colours.input),
+  output: abgr(s.colours.output),
+  input_text: abgr(s.colours.input_text),
+  rule: (abgr(s.colours.fg) & 0x00FFFFFF) | 0x30000000,
+  tab: abgr(s.colours.tab),
+  tab_hovered: abgr(s.colours.tab_hovered),
+  tab_selected: abgr(s.colours.tab_selected),
+  editor_text: abgr(s.colours.editor_text),
+  menu: abgr(s.colours.menu),
+  menu_chosen: abgr(s.colours.menu_chosen),
   palette: palette_256(s.colours.ansi),
   bold_is_bright: s.bold_is_bright,
 }
@@ -47,6 +72,9 @@ pub let theme_of = pure (s: Settings) -> Theme => Theme {
 pub let dark_theme = pure () -> Theme => theme_of(defaults())
 
 impl Theme {
+  /// The theme an input section's text is drawn in: its default text the input's colour.
+  pub let for_input = pure (self) -> Theme => Theme { self | fg: self.input_text }
+
   /// The colours `cell` is drawn in: its text, and its background — `None` for the theme's
   /// own, which the window is already. Inverse swaps the two (the theme's own included), a
   /// hidden cell's text is its background, and dim text is half-way to the background.

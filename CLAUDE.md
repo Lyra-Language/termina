@@ -56,7 +56,7 @@ shell ⇄ bindings.pty ──bytes──▶ vt.Parser ──[]Action──▶ vt
 | `src/vt/selection.lyra` | a selection on the screen and scrollback: its text, a word's span; **pure** |
 | `src/vt/style.lyra` | a `Cell`'s colours and attributes, and SGR on the `Pen` that writes them; **pure** |
 | `src/settings/settings.lyra` | the user's settings, the themes offered, the file (read leniently), the monospaced families found |
-| `src/ui/settings_window.lyra` | the settings window: font family or file, size, spacing, theme, every colour, bold as bright |
+| `src/ui/settings_window.lyra` | the settings, drawn in the Settings tab: font family or file, size, spacing, theme (saved ones too), every colour, bold as bright |
 | `src/ui/theme.lyra` | recorded colours → pixels: the theme's own pair, ANSI 16, xterm's 256; inverse, dim, hidden |
 | `src/ui/grid.lyra` | a screen line drawn: background runs, text runs of one style, faces, underlines, strike |
 | `src/vttest.lyra` | the checks: byte strings against actions and screens, the editor on text, real programs, zsh and bash on a PTY (each skipped, and said so, where not installed) |
@@ -124,6 +124,25 @@ shell ⇄ bindings.pty ──bytes──▶ vt.Parser ──[]Action──▶ vt
   Unicode or Noto Sans CJK, then Apple Symbols or DejaVu Sans), merged into every face
   (`bindings.imgui`'s `merge_font_file`). Colour emoji are not drawn: stb_truetype has no
   colour, and ImGui's 16-bit `ImWchar` reaches only the BMP.
+- **A command is a block of the transcript** (`Session.blocks`, `Block`): `C` opens one
+  from the last prompt's `A` line (`OutputStart(line)`), `D` closes it
+  (`CommandEnd(status, line)`, its line the first the output did not write on). Drawn as a
+  card: the input on the theme's input colour, the output on its output colour, rounded,
+  with padding around each and a margin between cards; the duration and a failure's `exit N` over its
+  first row's right end where the text leaves room, a red bar down a failed one's left.
+- **On the main screen the grid ends at the rows in use** (`Screen.used_rows`: the cursor's
+  row, or a lower one with anything on it): the blank rows below a running command's output
+  would pad the page past the view, with the box and the cards' room, and the view, following
+  the bottom, would scroll what was written — sudo's password prompt — out of sight. A
+  full-screen program on the alternate screen has every row.
+- **Rows are not evenly spaced: `Rows` is where every line goes** (`block_rows_layout`, a
+  frame's gaps above lines, from the blocks). Everything that turns a line into a height
+  or back — drawing, the cursor, selection, the first line in view, the page's height, the
+  mouse — asks it (`y_of`, `y_above`, `line_at_y`); `i × cell.y` is wrong wherever blocks
+  are. A program's mouse reports still count the screen's own rows: blocks put no gaps on
+  the alternate screen, and a `clear` drops those on the main one. A screen
+  erased whole on the main screen (`\e[2J`, `\e[J` from its first cell: `clear`, Ctrl+L)
+  is the `Cleared(line)` mark, and the blocks on it go. None on the alternate screen.
 - **The grid's selection is absolute lines and column boundaries** (`vt.Spot`), so it stays
   on its text as output scrolls. The mouse selects above the command line at a prompt, and
   with Shift when a program has asked for the mouse (`?1000`/`?1002`/`?1003`, SGR `?1006` or
@@ -139,6 +158,25 @@ shell ⇄ bindings.pty ──bytes──▶ vt.Parser ──[]Action──▶ vt
   button is held, not every frame of a slider's drag. The file is read leniently — a
   setting missing or wrong keeps its default — and a theme named in it gives the colours a
   `colours` object does not. Programs asking the colours (OSC 10/11) are told the theme's.
+- **A theme is every colour Sulafat draws**, not only the grid's: the sections' input (the
+  box, a block's prompt and command) and output, the input's text (where a program gave
+  it no colour: `Theme.for_input`, for the rows in view a block's input takes and the
+  box's prompt), the tabs (a tab, under the pointer, shown —
+  labelled in the text's colour), and the command line's text, completion menu and chosen
+  row. A theme names its text, background, cursor, selection, sections and ANSI sixteen;
+  the rest is made from them (`settings.colours_of`), and a dark theme's sections lighten
+  its background, a light one's darken it (`sections_of`). The settings edit each, and an
+  edit makes the theme `Custom`. Only ImGui's own widgets — the settings' fields, the
+  menus — keep ImGui's style.
+- **The settings are a tab** (`ui.settings_panel` in `draw_window`): Settings… opens a
+  Settings tab at the tab bar's right end, out of the tabs' order (`TAB_ITEM_FLAGS_TRAILING`,
+  as `+` is), and shows it; it fills the tabs' area in the interface's font. Its × or ⌘W
+  while it is shown closes it; a terminal's tab chosen by a key or a click takes over. The
+  terminals go on being read behind it.
+- **The user's themes are saved in the settings file** (`Settings.themes`, `SavedTheme`):
+  the colours under a name not Sulafat's own nor `Custom` (`can_save_as`; a saved one of
+  that name replaced), listed after Sulafat's, deleted to `Custom` with the colours kept.
+  A theme named in the file is looked for among them before Sulafat's.
 - **Font families are found by file name** (`Mono`, `Code`, `Courier`, `Consol`, as
   capitalised; faces by `-Bold`/` Bold`/`Bold` suffixes), after the ones Sulafat knows by path
   (SF Mono, Menlo, DejaVu Sans Mono), whose files are not offered twice.
@@ -252,10 +290,11 @@ shell ⇄ bindings.pty ──bytes──▶ vt.Parser ──[]Action──▶ vt
    DEC private modes (alternate screen, cursor keys, autowrap, DECSCUSR, bracketed paste,
    mouse reporting, focus), device reports, selection and copy, Alt as Meta. vim, less and
    top run correctly (`vttest`'s `check_full_screen`).
-3. **M2 — blocks**: the shell integration's marks (zsh's is in, with M3; bash's goes
-   through `--rcfile`) — OSC 133 (`A` prompt, `B` command, `C` output, `D;status` end) and
-   OSC 7 (directory). Each command becomes a block — command, directory, status, duration,
-   its own output — drawn as a card; a full-screen program takes the whole window.
+3. **M2 — blocks (begun 10/19)**: the shell integration's marks (zsh's and bash's) — OSC
+   133 (`A` prompt, `B` command, `C` output, `D;status` end) and OSC 7 (directory). Each
+   command is a block, drawn as a card — its input and output in the theme's colours,
+   padded, with room between cards — its duration and a failure's status at its right, a
+   red bar down a failed one. Next: selecting, copying and folding a block whole.
 4. **M3 — the editor (begun 10/16, before M1 and the block cards)**: zsh's integration,
    then the command line as Sulafat's editor — multi-line, soft wrap, the mouse (click,
    drag, double-click a word, triple-click a line), word and line motions, undo, the

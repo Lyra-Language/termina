@@ -3,6 +3,14 @@
 Finished work, moved from `todo.md` with its section; the rules it left behind are in
 `CLAUDE.md`.
 
+## Blocks (M2)
+
+- **[DONE 10/19] Blocks** — each command's input on the box's tint, its output plain; its duration, and a failure's status and red bar.
+- **[DONE 10/19] The settings in a tab** — opened by Settings…, at the tab bar's right end, the whole area its own.
+- **[DONE 10/19] Saved themes** — the colours under a name, in the Theme list after Sulafat's; replaced by saving again, deleted.
+- **[DONE 10/19] Section, tab and command-line colours in the theme** — each theme's own, made from its colours where it does not name them; all in the settings window.
+- **[DONE 10/19] Blocks as cards** — padding inside, a margin between; rows laid out by `Rows`, which everything that maps lines to heights asks.
+
 ## The command line (M3)
 
 - **[DONE 10/16] Tab completion** — zsh's own, captured by a widget and offered in a menu (`CLAUDE.md`, Tab completion).

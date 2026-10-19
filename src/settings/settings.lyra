@@ -36,7 +36,15 @@ pub struct Settings {
   /// The theme the colours came from, by name — `"Custom"` once one is changed.
   theme_name: string,
   colours: Colours,
+  /// The themes the user saved, in the order saved.
+  themes: []SavedTheme,
   bold_is_bright: bool,
+}
+
+/// A theme the user saved: its name, none of Sulafat's own, and its colours.
+pub struct SavedTheme {
+  name: string,
+  colours: Colours,
 }
 
 /// A theme's colours, each `0xRRGGBB`.
@@ -45,6 +53,22 @@ pub struct Colours {
   bg: u32,
   cursor: u32,
   selection: u32,
+  /// The sections' backgrounds: the input's — the command line's box, and each block's
+  /// prompt and command — and each block's output's.
+  input: u32,
+  output: u32,
+  /// The input section's text — the prompt and command, where a program gave them no
+  /// colour of their own.
+  input_text: u32,
+  /// The tabs' backgrounds: a tab's, under the pointer, and the one shown. Their labels are
+  /// in the text's colour.
+  tab: u32,
+  tab_hovered: u32,
+  tab_selected: u32,
+  /// The command line's own: its text, and its completion menu's background and chosen row.
+  editor_text: u32,
+  menu: u32,
+  menu_chosen: u32,
   /// The 16 ANSI colours: black, red, green, yellow, blue, magenta, cyan, white, then
   /// their bright versions.
   ansi: []u32,
@@ -58,6 +82,7 @@ pub let defaults = pure () -> Settings => Settings {
   line_spacing: 1.2,
   theme_name: "Sulafat Dark",
   colours: theme_colours("Sulafat Dark"),
+  themes: [],
   bold_is_bright: false,
 }
 
@@ -80,65 +105,162 @@ pub const THEME_NAMES: []string = [
 /// A theme's colours by name; Sulafat Dark's for a name not known.
 pub let theme_colours = pure (name: string) -> Colours => {
   if name == "Sulafat Light" {
-    return Colours {
-      fg: 0x2B2D33,
-      bg: 0xFAF8F5,
-      cursor: 0x2B2D33,
-      selection: 0xB4D5FE,
-      ansi: [
+    return colours_of(
+      0x2B2D33,
+      0xFAF8F5,
+      0x2B2D33,
+      0xB4D5FE,
+      sections_of(0xFAF8F5),
+      [
         0x3B3F4A, 0xC4363F, 0x4E8A2E, 0x9C6D00, 0x2F6FCB, 0x9A4DB7, 0x2B8794, 0xD8D4CE,
         0x6B7280, 0xE0484F, 0x5FA53A, 0xB88300, 0x4285F4, 0xB45FD1, 0x36A3B1, 0xFFFFFF,
-      ],
-    }
+      ]
+    )
   }
   if name == "Solarized Dark" || name == "Solarized Light" {
     let dark = name == "Solarized Dark"
-    return Colours {
-      fg: if dark { 0x839496 } else { 0x657B83 },
-      bg: if dark { 0x002B36 } else { 0xFDF6E3 },
-      cursor: if dark { 0x93A1A1 } else { 0x586E75 },
-      selection: if dark { 0x073642 } else { 0xEEE8D5 },
-      ansi: [
+    return colours_of(
+      if dark { 0x839496 } else { 0x657B83 },
+      if dark { 0x002B36 } else { 0xFDF6E3 },
+      if dark { 0x93A1A1 } else { 0x586E75 },
+      if dark { 0x073642 } else { 0xEEE8D5 },
+      // Solarized's own highlight shades: base02 and base2.
+      if dark { (0x073642, 0x03303C) } else { (0xEEE8D5, 0xF6EFDC) },
+      [
         0x073642, 0xDC322F, 0x859900, 0xB58900, 0x268BD2, 0xD33682, 0x2AA198, 0xEEE8D5,
         0x002B36, 0xCB4B16, 0x586E75, 0x657B83, 0x839496, 0x6C71C4, 0x93A1A1, 0xFDF6E3,
-      ],
-    }
+      ]
+    )
   }
   if name == "Dracula" {
-    return Colours {
-      fg: 0xF8F8F2,
-      bg: 0x282A36,
-      cursor: 0xF8F8F2,
-      selection: 0x44475A,
-      ansi: [
+    return colours_of(
+      0xF8F8F2,
+      0x282A36,
+      0xF8F8F2,
+      0x44475A,
+      sections_of(0x282A36),
+      [
         0x21222C, 0xFF5555, 0x50FA7B, 0xF1FA8C, 0xBD93F9, 0xFF79C6, 0x8BE9FD, 0xF8F8F2,
         0x6272A4, 0xFF6E6E, 0x69FF94, 0xFFFFA5, 0xD6ACFF, 0xFF92DF, 0xA4FFFF, 0xFFFFFF,
-      ],
-    }
+      ]
+    )
   }
   if name == "Nord" {
-    return Colours {
-      fg: 0xD8DEE9,
-      bg: 0x2E3440,
-      cursor: 0xD8DEE9,
-      selection: 0x434C5E,
-      ansi: [
+    return colours_of(
+      0xD8DEE9,
+      0x2E3440,
+      0xD8DEE9,
+      0x434C5E,
+      // Nord's own: nord1, and half-way to it.
+      (0x3B4252, 0x343B49),
+      [
         0x3B4252, 0xBF616A, 0xA3BE8C, 0xEBCB8B, 0x81A1C1, 0xB48EAD, 0x88C0D0, 0xE5E9F0,
         0x4C566A, 0xBF616A, 0xA3BE8C, 0xEBCB8B, 0x81A1C1, 0xB48EAD, 0x8FBCBB, 0xECEFF4,
-      ],
-    }
+      ]
+    )
   }
   // Sulafat Dark: the window's #181A1E behind #E6E1DC, an ANSI set in the spirit of One Dark.
-  Colours {
-    fg: 0xE6E1DC,
-    bg: 0x181A1E,
-    cursor: 0xE6E1DC,
-    selection: 0x3A6EA5,
-    ansi: [
+  colours_of(
+    0xE6E1DC,
+    0x181A1E,
+    0xE6E1DC,
+    0x3A6EA5,
+    sections_of(0x181A1E),
+    [
       0x3B3F4A, 0xE06C75, 0x98C379, 0xE5C07B, 0x61AFEF, 0xC678DD, 0x56B6C2, 0xABB2BF,
       0x5C6370, 0xF08A93, 0xB5E08F, 0xF2D49B, 0x84C3F5, 0xD79BE8, 0x7FCBD5, 0xF5F2EE,
-    ],
+    ]
+  )
+}
+
+/// A theme from its own colours — text, background, cursor, selection, the sections' input
+/// and output, the ANSI sixteen — and the rest made from them: tabs from the input
+/// section's shade towards the text (the selected one the selection's), the command line's
+/// text the theme's, its completion menu a shade off the background and its chosen row
+/// towards the selection.
+let colours_of = pure (
+  fg: u32,
+  bg: u32,
+  cursor: u32,
+  selection: u32,
+  sections: (u32, u32),
+  ansi: []u32
+) -> Colours => Colours {
+  fg: fg,
+  bg: bg,
+  cursor: cursor,
+  selection: selection,
+  input: sections.0,
+  output: sections.1,
+  input_text: fg,
+  tab: sections.0,
+  tab_hovered: mix(sections.0, fg, 0.12),
+  tab_selected: mix(bg, selection, 0.7),
+  editor_text: fg,
+  menu: mix(bg, fg, 0.07),
+  menu_chosen: mix(bg, selection, 0.5),
+  ansi: ansi,
+}
+
+/// Whether `name` may be a saved theme's: not empty, not one of Sulafat's own, not
+/// `Custom` — a saved theme of that name is replaced.
+pub let can_save_as = pure (name: string) -> bool =>
+  name.trim() != "" && name.trim() != "Custom" && !THEME_NAMES.contains(name.trim())
+
+/// The current colours saved as theme `name` (one of that name replaced), and made the
+/// current theme. Nothing for a name [can_save_as] refuses.
+pub let save_theme = (s: mut Settings, name: string) -> void => {
+  if !can_save_as(name) { return }
+  let n = name.trim()
+  let saved = SavedTheme { name: n, colours: s.colours }
+  var replaced = false
+  for k in 0..<s.themes.len() {
+    if s.themes[k].name == n {
+      s.themes[k] = saved
+      replaced = true
+    }
   }
+  if !replaced { s.themes.push(saved) }
+  s.theme_name = n
+}
+
+/// Saved theme `name` gone; the colours stay, a theme of their own now (`Custom`) if it was
+/// the current one.
+pub let delete_theme = (s: mut Settings, name: string) -> void => {
+  s.themes = [t in s.themes | t.name != name | t]
+  if s.theme_name == name { s.theme_name = "Custom" }
+}
+
+/// Saved theme `name`'s colours, if there is one.
+pub let saved_colours = pure (themes: []SavedTheme, name: string) -> Maybe<Colours> => {
+  for t in themes { if t.name == name { return Some(t.colours) } }
+  None
+}
+
+/// Whether no theme among `themes` is called `name`.
+let is_free_name = pure (themes: []SavedTheme, name: string) -> bool =>
+  saved_colours(themes, name) == None
+
+/// The sections' backgrounds a theme of background `bg` has, input and output: a dark one
+/// lightened, 6% towards white and 3%; a light one darkened, 5% towards black and 2.5%.
+pub let sections_of = pure (bg: u32) -> (u32, u32) => {
+  let r = f32((bg >> 16) & 0xFF)
+  let g = f32((bg >> 8) & 0xFF)
+  let b = f32(bg & 0xFF)
+  let dark = 0.299 * r + 0.587 * g + 0.114 * b < 128.0
+  if dark { (mix(bg, 0xFFFFFF, 0.06), mix(bg, 0xFFFFFF, 0.03)) }
+  else { (mix(bg, 0x000000, 0.05), mix(bg, 0x000000, 0.025)) }
+}
+
+/// `a` taken a fraction `t` of the way to `b`, channel by channel (`0xRRGGBB` each).
+let mix = pure (a: u32, b: u32, t: f32) -> u32 => {
+  var out: u32 = 0
+  for shift in [16, 8, 0] {
+    let x = f32((a >> u32(shift)) & 0xFF)
+    let y = f32((b >> u32(shift)) & 0xFF)
+    out = out | (u32((x + (y - x) * t).round()) << u32(shift))
+  }
+  out
 }
 
 // ── The file ─────────────────────────────────────────────────────────────────
@@ -176,13 +298,11 @@ pub let settings_to_json = pure (s: Settings) -> string => JsonObject([
   member("line_spacing", JsonNumber(f64(s.line_spacing))),
   member("theme", JsonString(s.theme_name)),
   member("bold_is_bright", JsonBool(s.bold_is_bright)),
-  member("colours", JsonObject([
-    member("foreground", JsonString(hex_of(s.colours.fg))),
-    member("background", JsonString(hex_of(s.colours.bg))),
-    member("cursor", JsonString(hex_of(s.colours.cursor))),
-    member("selection", JsonString(hex_of(s.colours.selection))),
-    member("ansi", JsonArray([c in s.colours.ansi | JsonString(hex_of(c))])),
-  ])),
+  member("colours", colours_to_json(s.colours)),
+  member("themes", JsonArray([t in s.themes | JsonObject([
+    member("name", JsonString(t.name)),
+    member("colours", colours_to_json(t.colours)),
+  ])])),
 ]).to_json_pretty()
 
 /// Settings from the file's text: each setting that is there and makes sense, the default
@@ -193,23 +313,24 @@ pub let settings_from_json = pure (text: string) -> Settings => {
     Ok(v) => v,
     Err(_) => return d,
   }
-  let theme = text_field(doc, "theme") ?? d.theme_name
-  // The theme's colours first, then any written out over them.
-  let base = if theme == "Custom" { d.colours } else { theme_colours(theme) }
-  let c = doc.field("colours") ?? JsonObject([])
-  var ansi = base.ansi
-  let written = (c.field("ansi") ?? JsonArray([])).elements()
-  if written.len() == 16 {
-    var all = true
-    var read: []u32 = []
-    for v in written {
-      match colour_of(v.as_text() ?? "") {
-        Some(rgb) => read.push(rgb),
-        None => { all = false },
-      }
+  // The saved themes, each with a name and its colours over the default theme's.
+  var themes: []SavedTheme = []
+  for t in (doc.field("themes") ?? JsonArray([])).elements() {
+    let name = text_field(t, "name") ?? ""
+    if name != "" && is_free_name(themes, name) {
+      themes.push(SavedTheme {
+        name: name,
+        colours: colours_from_json(t.field("colours") ?? JsonObject([]), d.colours),
+      })
     }
-    if all { ansi = read }
   }
+  let theme = text_field(doc, "theme") ?? d.theme_name
+  // The theme's colours first — a saved one's or one of Sulafat's — then any written out
+  // over them.
+  let base = if theme == "Custom" { d.colours } else { saved_colours(
+    themes,
+    theme
+  ) ?? theme_colours(theme) }
   Settings {
     font_family: text_field(doc, "font_family") ?? d.font_family,
     font_file: text_field(doc, "font_file") ?? d.font_file,
@@ -219,14 +340,61 @@ pub let settings_from_json = pure (text: string) -> Settings => {
       LINE_SPACING_RANGE.1
     ),
     theme_name: theme,
-    colours: Colours {
-      fg: colour_field(c, "foreground") ?? base.fg,
-      bg: colour_field(c, "background") ?? base.bg,
-      cursor: colour_field(c, "cursor") ?? base.cursor,
-      selection: colour_field(c, "selection") ?? base.selection,
-      ansi: ansi,
-    },
+    colours: colours_from_json(doc.field("colours") ?? JsonObject([]), base),
+    themes: themes,
     bold_is_bright: (doc.field("bold_is_bright") ?? JsonBool(d.bold_is_bright)).as_bool() ?? d.bold_is_bright,
+  }
+}
+
+/// A theme's colours as the file holds them, `#rrggbb` each.
+let colours_to_json = pure (c: Colours) -> JsonValue => JsonObject([
+  member("foreground", JsonString(hex_of(c.fg))),
+  member("background", JsonString(hex_of(c.bg))),
+  member("cursor", JsonString(hex_of(c.cursor))),
+  member("selection", JsonString(hex_of(c.selection))),
+  member("input", JsonString(hex_of(c.input))),
+  member("output", JsonString(hex_of(c.output))),
+  member("input_text", JsonString(hex_of(c.input_text))),
+  member("tab", JsonString(hex_of(c.tab))),
+  member("tab_hovered", JsonString(hex_of(c.tab_hovered))),
+  member("tab_selected", JsonString(hex_of(c.tab_selected))),
+  member("command_text", JsonString(hex_of(c.editor_text))),
+  member("menu", JsonString(hex_of(c.menu))),
+  member("menu_chosen", JsonString(hex_of(c.menu_chosen))),
+  member("ansi", JsonArray([x in c.ansi | JsonString(hex_of(x))])),
+])
+
+/// Colours from the file's object `c`: each written there that makes sense, `base`'s for
+/// the rest — the ANSI sixteen only when all sixteen are.
+let colours_from_json = pure (c: JsonValue, base: Colours) -> Colours => {
+  var ansi = base.ansi
+  let written = (c.field("ansi") ?? JsonArray([])).elements()
+  if written.len() == 16 {
+    var whole = true
+    var read: []u32 = []
+    for v in written {
+      match colour_of(v.as_text() ?? "") {
+        Some(rgb) => read.push(rgb),
+        None => { whole = false },
+      }
+    }
+    if whole { ansi = read }
+  }
+  Colours {
+    fg: colour_field(c, "foreground") ?? base.fg,
+    bg: colour_field(c, "background") ?? base.bg,
+    cursor: colour_field(c, "cursor") ?? base.cursor,
+    selection: colour_field(c, "selection") ?? base.selection,
+    input: colour_field(c, "input") ?? base.input,
+    output: colour_field(c, "output") ?? base.output,
+    input_text: colour_field(c, "input_text") ?? base.input_text,
+    tab: colour_field(c, "tab") ?? base.tab,
+    tab_hovered: colour_field(c, "tab_hovered") ?? base.tab_hovered,
+    tab_selected: colour_field(c, "tab_selected") ?? base.tab_selected,
+    editor_text: colour_field(c, "command_text") ?? base.editor_text,
+    menu: colour_field(c, "menu") ?? base.menu,
+    menu_chosen: colour_field(c, "menu_chosen") ?? base.menu_chosen,
+    ansi: ansi,
   }
 }
 

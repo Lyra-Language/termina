@@ -135,6 +135,9 @@ pub struct CommandLine {
 /// Completions a menu shows at once; more scroll.
 const MENU_ROWS: i64 = 8
 
+/// The room inside the menu above its first row and below its last, in points.
+const MENU_PAD: f32 = 6.0
+
 /// The widest a completion and its description are shown, in cells; longer is cut.
 const MENU_SHOWN: i64 = 40
 const MENU_DESCRIPTION: i64 = 60
@@ -349,9 +352,14 @@ impl CommandLine {
     let (_, col) = position(self.edit.text, wrap, start)
     let left = if searching { 0 } else { col.min(wrap.cols - width).max(0) }
     let under = cell_pos(at, row_count(self.edit.text, wrap), left)
+    // Its rows begin inside its padding: above the text by `lift` and the padding below its
+    // last row, or below the text by the padding above its first.
     let top = if at.menu_above {
-      Vec2 { x: under.x, y: at.origin.y - at.lift - f32(self.menu_rows()) * at.cell.y }
-    } else { under }
+      Vec2 {
+        x: under.x,
+        y: at.origin.y - at.lift - MENU_PAD - f32(self.menu_rows()) * at.cell.y,
+      }
+    } else { Vec2 { x: under.x, y: under.y + MENU_PAD } }
     (top, left, width)
   }
 
@@ -833,10 +841,13 @@ impl CommandLine {
     let shown_rows = self.menu_rows()
     let pad = at.cell.x * 0.5
     list.add_rect_filled(
-      Vec2 { x: top.x - pad, y: top.y },
-      Vec2 { x: top.x + f32(width) * at.cell.x + pad, y: top.y + f32(shown_rows) * at.cell.y },
+      Vec2 { x: top.x - pad, y: top.y - MENU_PAD },
+      Vec2 {
+        x: top.x + f32(width) * at.cell.x + pad,
+        y: top.y + f32(shown_rows) * at.cell.y + MENU_PAD,
+      },
       style.menu,
-      4.0
+      6.0
     )
     var shown_w = 0
     for c in self.menu { shown_w = shown_w.max(c.shown.len().min(MENU_SHOWN)) }

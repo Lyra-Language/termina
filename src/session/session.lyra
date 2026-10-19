@@ -9,6 +9,7 @@ import bindings.pty.{ spawn, close, Pty }
 import bindings.sdl3.{ platform }
 import bindings.imgui.{
   DrawList,
+  DRAW_FLAGS_ROUND_CORNERS_TOP,
   is_mouse_released,
   get_io,
   set_clipboard_text,
@@ -121,6 +122,23 @@ pub struct Session {
   /// Where the last prompt began (its `A` mark): an absolute line and a column. The box
   /// shows the prompt from there — a prompt of several lines whole.
   prompt_from: (i64, i64),
+  /// The commands run, as blocks of the transcript (oldest first, at most [BLOCKS]), and the
+  /// one running.
+  blocks: []Block,
+  running_block: Maybe<Block>,
+}
+
+/// A command's place in the transcript, as the shell's marks drew it, in absolute lines:
+/// its input — the prompt and the command, from the prompt's first line to where the output
+/// begins — and its output, to where it ended (`end`, -1 while it runs); its exit status
+/// (-1 unknown) and when it started and ended, in nanoseconds.
+pub struct Block {
+  prompt: i64,
+  output: i64,
+  end: i64,
+  status: i64,
+  started: i64,
+  ended: i64,
 }
 
 /// Start a tab: `program` (the login shell with Sulafat's integration when empty) in `dir`
@@ -178,6 +196,8 @@ pub let open_session = (
     had_focus: false,
     sent_from: None,
     prompt_from: (-1, 0),
+    blocks: [],
+    running_block: None,
   })
 }
 
@@ -312,9 +332,50 @@ impl Session {
           self.prompt_from = (at, col)
           self.mode = Raw
         },
-        _ => {
+        // A command runs: its block opens, from the prompt it was entered at.
+        OutputStart(line) => {
           self.mode = Raw
           self.sent_from = None
+          if self.prompt_from.0 >= 0 {
+            self.running_block = Some(Block {
+              prompt: self.prompt_from.0,
+              output: line.max(self.prompt_from.0),
+              end: -1,
+              status: -1,
+              started: wall_clock_nanos(),
+              ended: 0,
+            })
+          }
+        },
+        // It ended: its block is done.
+        CommandEnd(status, line) => {
+          self.mode = Raw
+          self.sent_from = None
+          match self.running_block {
+            Some(b) => {
+              self.blocks.push(Block {
+                b | end: line.max(b.output),
+                status: status,
+                ended: wall_clock_nanos()
+              })
+              if self.blocks.len() > BLOCKS { self.blocks = self.blocks.slice(
+                self.blocks.len() - BLOCKS,
+                self.blocks.len()
+              ) }
+            },
+            None => {},
+          }
+          self.running_block = None
+        },
+        // The screen erased: blocks on it are gone; one above whose output reached it, cut.
+        Cleared(line) => {
+          self.mode = Raw
+          self.sent_from = None
+          self.blocks = [b in self.blocks | b.output < line | Block { b | end: b.end.min(line) }]
+          match self.running_block {
+            Some(b) => if b.output >= line { self.running_block = None },
+            None => {},
+          }
         },
       }
     }
@@ -423,41 +484,99 @@ pub let draw_session = (
   // The first line drawn: on the alternate screen a full-screen program has the window, and
   // the scrollback above its screen is not shown.
   let base = if s.shown.alt { s.shown.scrollback_len() } else { 0 }
-  let line_count = s.shown.scrollback_len() + s.shown.rows
+  // The lines there are: the scrollback and the screen's rows — on the main screen only
+  // those in use, so that the blank rows below a running command's output do not pad the
+  // page out past the view (with the box and the cards' room), scrolling what it wrote,
+  // a password prompt, say, out of sight. A full-screen program has every row.
+  let screen_rows = if s.shown.alt { s.shown.rows } else { s.shown.used_rows() }
+  let line_count = s.shown.scrollback_len() + screen_rows
   // The grid's lines: all of them, or at a prompt those above its first line — the prompt is
   // in the box, and below it is only the shell's empty input — and that line too when the
   // prompt began partway along it, after output that did not end its line.
   let grid_lines = if input_line < 0 { line_count } else if first_col > 0 { first + 1 } else { first }
-  let total = grid_lines - base
-  // The page: the grid's lines, and room under them for the box, so that the last line
-  // rests on the box when the view is at the bottom.
-  let page = f32(total) * cell.y + box_height
-  let top = base + (get_scroll_y() / cell.y).floor().clamp(0, total)
+  // Where each line goes: a line's height a row, and the room the blocks put between them.
+  let layout = if s.shown.alt { Rows {
+    origin_y: origin.y,
+    base: base,
+    cell_y: cell.y,
+    at: [],
+    through: []
+  } }
+  else { block_rows_layout(s, origin.y, base, cell.y, grid_lines) }
+  // The page: the grid's lines, and room under them for the box and a margin above it, so
+  // that the last line rests that far above the box when the view is at the bottom.
+  let above_box = if box_height > 0.0 { BLOCK_MARGIN } else { 0.0 }
+  let page = layout.y_of(grid_lines) - origin.y + above_box + box_height
+  let top = layout.line_at_y(origin.y + get_scroll_y(), grid_lines)
   let bottom = (top + rows + 1).min(grid_lines)
   // The box's top on the screen: the view's foot, wherever it is scrolled to.
   let view_bottom = origin.y + get_scroll_y() + avail.y
   let box_top = view_bottom - box_height
   let list = get_window_draw_list()
+  // The commands' blocks under the text: the input's band, the rule above each.
+  let grid = Grid {
+    origin: origin,
+    cell: cell,
+    cols: cols,
+    base: base,
+    top: top,
+    bottom: bottom,
+    rows: layout,
+  }
+  if !s.shown.alt {
+    for b in s.blocks { draw_block_under(s, list, theme, grid, b, false) }
+    match s.running_block {
+      Some(b) => draw_block_under(
+        s,
+        list,
+        theme,
+        grid,
+        Block { b | end: grid_lines + s.shown.absolute(0) },
+        true
+      ),
+      None => {},
+    }
+  }
+  // The rows in view that are a block's input — its prompt and command — drawn with the
+  // input's text colour.
+  let input_theme = theme.for_input()
+  var input_rows: []bool = [false; (bottom - top).max(0)]
+  if !s.shown.alt {
+    let oldest = s.shown.absolute(0)
+    var spans: [](i64, i64) = [b in s.blocks | (b.prompt, b.output)]
+    match s.running_block {
+      Some(b) => spans.push((b.prompt, b.output)),
+      None => {},
+    }
+    for (p, o) in spans {
+      for i in (p - oldest).max(top)..<(o - oldest).min(bottom) { input_rows[i - top] = true }
+    }
+  }
   for i in top..<bottom {
     let upto = if input_line >= 0 && i == first && first_col > 0 { first_col } else { s.shown.cols }
     let at = LineAt {
-      origin: Vec2 { x: origin.x, y: origin.y + f32(i - base) * cell.y },
+      origin: Vec2 { x: origin.x, y: layout.y_of(i) },
       cell: cell,
       text_dy: text_dy,
       pixel: pixel,
     }
-    draw_line(list, theme, fonts, at, s.shown.line(i), s.shown.combining, upto)
+    let row_theme = if input_rows[i - top] { input_theme } else { theme }
+    draw_line(list, row_theme, fonts, at, s.shown.line(i), s.shown.combining, upto)
+  }
+  // And over it: how each ended, and how long it took.
+  if !s.shown.alt {
+    for b in s.blocks { draw_block_over(s, list, theme, grid, b, text_dy) }
   }
   let cursor = Vec2 {
     x: origin.x + f32(s.shown.x) * cell.x,
-    y: origin.y + f32(s.shown.scrollback_len() + s.shown.y - base) * cell.y,
+    y: layout.y_of(s.shown.scrollback_len() + s.shown.y),
   }
   // The grid's selection, over the text.
   if s.has_selection() {
     for i in top..<bottom {
       let (a, b) = selected_on(s.sel_a, s.sel_b, s.shown.absolute(i), cols)
       if b > a {
-        let y = origin.y + f32(i - base) * cell.y
+        let y = layout.y_of(i)
         list.add_rect_filled(
           Vec2 { x: origin.x + f32(a) * cell.x, y: y },
           Vec2 { x: origin.x + f32(b) * cell.x, y: y + cell.y },
@@ -479,7 +598,7 @@ pub let draw_session = (
       s,
       origin,
       cell,
-      base,
+      layout,
       grid_lines,
       if raw && !running_box { 1.0e30 } else { box_top }
     )
@@ -518,7 +637,7 @@ pub let draw_session = (
           }
           draw_line(
             list,
-            theme,
+            input_theme,
             fonts,
             row_at,
             cells.slice(from, to),
@@ -527,7 +646,7 @@ pub let draw_session = (
           )
         }
       }
-      draw_right_prompt(s, list, theme, fonts, i, prompt_end, LineAt {
+      draw_right_prompt(s, list, input_theme, fonts, i, prompt_end, LineAt {
         origin: Vec2 {
           x: origin.x + BOX_INSET,
           y: box_top + BOX_PADDING + f32(prompt_rows - 1) * cell.y,
@@ -549,11 +668,11 @@ pub let draw_session = (
         lift: f32(prompt_rows) * cell.y + BOX_PADDING + BOX_GAP + BOX_MENU_GAP,
       }
       let style = Style {
-        text: theme.fg,
+        text: theme.editor_text,
         caret: theme.cursor,
         selection: theme.selection,
-        menu: MENU,
-        menu_chosen: MENU_CHOSEN,
+        menu: theme.menu,
+        menu_chosen: theme.menu_chosen,
         faint: theme.palette[8],
         // The syntax in the theme's own ANSI colours: green, cyan, yellow, magenta, blue.
         command: theme.palette[2],
@@ -654,7 +773,7 @@ let grid_mouse = (
   s: mut Session,
   origin: Vec2,
   cell: Vec2,
-  base: i64,
+  layout: Rows,
   grid_rows: i64,
   below: f32
 ) -> void => {
@@ -664,7 +783,7 @@ let grid_mouse = (
     if !is_mouse_down(0) { s.sel_dragging = false }
     return
   }
-  let i = (base + ((m.y - origin.y) / cell.y).floor()).clamp(0, (grid_rows - 1).max(0))
+  let i = layout.line_at_y(m.y, grid_rows).clamp(0, (grid_rows - 1).max(0))
   let line = s.shown.absolute(i)
   let fx = (m.x - origin.x) / cell.x
   let edge = (fx + 0.5).floor().clamp(0, s.shown.cols)
@@ -672,7 +791,7 @@ let grid_mouse = (
   let inside = is_window_hovered() &&
     m.y >= origin.y &&
     m.y < below &&
-    ((m.y - origin.y) / cell.y).floor() + base < grid_rows
+    m.y < layout.y_of(grid_rows)
   if inside && is_mouse_clicked(0) {
     s.sel_unit = i64(get_mouse_clicked_count(0)).clamp(1, 3)
     s.sel_origin = unit_span(s.shown, s.sel_unit, line, under, edge)
@@ -809,6 +928,235 @@ let unit_span = pure (
   (from, to)
 }
 
+/// Where the grid is drawn this frame: its first cell on the screen, a cell's size, its
+/// width, the first line of everything drawn (`base`) and the lines in view, `top` to
+/// `bottom`, as indices for [Screen.line].
+struct Grid {
+  origin: Vec2,
+  cell: Vec2,
+  cols: i64,
+  base: i64,
+  top: i64,
+  bottom: i64,
+  rows: Rows,
+}
+
+/// Where the grid's lines go on the screen: a line's height each, and gaps the blocks put
+/// above lines — `at`, the line (index) each gap is above, in order, and `through`, all the
+/// room above lines up to and including that one. A line's top is [y_of]; what comes before
+/// its gaps, [y_above].
+pub struct Rows {
+  origin_y: f32,
+  base: i64,
+  cell_y: f32,
+  at: []i64,
+  through: []f32,
+}
+
+impl Rows {
+  /// Line `i`'s top: below every gap above it.
+  pub let y_of = pure (self, i: i64) -> f32 =>
+    self.origin_y + f32(i - self.base) * self.cell_y + self.room_through(i)
+
+  /// Where the gaps above line `i` begin: the foot of the line before.
+  pub let y_above = pure (self, i: i64) -> f32 =>
+    self.origin_y + f32(i - self.base) * self.cell_y + self.room_through(i - 1)
+
+  /// The line at screen height `y` — the last whose top is above it — from `base` to `last`.
+  pub let line_at_y = pure (self, y: f32, last: i64) -> i64 => {
+    var lo = self.base
+    var hi = last.max(self.base)
+    while lo < hi {
+      let mid = (lo + hi + 1) / 2
+      if self.y_of(mid) <= y { lo = mid } else { hi = mid - 1 }
+    }
+    lo
+  }
+
+  /// The room of every gap above lines up to and including line `i`.
+  let room_through = pure (self, i: i64) -> f32 => {
+    var lo = 0
+    var hi = self.at.len()
+    while lo < hi {
+      let mid = (lo + hi) / 2
+      if self.at[mid] <= i { lo = mid + 1 } else { hi = mid }
+    }
+    if lo == 0 { 0.0 } else { self.through[lo - 1] }
+  }
+}
+
+/// The grid's rows with the blocks' room: above each block its margin and the input's
+/// padding, between its input and output the padding of each, below its output padding —
+/// for the lines from `base` to `grid_lines` (indices).
+pub let block_rows_layout = pure (
+  s: Session,
+  origin_y: f32,
+  base: i64,
+  cell_y: f32,
+  grid_lines: i64
+) -> Rows => {
+  var gaps: [](i64, f32) = []
+  let first = s.shown.absolute(0)
+  var all = s.blocks
+  match s.running_block {
+    Some(b) => all.push(b),
+    None => {},
+  }
+  for b in all {
+    let p = b.prompt - first
+    let o = b.output - first
+    if o >= base && o <= grid_lines {
+      if p >= base { gaps.push((p, BLOCK_MARGIN + BLOCK_PAD)) }
+      gaps.push((o, 2.0 * BLOCK_PAD))
+      if b.end >= 0 && b.end - first <= grid_lines { gaps.push((
+        b.end - first,
+        BLOCK_PAD
+      )) }
+    }
+  }
+  // In order of line, the gaps above one line together.
+  var at: []i64 = []
+  var through: []f32 = []
+  var sum: f32 = 0.0
+  for (line, room) in sorted_gaps(gaps) {
+    sum += room
+    if at.len() > 0 && at[at.len() - 1] == line { through[through.len() - 1] = sum } else {
+      at.push(line)
+      through.push(sum)
+    }
+  }
+  Rows { origin_y: origin_y, base: base, cell_y: cell_y, at: at, through: through }
+}
+
+/// `gaps` in order of their lines — nearly so already, the blocks being in order: an
+/// insertion sort, stable.
+let sorted_gaps = pure (gaps: [](i64, f32)) -> [](i64, f32) => {
+  var out = gaps
+  for i in 1..<out.len() {
+    var j = i
+    while j > 0 && out[j - 1].0 > out[j].0 {
+      let t = out[j]
+      out[j] = out[j - 1]
+      out[j - 1] = t
+      j -= 1
+    }
+  }
+  out
+}
+
+/// Under a block's text, as a card: its input on the box's tint, rounded at the top, its
+/// output on a fainter one below, each with its padding; a red bar down the left of a
+/// failed one. `running`: it has no end yet, and its card reaches the grid's foot (`b.end`).
+let draw_block_under = (
+  s: Session,
+  list: DrawList,
+  theme: Theme,
+  g: Grid,
+  b: Block,
+  running: bool
+) -> void => {
+  let first = s.shown.absolute(0)
+  // A prompt gone from the scrollback: the card from the first line kept.
+  let kept = b.prompt - first >= g.base
+  let p = (b.prompt - first).max(g.base)
+  let o = b.output - first
+  let e = b.end - first
+  if e < g.top || p > g.bottom { return }
+  let r = g.rows
+  let top = if kept { r.y_of(p) - BLOCK_PAD } else { r.y_of(p) }
+  let input_foot = r.y_above(o) + BLOCK_PAD
+  let foot = if running { r.y_of(e) } else { r.y_above(e) + BLOCK_PAD }
+  let x0 = g.origin.x - BOX_MARGIN
+  let x1 = g.origin.x + f32(g.cols) * g.cell.x + BOX_MARGIN
+  if foot > input_foot + 0.5 {
+    list.add_rect_filled(
+      Vec2 { x: x0, y: top },
+      Vec2 { x: x1, y: foot },
+      theme.output,
+      BLOCK_ROUNDING
+    )
+    list.add_rect_filled(
+      Vec2 { x: x0, y: top },
+      Vec2 { x: x1, y: input_foot },
+      theme.input,
+      BLOCK_ROUNDING,
+      DRAW_FLAGS_ROUND_CORNERS_TOP
+    )
+  } else {
+    list.add_rect_filled(
+      Vec2 { x: x0, y: top },
+      Vec2 { x: x1, y: input_foot },
+      theme.input,
+      BLOCK_ROUNDING
+    )
+  }
+  if b.status > 0 {
+    list.add_rect_filled(
+      Vec2 { x: x0 + 3.0, y: top + 4.0 },
+      Vec2 { x: x0 + 3.0 + FAILED_BAR, y: foot.max(input_foot) - 4.0 },
+      theme.palette[1],
+      FAILED_BAR / 2.0
+    )
+  }
+}
+
+/// Over a finished block's first row, at its right end: how long it took, faint, and when
+/// it failed its status, red — where the row's own text leaves room.
+let draw_block_over = (
+  s: Session,
+  list: DrawList,
+  theme: Theme,
+  g: Grid,
+  b: Block,
+  text_dy: f32
+) -> void => {
+  let Some(i) = s.shown.line_at(b.prompt) else { return }
+  if i < g.top || i >= g.bottom { return }
+  let took = duration_text(b.ended - b.started)
+  let note = if b.status > 0 { "exit ${b.status}  ${took}" } else { took }
+  let width = note.to_runes().len()
+  let cells = s.shown.line(i)
+  var used = cells.len()
+  while used > 0 && cells[used - 1].ch == ' ' { used -= 1 }
+  if used + 2 + width > g.cols { return }
+  let x = g.origin.x + f32(g.cols - width) * g.cell.x
+  let y = g.rows.y_of(i) + text_dy
+  if b.status > 0 {
+    let status = "exit ${b.status}"
+    list.add_text(Vec2 { x: x, y: y }, theme.palette[1], status)
+    list.add_text(
+      Vec2 { x: x + f32(status.to_runes().len() + 2) * g.cell.x, y: y },
+      theme.palette[8],
+      took
+    )
+  } else {
+    list.add_text(Vec2 { x: x, y: y }, theme.palette[8], took)
+  }
+}
+
+/// A duration in nanoseconds as a block shows it: `0.42s`, `4.2s`, `1m 05s`.
+let duration_text = pure (nanos: i64) -> string => {
+  let ms = (nanos / 1000000).max(0)
+  if ms < 10000 {
+    let hundredths = ms / 10
+    let whole = hundredths / 100
+    let frac = hundredths % 100
+    return "${whole}.${if frac < 10 { "0" } else { "" }}${frac}s"
+  }
+  if ms < 60000 { return "${ms / 1000}.${(ms / 100) % 10}s" }
+  let secs = ms / 1000
+  "${secs / 60}m ${if secs % 60 < 10 { "0" } else { "" }}${secs % 60}s"
+}
+
+/// The bar down a failed block's left edge, in points.
+const FAILED_BAR: f32 = 3.0
+
+/// A block's card: the room between cards, the padding inside each around its input and
+/// its output, and its corners' rounding. Its colours are the theme's sections'.
+const BLOCK_MARGIN: f32 = 10.0
+const BLOCK_PAD: f32 = 6.0
+const BLOCK_ROUNDING: f32 = 8.0
+
 /// The box's frame from `box_top` to the view's foot, around a grid `cols` wide from `x`:
 /// opaque, so the scrolled-back grid never shows through it, tinted, a rule along its top.
 let draw_box = (
@@ -830,10 +1178,10 @@ let draw_box = (
   list.add_rect_filled(
     Vec2 { x: x0, y: box_top },
     Vec2 { x: x1, y: view_bottom + BOX_MARGIN },
-    INPUT_BAND,
+    theme.input,
     BOX_ROUNDING
   )
-  list.add_line_h(x0, x1, box_top, BOX_RULE, 1.0)
+  list.add_line_h(x0, x1, box_top, theme.rule, 1.0)
 }
 
 /// A right prompt (zsh's `RPROMPT`) in the box: what the shell drew on input line `i` after
@@ -867,27 +1215,23 @@ let draw_right_prompt = (
   draw_line(list, theme, fonts, right_at, cells.slice(from, to), s.shown.combining, width)
 }
 
+/// The most blocks a tab keeps; older ones go, as their lines will from the scrollback.
+const BLOCKS: i64 = 2000
+
 /// The most rows of a prompt the box shows; a prompt's `A` mark further above its input is
 /// taken for a stray, and the box shows the input's line alone.
 const PROMPT_ROWS: i64 = 4
 
-/// The colours drawn over the grid besides the theme's: the band behind the command line,
-/// and the completion menu and its chosen row.
-const INPUT_BAND: u32 = 0x10FFFFFF
-const MENU: u32 = 0xFF2E2A25
-const MENU_CHOSEN: u32 = 0xFF4A4038
-
 /// The command line's box: how far it reaches past the grid on each side, how far its text
 /// is set in from the grid's sides, the space inside it above and below its rows, between
-/// the prompt's row and the command's, and between it and a completion menu above it, its
-/// corners' rounding, and the rule along its top.
-const BOX_MARGIN: f32 = 6.0
-const BOX_INSET: f32 = 8.0
+/// the prompt's row and the command's, and between it and a completion menu above it, and
+/// its corners' rounding. Its colours are the theme's: the input section's, and its rule.
+const BOX_MARGIN: f32 = 12.0
+const BOX_INSET: f32 = 2.0
 const BOX_PADDING: f32 = 12.0
 const BOX_GAP: f32 = 4.0
 const BOX_MENU_GAP: f32 = 4.0
 const BOX_ROUNDING: f32 = 8.0
-const BOX_RULE: u32 = 0x30FFFFFF
 
 /// Reads per frame at most — a megabyte — so that a program writing without end (`yes`)
 /// cannot stop the window drawing.

@@ -61,6 +61,7 @@ import vt.{
   InputStart,
   OutputStart,
   CommandEnd,
+  Cleared,
 }
 
 let main = () -> u8 => {
@@ -728,6 +729,11 @@ let check_marks = () -> i64 => {
     _ => "",
   }]
   failed += check("where a prompt begins", starts.join(" "), "1,4")
+  // The rows in use: to the cursor's, or below it to the last with anything on it.
+  var used = run(10, 6, "a\r\nb")
+  failed += check("rows in use, to the cursor", "${used.used_rows()}", "2")
+  used.apply(p.feed("\e[5;1Hz\e[1;1H".encode_utf8()))
+  failed += check("rows in use, to the last written", "${used.used_rows()}", "5")
   failed
 }
 
@@ -777,8 +783,8 @@ let check_shell = (shell: string) -> i64 => {
               }
             },
             PromptStart(at, col) => if !at_prompt { a_at = (at, col) },
-            OutputStart => seen.push("C"),
-            CommandEnd(status) => seen.push("D${status}"),
+            OutputStart(_) => seen.push("C"),
+            CommandEnd(status, _) => seen.push("D${status}"),
             _ => {},
           }
         }
@@ -1123,8 +1129,9 @@ let drawn_rows = pure (s: Screen) -> i64 =>
 let describe_marks = (s: mut Screen) -> string => [m in s.take_marks() | match m {
   PromptStart(_, _) => "A",
   InputStart(line, col) => "B(${line},${col})",
-  OutputStart => "C",
-  CommandEnd(status) => "D(${status})",
+  OutputStart(_) => "C",
+  CommandEnd(status, _) => "D(${status})",
+  Cleared(_) => "cleared",
 }].join(" ")
 
 let check = (name: string, got: string, want: string) -> i64 => {

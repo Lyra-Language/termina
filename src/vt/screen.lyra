@@ -108,17 +108,22 @@ pub struct Completion {
   description: string,
 }
 
-/// Where a shell with Sulafat's integration is (OSC 133 — `shell/shell.lyra`).
+/// Where a shell with Sulafat's integration is (OSC 133 — `shell/shell.lyra`), and the
+/// screen erased whole.
 pub data Mark =
   /// A prompt is being drawn (`A`), from this absolute line and column.
   PromptStart(i64, i64)
   /// The prompt is drawn, and the command typed begins at this absolute line and column
   /// (`B`): where the command line's editor goes.
   | InputStart(i64, i64)
-  /// The command is running; its output begins (`C`).
-  | OutputStart
-  /// The command ended, with this exit status (`D`), or -1 when none was reported.
-  | CommandEnd(i64)
+  /// The command is running; its output begins (`C`) on this absolute line.
+  | OutputStart(i64)
+  /// The command ended (`D`), with this exit status, or -1 when none was reported, its
+  /// output ending before this absolute line.
+  | CommandEnd(i64, i64)
+  /// The screen was erased whole (`clear`, Ctrl+L: `\e[2J`, or `\e[J` from its first cell),
+  /// from this absolute line — the screen's first — down; not the alternate screen's.
+  | Cleared(i64)
 
 /// A blank screen `cols` × `rows`.
 pub let screen = pure (cols: i64, rows: i64) -> Screen => Screen {
@@ -230,6 +235,21 @@ impl Screen {
 
   /// How many lines there are above the screen.
   pub let scrollback_len = pure (self) -> i64 => self.scrollback.len()
+
+  /// How many of the screen's rows are in use: down to the last with anything on it — a
+  /// character, or a background of its own — or the cursor's, whichever is lower. The
+  /// blank rows below are the screen's, not yet the program's.
+  pub let used_rows = pure (self) -> i64 => {
+    var last = self.y
+    var y = self.rows - 1
+    while y > last {
+      for c in self.lines[y] {
+        if c.ch != ' ' || c.bg != DEFAULT { return y + 1 }
+      }
+      y -= 1
+    }
+    last + 1
+  }
 
   /// Line `i` of everything — the scrollback's, oldest first, then the screen's.
   pub let line = pure (self, i: i64) -> []Cell => {
@@ -463,13 +483,13 @@ impl Screen {
     else if mark.starts_with("B") {
       if self.wrap_pending { self.marks.push(InputStart(self.cursor_line() + 1, 0)) }
       else { self.marks.push(InputStart(self.cursor_line(), self.x)) }
-    } else if mark.starts_with("C") { self.marks.push(OutputStart) }
+    } else if mark.starts_with("C") { self.marks.push(OutputStart(self.next_line())) }
     else if mark.starts_with("D") {
       let status = if mark.starts_with("D;") { mark.slice(
         2,
         mark.len()
       ).parse_i64() ?? -1 } else { -1 }
-      self.marks.push(CommandEnd(status))
+      self.marks.push(CommandEnd(status, self.next_line()))
     }
   }
 
@@ -650,7 +670,14 @@ impl Screen {
     }
   }
 
+  // The first line the cursor has not written on: its own when it is at the line's start,
+  // else the next.
+  let next_line = pure (self) -> i64 =>
+    if self.x > 0 || self.wrap_pending { self.cursor_line() + 1 } else { self.cursor_line() }
+
   let erase_display = (self: mut, mode: i64) -> void => {
+    let whole = mode == 2 || mode == 3 || (mode == 0 && self.x == 0 && self.y == 0)
+    if whole && !self.alt { self.marks.push(Cleared(self.dropped + self.scrollback.len())) }
     if mode == 0 {
       self.erase_line(0)
       for y in (self.y + 1)..<self.rows { self.lines[y] = blank_line(

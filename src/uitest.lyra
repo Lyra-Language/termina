@@ -84,7 +84,7 @@ import ui.{
   MENU_SMALLER,
   MENU_DEFAULT_SIZE,
   MENU_SETTINGS,
-  settings_window,
+  settings_panel,
   theme_of,
   channels,
   packed,
@@ -117,6 +117,10 @@ import settings.{
   settings_to_json,
   settings_from_json,
   theme_colours,
+  sections_of,
+  can_save_as,
+  save_theme,
+  delete_theme,
   colour_of,
   hex_of,
   families_of,
@@ -125,9 +129,11 @@ import settings.{
   font_families,
   fallback_fonts,
   Settings,
+  Colours,
   FontFamily,
 }
 import session.{
+  block_rows_layout,
   open_session,
   close_session,
   tab_title,
@@ -821,6 +827,59 @@ let check_settings = (host: Host) -> i64 => {
     "16 ${hex_of(theme_colours("Nord").ansi[1])}"
   )
   failed += check("a flag", "${odd.bold_is_bright}", "true")
+  // The sections', tabs' and command line's colours: a file without them takes the theme's,
+  // one with them keeps them; a theme's own shades are made from its background.
+  failed += check("the theme's sections", hex_of(odd.colours.input), "#3b4252")
+  let tabbed = settings_from_json(`{"colours": {"tab": "#123456", "menu_chosen": "#654321"}}`)
+  failed += check(
+    "tab and menu colours read",
+    "${hex_of(tabbed.colours.tab)} ${hex_of(tabbed.colours.menu_chosen)}",
+    "#123456 #654321"
+  )
+  // The input section's text: the theme's text until set; set, what its rows are drawn in.
+  failed += check(
+    "input text, the text's",
+    hex_of(d.colours.input_text),
+    hex_of(d.colours.fg)
+  )
+  let greened = Settings { d | colours: Colours { d.colours | input_text: 0x00FF00 } }
+  failed += check(
+    "input rows' text",
+    hex(theme_of(greened).for_input().fg),
+    hex(abgr(0x00FF00))
+  )
+  // Saved themes: the colours under a name of the user's (not one of Sulafat's), chosen
+  // then; kept in the file, a theme named there found among them; deleted, Custom.
+  var mine = Settings { d | colours: Colours { d.colours | bg: 0x101010 } }
+  failed += check(
+    "Sulafat's names are not to save as",
+    "${can_save_as("Nord")}|${can_save_as(" ")}|${can_save_as("Mine")}",
+    "false|false|true"
+  )
+  save_theme(mine, " Mine ")
+  failed += check("saved and chosen", "${mine.themes.len()}|${mine.theme_name}", "1|Mine")
+  mine.colours = Colours { mine.colours | bg: 0x202020 }
+  save_theme(mine, "Mine")
+  failed += check(
+    "saved again, replaced",
+    "${mine.themes.len()}|${hex_of(mine.themes[0].colours.bg)}",
+    "1|#202020"
+  )
+  let reread = settings_from_json(settings_to_json(mine))
+  failed += check("kept in the file", settings_to_json(reread), settings_to_json(mine))
+  let named = settings_from_json(`{"theme": "Mine", "themes": [{"name": "Mine", "colours": {"background": "#303030"}}]}`)
+  failed += check("a saved theme by name", hex_of(named.colours.bg), "#303030")
+  delete_theme(mine, "Mine")
+  failed += check(
+    "deleted, the colours stay",
+    "${mine.themes.len()}|${mine.theme_name}|${hex_of(mine.colours.bg)}",
+    "0|Custom|#202020"
+  )
+  failed += check(
+    "sections made from the background",
+    "${hex_of(sections_of(0x181A1E).0)} ${hex_of(sections_of(0xFAF8F5).0)}",
+    "#26282c #eeece9"
+  )
   failed += check("a colour read", "${colour_of("#1a2B3c") ?? 0}", "${u32(0x1A2B3C)}")
   failed += check(
     "not a colour",
@@ -901,24 +960,23 @@ let check_settings = (host: Host) -> i64 => {
     hex(abgr(d.colours.ansi[4]))
   )
 
-  // The window draws, unchanged without input.
-  var open = true
+  // The settings draw, unchanged without input.
   var s = defaults()
   var changed = false
-  for _ in 0..<3 { changed = settings_frame(host, open, s, here) }
-  failed += check("the window draws, unchanged", "${open} ${changed}", "true false")
+  for _ in 0..<3 { changed = settings_frame(host, s, here) }
+  failed += check("the settings draw, unchanged", "${changed}", "false")
   failed
 }
 
-/// One frame with only the settings window.
-let settings_frame = (
-  host: Host,
-  open: mut bool,
-  s: mut Settings,
-  families: []FontFamily
-) -> bool => {
+/// One frame with only the settings, in a window as the Settings tab's area would be.
+let settings_frame = (host: Host, s: mut Settings, families: []FontFamily) -> bool => {
   if !begin_frame(host) { return false }
-  let ask = settings_window(open, s, families)
+  var typed = ""
+  set_next_window_pos(Vec2 { x: 0.0, y: 0.0 })
+  set_next_window_size(Vec2 { x: 800.0, y: 400.0 })
+  let _ = begin("settings", WINDOW_FLAGS_NO_DECORATION)
+  let ask = settings_panel(s, families, typed)
+  end()
   end_frame(host, 0.0, 0.0, 0.0)
   ask.changed || ask.choose_file
 }
@@ -928,14 +986,7 @@ let check_meta_and_bright = () -> i64 => {
   var failed = 0
   failed += check("meta", meta("bf").replace("\e", "^"), "^b^f")
   let off = dark_theme()
-  let on = Theme {
-    fg: off.fg,
-    bg: off.bg,
-    cursor: off.cursor,
-    selection: off.selection,
-    palette: off.palette,
-    bold_is_bright: true,
-  }
+  let on = Theme { off | bold_is_bright: true }
   let bold_red = Cell { ch: 'x', fg: indexed(1), bg: DEFAULT, attrs: BOLD }
   failed += check("bold red, as asked", hex(off.colours(bold_red).0), hex(off.palette[1]))
   failed += check("bold red, bright", hex(on.colours(bold_red).0), hex(off.palette[9]))
@@ -1050,17 +1101,64 @@ let check_tab_drag = (host: Host) -> i64 => {
   active = bar.shown
   bar = bar_frame(host, tabs, active)
   failed += check("a click shows it", tabs[bar.shown].name, "two")
+  // The Settings tab: shown when asked for, until a key chooses a terminal's tab.
+  var on = settings_bar_frame(host, tabs, bar.shown, None, true)
+  for _ in 0..<3 { on = settings_bar_frame(host, tabs, bar.shown, None, false) }
+  failed += check("the settings tab shown", "${on.settings_shown}", "true")
+  on = settings_bar_frame(host, tabs, bar.shown, Some(0), false)
+  for _ in 0..<2 { on = settings_bar_frame(host, tabs, 0, None, false) }
+  failed += check(
+    "a terminal's tab chosen over it",
+    "${on.settings_shown}|${on.shown}",
+    "false|0"
+  )
   failed
 }
 
-/// One frame of a window holding the tab bar alone.
-let bar_frame = (host: Host, tabs: []TabLabel, active: i64) -> TabBar => {
-  let none = TabBar { shown: active, closing: None, add: false, order: [], centres: [] }
+/// One frame of a window holding the tab bar with a Settings tab, made the shown one when
+/// `select_settings`.
+let settings_bar_frame = (
+  host: Host,
+  tabs: []TabLabel,
+  active: i64,
+  select: Maybe<i64>,
+  select_settings: bool
+) -> TabBar => {
+  let none = TabBar {
+    shown: active,
+    closing: None,
+    add: false,
+    order: [],
+    centres: [],
+    settings_shown: false,
+    settings_closed: false,
+  }
   if !begin_frame(host) { return none }
   set_next_window_pos(Vec2 { x: 0.0, y: 0.0 })
   set_next_window_size(Vec2 { x: 800.0, y: 400.0 })
   let _ = begin("bar", WINDOW_FLAGS_NO_DECORATION)
-  let bar = tab_bar(tabs, active, None)
+  let bar = tab_bar(tabs, active, select, dark_theme(), true, select_settings)
+  end()
+  end_frame(host, 0.0, 0.0, 0.0)
+  bar
+}
+
+/// One frame of a window holding the tab bar alone.
+let bar_frame = (host: Host, tabs: []TabLabel, active: i64) -> TabBar => {
+  let none = TabBar {
+    shown: active,
+    closing: None,
+    add: false,
+    order: [],
+    centres: [],
+    settings_shown: false,
+    settings_closed: false,
+  }
+  if !begin_frame(host) { return none }
+  set_next_window_pos(Vec2 { x: 0.0, y: 0.0 })
+  set_next_window_size(Vec2 { x: 800.0, y: 400.0 })
+  let _ = begin("bar", WINDOW_FLAGS_NO_DECORATION)
+  let bar = tab_bar(tabs, active, None, dark_theme(), false, false)
   end()
   end_frame(host, 0.0, 0.0, 0.0)
   bar
@@ -1260,6 +1358,47 @@ let check_sessions = () -> i64 => {
   b.step(true)
   failed += check("seen once shown", "${b.unseen}", "false")
   close_session(b)
+  // A command's block, from a shell's marks: its prompt's line, where its output began and
+  // ended, its status. A screen erased whole takes the blocks on it.
+  let marks = "printf '\\033]133;A\\007$ \\033]133;B\\007ls\\r\\n\\033]133;C\\007out\\r\\n\\033]133;D;2\\007\\033]133;A\\007$ \\033]133;B\\007'"
+  let Some(blocked) = open_session(["/bin/sh", "-c", "${marks}; sleep 2"], None, 5) else {
+    return check("open a tab", "failed", "opened")
+  }
+  var e = blocked
+  for _ in 0..<2000000 { if e.blocks.len() == 0 { e.step(true) } }
+  failed += check(
+    "a command's block",
+    [x in e.blocks | "${x.prompt}-${x.output}-${x.end} ${x.status}"].join(","),
+    "0-1-2 2"
+  )
+  // Its room, a row 20 points high: above its input the margin and padding (16), between
+  // input and output the padding of each (12), below the output padding (6).
+  let rows = block_rows_layout(e, 0.0, 0, 20.0, 3)
+  failed += check(
+    "a block's rows",
+    "${rows.y_of(0)} ${rows.y_of(1)} ${rows.y_of(2)} ${rows.line_at_y(50.0, 3)}",
+    "16 48 74 1"
+  )
+  close_session(e)
+  let Some(cleared) = open_session(
+    ["/bin/sh", "-c", "${marks}; sleep 0.3; printf '\\033[2J'; sleep 2"],
+    None,
+    6
+  ) else {
+    return check("open a tab", "failed", "opened")
+  }
+  var f = cleared
+  var seen_block = false
+  for _ in 0..<4000000 {
+    if f.blocks.len() > 0 { seen_block = true }
+    if !(seen_block && f.blocks.len() == 0) { f.step(true) }
+  }
+  failed += check(
+    "erased whole, its blocks go",
+    "${seen_block}|${f.blocks.len()}",
+    "true|0"
+  )
+  close_session(f)
   let Some(brief) = open_session(["/bin/sh", "-c", "exit 0"], None, 3) else {
     return check("open a tab", "failed", "opened")
   }

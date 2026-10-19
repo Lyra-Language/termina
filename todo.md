@@ -3,6 +3,10 @@
 Open work for Sulafat only (compiler and binding gaps it finds go in `../lyra/todo.md`). The
 milestones are in `CLAUDE.md` § Plan; finished items move to `done.md`.
 
+## Blocks (M2)
+
+- **[OPEN] A block whole** — select, copy (command or output) and fold one, as Warp does.
+
 ## The command line (M3)
 
 - **[OPEN] A command that does not exist** — syntax colouring could show it red, but Sulafat cannot see the shell's aliases and functions; asking the shell (`type`) per command word would.
@@ -17,7 +21,6 @@ milestones are in `CLAUDE.md` § Plan; finished items move to `done.md`.
 
 ## Settings
 
-- **[OPEN] The command line's own colours** — its band, completion menu and chosen row are fixed; they could follow the theme.
 
 ## Found along the way
 

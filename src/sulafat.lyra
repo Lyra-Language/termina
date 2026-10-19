@@ -84,7 +84,8 @@ import settings.{
   FONT_SIZE_RANGE,
 }
 import ui.{
-  settings_window,
+  settings_panel,
+  SettingsAsk,
   theme_of,
   clear_colour,
   OpenSettings,
@@ -128,7 +129,12 @@ let main = () -> void => {
   let families = font_families()
   var fonts = load_fonts(host, families, settings)
   var theme = theme_of(settings)
+  // The Settings tab: whether it is open, to be made the one shown, or the one shown.
   var settings_open = false
+  var select_settings = false
+  var on_settings = false
+  // What is typed in the settings window to save the colours as a theme.
+  var theme_name_typed = ""
   let home = lookup("HOME") ?? ""
   // A program given on the command line runs in the first tab instead of the shell,
   // without the shell's integration, where Sulafat was started; tabs opened after it run
@@ -197,12 +203,16 @@ let main = () -> void => {
         }
         next_id += 1
       },
-      CloseTab => sessions[active].request_close(),
+      // ⌘W on the Settings tab closes it, not the terminal behind it.
+      CloseTab => if on_settings { settings_open = false } else { sessions[active].request_close() },
       ShowTab(n) => {
         active = n
         select = Some(n)
       },
-      OpenSettings => { settings_open = true },
+      OpenSettings => {
+        settings_open = true
+        select_settings = true
+      },
       // A point at a time, within the settings' range; kept as any setting is.
       FontBigger => { settings.font_size = (settings.font_size + 1.0).min(FONT_SIZE_RANGE.1) },
       FontSmaller => { settings.font_size = (settings.font_size - 1.0).max(FONT_SIZE_RANGE.0) },
@@ -212,21 +222,27 @@ let main = () -> void => {
     // The faces are drawn at the size pushed: a new one takes at once.
     fonts.size = settings.font_size
 
-    let bar = draw_window(
+    // The window: the tabs, and the one shown — a terminal, or the settings, whose change
+    // takes at once and is kept once the mouse is let go (not every frame of a slider's
+    // drag).
+    let faces_were = "${settings.font_family}|${settings.font_file}"
+    let (bar, ask) = draw_window(
       sessions,
       active,
       select,
       fonts,
       theme,
-      settings.line_spacing,
       home,
       command,
-      menus
+      menus,
+      SettingsTab { open: settings_open, select: select_settings },
+      settings,
+      families,
+      theme_name_typed
     )
-    // The settings window, over the terminal: a change takes at once, and is kept once the
-    // mouse is let go (not every frame of a slider's drag).
-    let faces_were = "${settings.font_family}|${settings.font_file}"
-    let ask = settings_window(settings_open, settings, families)
+    select_settings = false
+    if bar.settings_closed { settings_open = false }
+    on_settings = bar.settings_shown && settings_open
     if ask.choose_file {
       let _ = show_open_dialog(
         host,
@@ -303,11 +319,15 @@ let draw_window = (
   select: Maybe<i64>,
   fonts: Fonts,
   theme: Theme,
-  line_spacing: f32,
   home: string,
   command: TabCommand,
-  menus: bool
-) -> TabBar => {
+  menus: bool,
+  settings_tab: SettingsTab,
+  settings: mut Settings,
+  families: []FontFamily,
+  theme_name: mut string
+) -> (TabBar, SettingsAsk) => {
+  let line_spacing = settings.line_spacing
   let viewport = get_main_viewport()
   set_next_window_pos(viewport.work_pos())
   set_next_window_size(viewport.work_size())
@@ -318,7 +338,14 @@ let draw_window = (
   let _ = begin("terminal", flags)
   pop_style_var()
 
-  let bar = tab_bar(tab_labels(sessions, home), active, select)
+  let bar = tab_bar(
+    tab_labels(sessions, home),
+    active,
+    select,
+    theme,
+    settings_tab.open,
+    settings_tab.select
+  )
   let shown = bar.shown
 
   // The shown tab fills the rest of the window, in a child that scrolls on its own.
@@ -330,6 +357,13 @@ let draw_window = (
     WINDOW_FLAGS_NO_NAV_INPUTS | WINDOW_FLAGS_NO_BACKGROUND
   )
   pop_style_var()
+  // The Settings tab shown: the settings in its area, in the interface's font.
+  if bar.settings_shown && settings_tab.open {
+    let ask = settings_panel(settings, families, theme_name)
+    end_child()
+    end()
+    return (bar, ask)
+  }
   match fonts.regular {
     Some(f) => push_font_float(f, fonts.size),
     None => {},
@@ -361,7 +395,13 @@ let draw_window = (
   }
   end_child()
   end()
-  bar
+  (bar, SettingsAsk { changed: false, choose_file: false })
+}
+
+/// The Settings tab: whether it is open, and whether to make it the one shown this frame.
+struct SettingsTab {
+  open: bool,
+  select: bool,
 }
 
 /// The tabs' names on the bar and in the menus — a `•` for output not yet seen — and their
