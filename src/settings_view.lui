@@ -70,8 +70,12 @@
 <component name="settings_view" props={{s: Settings, families: []FontFamily, typed: string}} event={SettingsEvent}>
   <style>
     Group.settings { gap: 18 }
-    Text.group { color: #9aa0a6 }
     Form { gap: 12 }
+    Combo { padding: 6; rounding: 4 }
+    Slider { padding: 6; rounding: 4 }
+    InputText { padding: 6; rounding: 4 }
+    Button { padding: 10 6; rounding: 4 }
+    Text.group { color: #9aa0a6 }
     Row.columns { gap: 32 }
   </style>
 
