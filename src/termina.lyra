@@ -16,6 +16,8 @@
 
 import std.env.{ lookup }
 import bindings.imgui.{
+  HOST_CUSTOM_TITLE_BAR,
+  has_custom_title_bar,
   request_quit,
   minimize,
   toggle_maximized,
@@ -78,10 +80,12 @@ import menus.{
   sync_native,
   native_choices,
   draw_menu_bar,
+  draw_header_bar,
   tab_command_of
 }
 import menus_view.{
   menus_view,
+  header_menu,
   MenuChoice,
   Edit,
   QuitApp,
@@ -89,7 +93,8 @@ import menus_view.{
   ToggleMaximized,
   EDIT_ACTIONS
 }
-import bindings.sdl3.{ platform }
+import bindings.sdl3.{ platform, set_hint }
+import desktop.{ APP_ID, install_desktop_entry }
 import settings.{
   settings_path,
   load_settings,
@@ -126,7 +131,16 @@ import ui.{
 }
 
 let main = () -> void => {
-  let Some(host) = create_host("Termina", 960, 600, 0) else { return }
+  // On Linux, the id the desktop knows the window by — so the dock shows the entry's icon
+  // — and, run as an AppImage, that entry installed for the launcher to find.
+  if platform() == "Linux" {
+    let _ = set_hint("SDL_APP_ID", APP_ID)
+    for path in install_desktop_entry() { println("termina: wrote ${path}") }
+  }
+  // Off macOS Termina draws the window's title bar itself, as a GNOME header bar holding
+  // its menus (`menus.draw_header_bar`); a Mac's title bar is the system's.
+  let flags = if platform() == "Linux" { HOST_CUSTOM_TITLE_BAR } else { 0 }
+  let Some(host) = create_host("Termina", 960, 600, flags) else { return }
   // The keyboard is the shell's: ImGui's own navigation would take the arrows and Tab.
   let io = get_io()
   io.set_config_flags(io.config_flags() & ~CONFIG_FLAGS_NAV_ENABLE_KEYBOARD)
@@ -158,6 +172,7 @@ let main = () -> void => {
     host: host,
     installed: installed,
     menus: installed != None,
+    header: has_custom_title_bar(host),
     settings_file: settings_file,
     settings: settings,
     saved: settings_to_json(settings),
@@ -183,6 +198,8 @@ struct App {
   /// the bar.
   installed: Maybe<[]MenuChoice>,
   menus: bool,
+  /// Whether the menus are a header bar Termina draws as the window's title bar.
+  header: bool,
   settings_file: string,
   settings: Settings,
   /// The settings as last written to the file.
@@ -264,7 +281,24 @@ let frame_of = (win: mut App) -> bool => {
       sync_native(tree)
       native_choices(choices)
     },
-    None => draw_menu_bar(tree, (_) => {}),
+    None => if win.header {
+      draw_header_bar(
+        win.host,
+        win.title,
+        [
+          header_menu(
+            tab_labels(win.sessions, win.home),
+            win.active,
+            can,
+            is_maximized(win.host)
+          )
+        ],
+        (_) => {},
+        (_) => {}
+      )
+    } else {
+      draw_menu_bar(tree, (_) => {})
+    },
   }
   for choice in chosen {
     match choice {
@@ -323,6 +357,7 @@ let frame_of = (win: mut App) -> bool => {
     win.home,
     command,
     win.menus,
+    !win.header,
     SettingsTab { open: win.settings_open, select: win.select_settings },
     win.settings,
     win.families,
@@ -404,6 +439,8 @@ let draw_window = (
   home: string,
   command: TabCommand,
   menus: bool,
+  // The tab bar's own `+`: not where the header bar has one.
+  plus: bool,
   settings_tab: SettingsTab,
   settings: mut Settings,
   families: []FontFamily,
@@ -426,7 +463,8 @@ let draw_window = (
     select,
     theme,
     settings_tab.open,
-    settings_tab.select
+    settings_tab.select,
+    plus
   )
   let shown = bar.shown
 

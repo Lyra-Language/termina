@@ -48,7 +48,8 @@ git tag v0.2.0 && git push origin v0.2.0   # a release: built, checked and publi
   `@rpath`), or in the archive's `lib/` (an rpath of `$ORIGIN/lib`, set by patchelf).
   Homebrew's is built for the Mac it runs on, and Ubuntu 24.04 has none.
 - **Linux releases are an AppImage too**: the archive's directory as an AppDir (`AppRun` a
-  link to the program, `assets/termina.desktop` and the icon beside it), made by
+  link to the program, `assets/dev.lyra_language.Termina.desktop` and the icon beside it,
+  as SVG and PNG under that id), made by
   appimagetool and its runtime as `tools/appimagetool.sh` pins them, SHA-256 checked. No
   sandbox — a Flatpak's would need the shell started on the host — and no
   `LD_LIBRARY_PATH`, so the shells Termina starts load nothing of its. Run extracted, not
@@ -98,6 +99,7 @@ shell ⇄ bindings.pty ──bytes──▶ vt.Parser ──[]Action──▶ vt
 | `src/termina.lyra` | `main`: the ImGui host and the window's state (`App`), and `frame`: the tabs read, the menus and keys carried out, the window drawn; fonts |
 | `package.sh`, `tools/sdl3.sh`, `tools/appimagetool.sh` | a release archive with SDL3 inside — the Mac app signed and notarized when given an identity and key, an AppImage on Linux — SDL3 built from source for it, and the pinned appimagetool (Releases, above) |
 | `assets/` | the icon: `termina.svg` the source; `Termina.icns` (the app's) and `termina.png` made from it (`assets/README.md`); `Termina.entitlements`, what the signed app's commands may ask for (Releases, above) |
+| `src/desktop/desktop.lyra` | Termina on a Linux desktop: the id its windows go by (`APP_ID`), and, run as an AppImage, the desktop entry and icon it installs for the launcher and the dock |
 | `src/session/session.lyra` | one tab: its PTY, screen, `Mode` and command line; read each frame, drawn and given keys when shown |
 | `src/ui/tabs.lyra` | the tab bar (reorderable, its order read back) and the tab shortcuts |
 | `src/menus_view.lui` | the menus as `.lui` markup, one tree for both bars; `menus_view.lyra` is generated from it (edit the `.lui`) |
@@ -129,6 +131,14 @@ shell ⇄ bindings.pty ──bytes──▶ vt.Parser ──[]Action──▶ vt
   is read after `begin_frame`**: the frames drawn during a resize run inside it, and a copy
   taken before would undo them, the terminals' parsed screens included. State a frame keeps
   is a field of `App`, never a local of `main`.
+- **On Linux the window's id is `dev.lyra_language.Termina`** (`desktop.APP_ID`, set as
+  SDL's `SDL_APP_ID` before the window opens: its Wayland app id and X11 class), and a
+  desktop entry's file name and `StartupWMClass` must be that id for the dock to show its
+  icon. **Run as an AppImage, Termina installs its own entry** in
+  `$XDG_DATA_HOME/applications` (else `~/.local/share`), `Exec` and `TryExec` the
+  AppImage's path, with the icon (the Mac app's art, `termina.svg`) in the user's hicolor
+  theme — written only when either would change, so a moved or newer AppImage updates
+  them, and a launcher hides the entry once the AppImage is gone.
 - **The parser recognises, the screen acts.** Neither reads the other's input: the parser is
   tested on bytes alone, the screen on actions. A new sequence is a `Screen.csi`/`esc`/`osc`
   case and a `vttest` line.
@@ -143,8 +153,9 @@ shell ⇄ bindings.pty ──bytes──▶ vt.Parser ──[]Action──▶ vt
   changing title must not move. The grid is a child window under the bar, so it scrolls
   alone; focus is asked of root and child (`FOCUSED_FLAGS_ROOT_AND_CHILD_WINDOWS`), and a
   frame whose keys were a tab shortcut gives the tab none.
-- **The menus are one tree** (`menus_view.lui`, built each frame), shown two ways by
-  `menus/menus.lyra`; a choice is a `MenuChoice`, carried out in one place in the loop.
+- **The menus are one tree** (`menus_view.lui`, built each frame), shown three ways by
+  `menus/menus.lyra`; the Mac's install looks through the item components a menu holds
+  (`flat`); a choice is a `MenuChoice`, carried out in one place in the loop.
   An item's choice must not depend on the frame (Show Previous Tab, not the tab it was):
   the Mac's bar sends what it was installed with.
 - **On a Mac the menu bar is Termina's own** (`menus.install_native`, through
@@ -157,8 +168,20 @@ shell ⇄ bindings.pty ──bytes──▶ vt.Parser ──[]Action──▶ vt
   View holds the font's size — Default Font Size ⌘0, Bigger ⌘=, Smaller ⌘- — a point at a
   time within the settings' range, kept as any setting is (`FontBigger`, `FontSmaller`,
   `FontDefault`). The Window menu is macOS's standard one.
+- **On Linux the menus are a GNOME header bar in the window's title bar**, as Ubuntu's
+  terminal has them (`menus.draw_header_bar`; the host made with `HOST_CUSTOM_TITLE_BAR`,
+  so the window has no title bar of the system's): `+` (a new tab) at its left, the title
+  in its middle, a ☰ button before the window's buttons whose popup holds New Tab, Settings…, Quit and the menus as submenus (`menus_view.lui`'s
+  `header_menu`, built from the same item components as the bar). The bar is half again
+  the classic menu bar's height (`HEADER_SCALE`); `+` and ☰ are `title_bar_button`s, the
+  window buttons' size, their glyphs lines drawn from the bar's height (`draw_glyph`): the
+  interface's font has no ☰. The corners are square: SDL's GPU API refuses the
+  transparent window round ones would need (3.4's, on every driver). The
+  tab bar has no `+` there (`tab_bar`'s `plus`). Its empty stretch moves the window and its
+  edges resize it; a double-click on it does nothing yet (SDL starts a move first).
 - **Off macOS Termina draws the same tree** (`menus.draw_menu_bar`, ImGui's main menu bar),
-  with Quit in the Termina menu and a Window menu (Minimize, Maximize, the tabs, Alt+1–9).
+  with Quit in the Termina menu and a Window menu (Minimize, Maximize, the tabs, Alt+1–9),
+  where there is no header bar (a headless host, a platform not yet given one).
   There the keys stay keys and an item only shows them (Ctrl+Shift+…, Ctrl+Z for Undo,
   Ctrl+PgUp/PgDn; the font's size Ctrl+Shift+= - 0, since Ctrl+- is readline's undo). The
   bar takes its height off the viewport's work area, which the terminal's window fills.

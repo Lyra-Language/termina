@@ -27,6 +27,7 @@ import editor.{
 import std.env.{ lookup }
 import std.io.{ create_dir_all, write_file, remove_file, is_executable }
 import std.path
+import desktop.{ desktop_entry, exec_quoted, APP_ID }
 import vt.{
   runes_of,
   Spot,
@@ -67,6 +68,7 @@ import vt.{
 let main = () -> u8 => {
   var failed = 0
   failed += check_parser()
+  failed += check_desktop_entry()
   failed += check_screen()
   failed += check_style()
   failed += check_modes()
@@ -1147,6 +1149,25 @@ let describe_marks = (s: mut Screen) -> string => [m in s.take_marks() | match m
   CommandEnd(status, _) => "D(${status})",
   Cleared(_) => "cleared",
 }].join(" ")
+
+// The desktop entry an AppImage installs: the id the window goes by in its file name, its
+// icon and its class; the AppImage's path in `Exec`, quoted as the Desktop Entry
+// Specification has it, and plain in `TryExec`.
+let check_desktop_entry = () -> i64 => {
+  var failed = 0
+  let entry = desktop_entry("/home/me/Apps/Termina.AppImage")
+  failed += check(
+    "the entry's keys",
+    [l in entry.lines() | l.starts_with("Exec=") || l.starts_with("TryExec=") || l.starts_with("Icon=") || l.starts_with("StartupWMClass=") | l].join("|"),
+    "Exec=\"/home/me/Apps/Termina.AppImage\"|TryExec=/home/me/Apps/Termina.AppImage|Icon=${APP_ID}|StartupWMClass=${APP_ID}"
+  )
+  failed += check(
+    "a path quoted for Exec",
+    exec_quoted("/a b/\"q\" $x `y` \\z"),
+    "\"/a b/\\\\\"q\\\\\" \\\\$x \\\\`y\\\\` \\\\\\\\z\""
+  )
+  failed
+}
 
 let check = (name: string, got: string, want: string) -> i64 => {
   if got == want { 0 } else {

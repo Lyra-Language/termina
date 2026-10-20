@@ -20,7 +20,23 @@ import bindings.imgui.{
   push_style_var_vec2,
   pop_style_var,
   Vec2,
+  Host,
   STYLE_VAR_FRAME_PADDING,
+  COL_TEXT,
+  begin_title_bar,
+  title_bar_title,
+  title_bar_end,
+  title_bar_button,
+  title_bar_button_width,
+  open_popup,
+  begin_popup,
+  end_popup,
+  set_next_window_pos,
+  get_window_draw_list,
+  get_item_rect_min,
+  get_item_rect_max,
+  get_color_u32,
+  get_font_size,
 }
 import bindings.imgui.ui.{
   Node,
@@ -36,7 +52,7 @@ import bindings.imgui.ui.{
 }
 import bindings.menubar
 import menus_view.{ MenuChoice, Tabs, PreviousTab, NextTab }
-import ui.{ TabCommand, NoCommand, ShowTab }
+import ui.{ TabCommand, NoCommand, NewTab, ShowTab }
 
 /// The menus installed in the Mac's menu bar; the choice each tag stands for, in tag order.
 /// `None` where there is no native bar — off macOS, or before SDL has an application.
@@ -45,7 +61,7 @@ pub let install_native = (menus: []Node<MenuChoice>) -> Maybe<[]MenuChoice> => {
   for i, node in bar_menus(menus) {
     let Menu(m, entries) = node else { continue }
     if i == 0 { menubar.app_menu() } else { menubar.menu(m.label) }
-    for entry in entries {
+    for entry in flat(entries) {
       match entry {
         MenuItem(it) => {
           let (key, held) = native_key(it)
@@ -64,6 +80,20 @@ pub let install_native = (menus: []Node<MenuChoice>) -> Maybe<[]MenuChoice> => {
 
 /// The menus on the bar `nodes` describe, looking through the component and the bar
 /// around them.
+/// A menu's entries with the components and fragments that hold some opened in place: the
+/// items, separators and submenus as the menu shows them.
+let flat = pure (nodes: []Node<MenuChoice>) -> []Node<MenuChoice> => {
+  var out: []Node<MenuChoice> = []
+  for node in nodes {
+    match node {
+      Component(_, children) => { out = [...out, ...flat(children)] },
+      Fragment(children) => { out = [...out, ...flat(children)] },
+      _ => out.push(node),
+    }
+  }
+  out
+}
+
 let bar_menus = pure (nodes: []Node<MenuChoice>) -> []Node<MenuChoice> => {
   var out: []Node<MenuChoice> = []
   for node in nodes {
@@ -114,6 +144,110 @@ pub let draw_menu_bar = (
   pop_style_var()
   chosen
 }
+
+/// The menus as a GNOME header bar along the window's top, where Termina draws the window's
+/// title bar (`HOST_CUSTOM_TITLE_BAR`, off macOS), as Ubuntu's terminal has it: a `+`
+/// button (a new tab) at its left, `title` in its middle, a ☰ button before the window's
+/// buttons opening `menu` — its items — under itself; the choices made this frame. The
+/// buttons are the bar's full height, as the window's are. `seen` is called with the menu's
+/// nodes, `after_button` with each button's name once drawn (`New Tab`, `Menu`, and the
+/// window's), for a test to find them by.
+pub let draw_header_bar = (
+  host: Host,
+  title: string,
+  menu: []Node<MenuChoice>,
+  seen: (Node<MenuChoice>) -> void,
+  after_button: (string) -> void
+) -> []MenuChoice => {
+  // Half again as tall as the bar Termina draws elsewhere (the font and its padding twice),
+  // all of it padding, so the title stays centred; the buttons, which the host sizes from
+  // the bar, grow with it.
+  let pad = get_style().frame_padding()
+  let font = get_font_size()
+  let classic = font + 2.0 * (pad.y + MENU_BAR_EXTRA)
+  push_style_var_vec2(
+    STYLE_VAR_FRAME_PADDING,
+    Vec2 { x: pad.x, y: (HEADER_SCALE * classic - font) / 2.0 }
+  )
+  if !begin_title_bar(host, after_button) {
+    pop_style_var()
+    return []
+  }
+  var chosen: []MenuChoice = []
+  if title_bar_button(host, "New Tab", after_button) { chosen.push(Tabs(NewTab)) }
+  draw_glyph(PlusGlyph)
+  title_bar_title(host, title, title_bar_button_width(host))
+  if title_bar_button(host, "Menu", after_button) { let _ = open_popup(HEADER_MENU) }
+  draw_glyph(MenuGlyph)
+  // The menu under its button, their right edges together. Begun inside the bar, where the
+  // button opened it: a popup is found by the window it was opened in.
+  let under = get_item_rect_max()
+  set_next_window_pos(under, 0, Vec2 { x: 1.0, y: 0.0 })
+  if begin_popup(HEADER_MENU) {
+    chosen = [...chosen, ...render(menu, seen)]
+    end_popup()
+  }
+  title_bar_end(host, after_button)
+  pop_style_var()
+  chosen
+}
+
+/// The header bar's menu's popup.
+const HEADER_MENU: string = "##header menu"
+
+/// The glyphs drawn on the header bar's buttons, which the interface's font has none of at
+/// the bar's size.
+data Glyph = PlusGlyph | MenuGlyph
+
+/// `glyph` over the button just drawn (ImGui's last item): lines in the text's color, in
+/// proportion to the bar.
+let draw_glyph = (glyph: Glyph) -> void => {
+  let lo = get_item_rect_min()
+  let hi = get_item_rect_max()
+  let mid = Vec2 {
+    x: f32(((lo.x + hi.x) / 2.0).round()),
+    y: f32(((lo.y + hi.y) / 2.0).round())
+  }
+  let bar = hi.y - lo.y
+  let half = f32((bar * 0.2).round())
+  let width = (bar / 24.0).max(1.5)
+  let ink = get_color_u32(COL_TEXT)
+  let list = get_window_draw_list()
+  match glyph {
+    PlusGlyph => {
+      list.add_line(
+        Vec2 { x: mid.x - half, y: mid.y },
+        Vec2 { x: mid.x + half, y: mid.y },
+        ink,
+        width
+      )
+      list.add_line(
+        Vec2 { x: mid.x, y: mid.y - half },
+        Vec2 { x: mid.x, y: mid.y + half },
+        ink,
+        width
+      )
+    },
+    MenuGlyph => {
+      let step = f32((bar * 0.13).round())
+      // Typed: an untyped float array's elements reach the backend as doubles beside an
+      // f32 (lyra todo.md, "A float literal array's element times an f32").
+      let rows: []f32 = [-1.0, 0.0, 1.0]
+      for k in rows {
+        let y = mid.y + k * step
+        list.add_line(
+          Vec2 { x: mid.x - half, y: y },
+          Vec2 { x: mid.x + half, y: y },
+          ink,
+          width
+        )
+      }
+    },
+  }
+}
+
+/// How much taller the header bar is than the bar Termina draws where it has none.
+const HEADER_SCALE: f32 = 1.5
 
 /// Points added above and below the menus' names on the bar.
 const MENU_BAR_EXTRA: f32 = 4.0

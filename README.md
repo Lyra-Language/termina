@@ -21,6 +21,7 @@ build/termina
 
 Releases (`git tag vX.Y.Z` and push it) carry Termina.app for Apple silicon, signed with a
 Developer ID and notarized, and for Linux on x86_64 and arm64 an AppImage (make it
-executable and run it) and an archive (unpack and run `./termina`). Each has SDL3 inside.
+executable and run it once: it adds itself to your desktop's launcher) and an archive
+(unpack and run `./termina`). Each has SDL3 inside.
 
 MIT licensed (`LICENSE`).

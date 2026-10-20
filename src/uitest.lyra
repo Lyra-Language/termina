@@ -84,9 +84,10 @@ import bindings.imgui.ui.{
   rgb_channels,
   rgb_of
 }
-import menus.{ draw_menu_bar, tab_command_of }
+import menus.{ draw_menu_bar, draw_header_bar, tab_command_of }
 import menus_view.{
   menus_view,
+  header_menu,
   MenuChoice,
   Tabs,
   PreviousTab,
@@ -708,6 +709,26 @@ let check_menu_bar = (host: Host) -> i64 => {
     pick(host, tabs, EDIT_ACTIONS, "Edit", "Paste"),
     "paste"
   )
+  // As a GNOME header bar (Linux, where Termina draws the title bar): the `+` opens a tab,
+  // and the ☰ button's menu holds the most used items, the menus as submenus after.
+  header_mode = true
+  for _ in 0..<3 { let _ = menu_frame(host, tabs, none) }
+  failed += check(
+    "the header bar's +",
+    press_item(host, tabs, none, "New Tab"),
+    "new"
+  )
+  failed += check(
+    "the header bar's ☰ ▸ Settings…",
+    pick(host, tabs, none, "Menu", "Settings…"),
+    "settings"
+  )
+  failed += check(
+    "☰ ▸ Quit",
+    pick(host, tabs, none, "Menu", "Quit"),
+    "quit"
+  )
+  header_mode = false
   // The keys shown: Ctrl+Shift for the terminal's own, Ctrl+Z for Undo, Ctrl+PgUp, Alt and
   // a tab's number.
   let keys = [
@@ -790,9 +811,40 @@ let click_item = (
 let menu_frame = (host: Host, tabs: []TabLabel, can: []EditAction) -> []MenuChoice => {
   if !begin_frame(host) { return [] }
   spots = []
-  let made = draw_menu_bar([menus_view(tabs, 0, can, false, false)], note_spot)
+  let made = if header_mode {
+    draw_header_bar(
+      host,
+      "~/work",
+      [header_menu(tabs, 0, can, false)],
+      note_spot,
+      note_named
+    )
+  } else {
+    draw_menu_bar([menus_view(tabs, 0, can, false, false)], note_spot)
+  }
   end_frame(host, 0.0, 0.0, 0.0)
   made
+}
+
+/// Whether [menu_frame] draws the menus as the header bar, not the classic bar.
+var header_mode = false
+
+/// Click what the last frame drew as `label`, a press and a release a frame each: the
+/// choice answered, described, or `nothing`.
+let press_item = (
+  host: Host,
+  tabs: []TabLabel,
+  can: []EditAction,
+  label: string
+) -> string => {
+  var answer = "nothing"
+  let Some(place) = spot(label) else { return "not drawn" }
+  get_io().add_mouse_pos_event(place.x, place.y)
+  for down in [false, true, false] {
+    get_io().add_mouse_button_event(0, down)
+    for c in menu_frame(host, tabs, can) { answer = describe_choice(c) }
+  }
+  answer
 }
 
 /// Where the menu bar drew each menu and item in the last frame: its label and middle.
@@ -808,6 +860,13 @@ let note_spot = (node: Node<MenuChoice>) -> void => {
   let lo = get_item_rect_min()
   let hi = get_item_rect_max()
   spots.push((label, Vec2 { x: (lo.x + hi.x) / 2.0, y: (lo.y + hi.y) / 2.0 }))
+}
+
+/// A button of the header bar by its name, where it was drawn.
+let note_named = (name: string) -> void => {
+  let lo = get_item_rect_min()
+  let hi = get_item_rect_max()
+  spots.push((name, Vec2 { x: (lo.x + hi.x) / 2.0, y: (lo.y + hi.y) / 2.0 }))
 }
 
 /// Where `label` was drawn last frame.

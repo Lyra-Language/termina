@@ -142,8 +142,14 @@ case "$(uname -s)" in
       # The runtime runs AppRun; through the link the program is still at the AppDir's top,
       # so its `$ORIGIN/lib` finds the SDL3 beside it.
       ln -s termina "$APPDIR/AppRun"
-      cp "$ROOT/assets/termina.desktop" "$ROOT/assets/termina.png" "$APPDIR/"
-      ln -s termina.png "$APPDIR/.DirIcon"
+      # Under the id the window goes by (src/desktop/desktop.lyra's APP_ID): the entry, and
+      # the icon, the Mac app's art, which Termina copies to the user's icon theme as it
+      # installs its own entry. A PNG of it is the image's .DirIcon.
+      readonly ID=dev.lyra_language.Termina
+      cp "$ROOT/assets/$ID.desktop" "$APPDIR/"
+      cp "$ROOT/assets/termina.svg" "$APPDIR/$ID.svg"
+      cp "$ROOT/assets/termina.png" "$APPDIR/$ID.png"
+      ln -s "$ID.png" "$APPDIR/.DirIcon"
       readonly IMAGE="$OUT/Termina-$VERSION-linux-$ARCH.AppImage"
       rm -f "$IMAGE"
       # Extracted and run, not mounted: a container or a CI runner has no FUSE.

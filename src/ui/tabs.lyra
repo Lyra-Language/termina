@@ -85,14 +85,15 @@ pub struct TabBar {
 /// Draw the tab bar for `tabs`, `active` shown and `select` (a tab chosen by a key, or just
 /// opened) made the shown one, in `theme`'s tab colors; its tabs dragged into another
 /// order as the user likes. With `settings`, a Settings tab at the bar's right end — made
-/// the shown one by `select_settings`.
+/// the shown one by `select_settings`. With `plus`, a `+` after the tabs opening another.
 pub let tab_bar = (
   tabs: []TabLabel,
   active: i64,
   select: Maybe<i64>,
   theme: Theme,
   settings: bool,
-  select_settings: bool
+  select_settings: bool,
+  plus: bool = true
 ) -> TabBar => {
   var shown = active
   var closing: Maybe<i64> = None
@@ -152,7 +153,7 @@ pub let tab_bar = (
       }
       if !open { settings_closed = true }
     }
-    if tab_item_button(
+    if plus && tab_item_button(
       "+",
       TAB_ITEM_FLAGS_TRAILING | TAB_ITEM_FLAGS_NO_TOOLTIP
     ) { add = true }

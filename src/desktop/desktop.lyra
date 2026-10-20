@@ -1,0 +1,94 @@
+module desktop
+//! Termina on a Linux desktop: the id its windows go by, and — run as an AppImage, which
+//! nothing installs — the desktop entry and icon a launcher finds it by.
+//!
+//! **The dock's icon is the desktop entry's.** GNOME matches a window's Wayland app id (its
+//! X11 class) against the installed `.desktop` files and shows that entry's icon, so the
+//! id (`APP_ID`, set as SDL's `SDL_APP_ID` before the window opens), the entry's file name
+//! and its `StartupWMClass` are one string. **The launcher lists only installed entries**
+//! (`$XDG_DATA_HOME/applications`), which an AppImage run from wherever it was saved has
+//! none of — so Termina writes its own there as it starts, pointing at the AppImage, with
+//! the icon beside it in the user's hicolor theme. Written only when it would change: the
+//! AppImage moved, or a newer one with another icon. `TryExec` names the AppImage, so a
+//! launcher hides the entry once it is deleted or moved, until it is run from its new place.
+
+import std.env.{ lookup }
+import std.io.{ read_file, write_file, create_dir_all }
+
+/// What the desktop knows Termina's windows by — macOS's bundle identifier, its hyphen an
+/// underscore, as desktop ids have them.
+pub const APP_ID: string = "dev.lyra_language.Termina"
+
+/// When Termina runs from an AppImage (`$APPIMAGE` its path, `$APPDIR` where it is mounted):
+/// its desktop entry and icon written to the user's own data directory
+/// (`$XDG_DATA_HOME`, else `~/.local/share`), each only if it is not already what it would
+/// be. What was written, for a caller to say; nothing outside an AppImage.
+pub let install_desktop_entry = () -> []string => {
+  let Some(image) = lookup("APPIMAGE") else { return [] }
+  let Some(appdir) = lookup("APPDIR") else { return [] }
+  let Some(data) = data_home() else { return [] }
+  var wrote: []string = []
+  let entry_dir = "${data}/applications"
+  if put("${entry_dir}/${APP_ID}.desktop", entry_dir, desktop_entry(image)) {
+    wrote.push("${entry_dir}/${APP_ID}.desktop")
+  }
+  // The icon is the AppImage's own, the art the Mac app's icon is made from.
+  if let Some(svg) = read_file("${appdir}/${APP_ID}.svg") {
+    let icon_dir = "${data}/icons/hicolor/scalable/apps"
+    if put(
+      "${icon_dir}/${APP_ID}.svg",
+      icon_dir,
+      svg
+    ) { wrote.push("${icon_dir}/${APP_ID}.svg") }
+  }
+  wrote
+}
+
+/// The desktop entry for the AppImage at `image`: launched by its path, hidden while
+/// nothing is there.
+pub let desktop_entry = pure (image: string) -> string => [
+  "[Desktop Entry]",
+  "Type=Application",
+  "Name=Termina",
+  "Comment=A terminal whose command line edits like a text editor",
+  "Exec=${exec_quoted(image)}",
+  "TryExec=${image}",
+  "Icon=${APP_ID}",
+  "Terminal=false",
+  "Categories=System;TerminalEmulator;",
+  "Keywords=shell;terminal;console;command;",
+  "StartupWMClass=${APP_ID}",
+  "",
+].join("\n")
+
+/// `path` as an `Exec` key's argument: in double quotes, its `"`, `` ` ``, `$` and `\`
+/// escaped with a backslash, as the Desktop Entry Specification asks of a quoted argument.
+/// A key's own `\` escapes then double those backslashes.
+pub let exec_quoted = pure (path: string) -> string => {
+  var out = ""
+  for c in path {
+    out = match c {
+      '"' => "${out}\\\\\"",
+      '`' => "${out}\\\\`",
+      '$' => "${out}\\\\$",
+      '\\' => "${out}\\\\\\\\",
+      _ => "${out}${c}",
+    }
+  }
+  "\"${out}\""
+}
+
+/// The user's data directory: `$XDG_DATA_HOME`, else `~/.local/share`; `None` with neither
+/// it nor a home.
+let data_home = () -> Maybe<string> => {
+  if let Some(d) = lookup("XDG_DATA_HOME") { if d != "" { return Some(d) } }
+  let Some(home) = lookup("HOME") else { return None }
+  if home == "" { None } else { Some("${home}/.local/share") }
+}
+
+/// `text` written to `path` in `dir` (made if missing) unless the file already holds it;
+/// whether it was written.
+let put = (path: string, dir: string, text: string) -> bool => {
+  if read_file(path) == Some(text) { return false }
+  create_dir_all(dir) && write_file(path, text)
+}
