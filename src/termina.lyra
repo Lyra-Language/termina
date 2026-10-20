@@ -24,6 +24,7 @@ import bindings.imgui.{
   begin_frame,
   end_frame,
   destroy_host,
+  set_redraw,
   set_window_title,
   font_file,
   merge_font_file,
@@ -140,194 +141,256 @@ let main = () -> void => {
   } else {
     None
   }
-  let menus = installed != None
   // The user's settings, the font families on offer, and the faces and theme made of them.
   let settings_file = settings_path()
-  var settings = load_settings(settings_file)
-  var saved = settings_to_json(settings)
+  let settings = load_settings(settings_file)
   let families = font_families()
-  var fonts = load_fonts(host, families, settings)
-  var theme = theme_of(settings)
-  // The Settings tab: whether it is open, to be made the one shown, or the one shown.
-  var settings_open = false
-  var select_settings = false
-  var on_settings = false
-  // What is typed in the settings window to save the colors as a theme.
-  var theme_name_typed = ""
-  let home = lookup("HOME") ?? ""
   // A program given on the command line runs in the first tab instead of the shell,
   // without the shell's integration, where Termina was started; tabs opened after it run
   // the shell.
   let given = program_args().slice(1, program_args().len())
-  var next_id = 0
   var sessions: []Session = []
-  match open_session(given, if given.len() > 0 { lookup("PWD") } else { None }, next_id) {
+  match open_session(given, if given.len() > 0 { lookup("PWD") } else { None }, 0) {
     Some(s) => sessions.push(s),
     None => {},
   }
-  next_id += 1
-  var active = 0
-  // A tab to show, chosen by a key or opened, for the tab bar to select this frame.
-  var select: Maybe<i64> = Some(0)
-  var title = ""
-  while sessions.len() > 0 && begin_frame(host) {
-    // Every tab is read every frame, shown or not, so that a program writing in a hidden
-    // one never waits on a full terminal.
-    for k in 0..<sessions.len() { sessions[k].step(k == active) }
-    // A tab whose program has ended closes.
-    var k = sessions.len() - 1
-    while k >= 0 {
-      if !sessions[k].alive {
-        close_session(sessions[k])
-        sessions = [...sessions.slice(0, k), ...sessions.slice(k + 1, sessions.len())]
-        if active > k || active >= sessions.len() { active = (active - 1).max(0) }
-        select = Some(active)
-      }
-      k -= 1
-    }
-    if sessions.len() == 0 { break }
+  app = Some(App {
+    host: host,
+    installed: installed,
+    menus: installed != None,
+    settings_file: settings_file,
+    settings: settings,
+    saved: settings_to_json(settings),
+    families: families,
+    fonts: load_fonts(host, families, settings),
+    theme: theme_of(settings),
+    home: lookup("HOME") ?? "",
+    sessions: sessions,
+  })
+  // The window's contents follow its edge as it is resized, rather than stretching.
+  unsafe { set_redraw(host, redraw) }
+  while frame() {}
+  if let Some(a) = app { for s in a.sessions { close_session(s) } }
+  destroy_host(host)
+}
 
-    var command = tab_command(active, sessions.len(), menus)
-    // The menus' choices: the Mac's bar, or off macOS the one Termina draws — one tree, its
-    // items carried out the same. Edit's would-do-nothing items are greyed either way.
-    let can = [a in EDIT_ACTIONS | sessions[active].can(a) | a]
-    let tree = [
-      menus_view(tab_labels(sessions, home), active, can, menus, is_maximized(host))
-    ]
-    let chosen = match installed {
-      Some(choices) => {
-        sync_native(tree)
-        native_choices(choices)
-      },
-      None => draw_menu_bar(tree, (_) => {}),
-    }
-    for choice in chosen {
-      match choice {
-        // Edit's items act on the tab shown.
-        Edit(a) => sessions[active].edit_action(a),
-        QuitApp => request_quit(host),
-        MinimizeWindow => minimize(host),
-        ToggleMaximized => toggle_maximized(host),
-        _ => match tab_command_of(choice, active, sessions.len()) {
-          NoCommand => {},
-          c => { command = c },
-        },
-      }
-    }
-    match command {
-      NewTab => {
-        match open_session([], directory(sessions[active]), next_id) {
-          Some(s) => {
-            sessions.push(s)
-            active = sessions.len() - 1
-            select = Some(active)
-          },
-          None => {},
-        }
-        next_id += 1
-      },
-      // ⌘W on the Settings tab closes it, not the terminal behind it.
-      CloseTab => if on_settings { settings_open = false } else { sessions[active].request_close() },
-      ShowTab(n) => {
-        active = n
-        select = Some(n)
-      },
-      OpenSettings => {
-        settings_open = true
-        select_settings = true
-      },
-      // A point at a time, within the settings' range; kept as any setting is.
-      FontBigger => { settings.font_size = (settings.font_size + 1.0).min(FONT_SIZE_RANGE.1) },
-      FontSmaller => { settings.font_size = (settings.font_size - 1.0).max(FONT_SIZE_RANGE.0) },
-      FontDefault => { settings.font_size = defaults().font_size },
-      NoCommand => {},
-    }
-    // The faces are drawn at the size pushed: a new one takes at once.
-    fonts.size = settings.font_size
+/// What the window keeps from one frame to the next: everything [frame] reads and changes.
+/// A module-level value, as the host draws frames of its own while the window is resized
+/// ([redraw]) — called back from C, which keeps no closure's captures.
+struct App {
+  host: Host,
+  /// The Mac's own menu bar's items, when it has one (`menus`); off macOS Termina draws
+  /// the bar.
+  installed: Maybe<[]MenuChoice>,
+  menus: bool,
+  settings_file: string,
+  settings: Settings,
+  /// The settings as last written to the file.
+  saved: string,
+  families: []FontFamily,
+  fonts: Fonts,
+  theme: Theme,
+  /// The Settings tab: whether it is open, to be made the one shown, or the one shown.
+  settings_open: bool = false,
+  select_settings: bool = false,
+  on_settings: bool = false,
+  /// What is typed in the settings window to save the colors as a theme.
+  theme_name_typed: string = "",
+  home: string,
+  sessions: []Session,
+  /// The next tab's id; the first tab's is 0.
+  next_id: i64 = 1,
+  active: i64 = 0,
+  /// A tab to show, chosen by a key or opened, for the tab bar to select this frame.
+  select: Maybe<i64> = Some(0),
+  title: string = "",
+}
 
-    // The window: the tabs, and the one shown — a terminal, or the settings, whose change
-    // takes at once and is kept once the mouse is let go (not every frame of a slider's
-    // drag).
-    let faces_were = "${settings.font_family}|${settings.font_file}"
-    let (bar, ask) = draw_window(
-      sessions,
-      active,
-      select,
-      fonts,
-      theme,
-      home,
-      command,
-      menus,
-      SettingsTab { open: settings_open, select: select_settings },
-      settings,
-      families,
-      theme_name_typed
+/// The window's state, once `main` has made it.
+var app: Maybe<App> = None
+
+/// A frame the host draws while the window is resized.
+let redraw = () -> void => { let _ = frame() }
+
+/// One frame of the window: the tabs read, the menus and keys carried out, the window
+/// drawn. Whether the window goes on — a tab left, and no quit asked.
+let frame = () -> bool => {
+  let Some(before) = app else { return false }
+  if before.sessions.len() == 0 || !begin_frame(before.host) { return false }
+  // Read again: frames drawn during a resize, inside begin_frame's pump, changed it.
+  let Some(current) = app else { return false }
+  var win = current
+  let going = frame_of(win)
+  app = Some(win)
+  going
+}
+
+/// [frame]'s work on `win`; whether the window goes on.
+let frame_of = (win: mut App) -> bool => {
+  // Every tab is read every frame, shown or not, so that a program writing in a hidden
+  // one never waits on a full terminal.
+  for k in 0..<win.sessions.len() { win.sessions[k].step(k == win.active) }
+  // A tab whose program has ended closes.
+  var k = win.sessions.len() - 1
+  while k >= 0 {
+    if !win.sessions[k].alive {
+      close_session(win.sessions[k])
+      win.sessions = [
+        ...win.sessions.slice(0, k),
+        ...win.sessions.slice(k + 1, win.sessions.len())
+      ]
+      if win.active > k || win.active >= win.sessions.len() { win.active = (win.active - 1).max(0) }
+      win.select = Some(win.active)
+    }
+    k -= 1
+  }
+  if win.sessions.len() == 0 { return false }
+
+  var command = tab_command(win.active, win.sessions.len(), win.menus)
+  // The menus' choices: the Mac's bar, or off macOS the one Termina draws — one tree, its
+  // items carried out the same. Edit's would-do-nothing items are greyed either way.
+  let can = [a in EDIT_ACTIONS | win.sessions[win.active].can(a) | a]
+  let tree = [
+    menus_view(
+      tab_labels(win.sessions, win.home),
+      win.active,
+      can,
+      win.menus,
+      is_maximized(win.host)
     )
-    select_settings = false
-    if bar.settings_closed { settings_open = false }
-    on_settings = bar.settings_shown && settings_open
-    if ask.choose_file {
-      let _ = show_open_dialog(
-        host,
-        FONT_DIALOG,
-        [FileFilter { name: "Fonts", extensions: "ttf;otf;ttc" }]
-      )
+  ]
+  let chosen = match win.installed {
+    Some(choices) => {
+      sync_native(tree)
+      native_choices(choices)
+    },
+    None => draw_menu_bar(tree, (_) => {}),
+  }
+  for choice in chosen {
+    match choice {
+      // Edit's items act on the tab shown.
+      Edit(a) => win.sessions[win.active].edit_action(a),
+      QuitApp => request_quit(win.host),
+      MinimizeWindow => minimize(win.host),
+      ToggleMaximized => toggle_maximized(win.host),
+      _ => match tab_command_of(choice, win.active, win.sessions.len()) {
+        NoCommand => {},
+        c => { command = c },
+      },
     }
-    // A font file chosen in the system's dialog becomes the font.
-    match poll_dialog(host) {
-      Some(Chosen(tag, path)) => if tag == FONT_DIALOG { settings.font_file = path },
-      _ => {},
-    }
-    if ask.changed || "${settings.font_family}|${settings.font_file}" != faces_were {
-      theme = theme_of(settings)
-      if "${settings.font_family}|${settings.font_file}" != faces_were {
-        fonts = load_fonts(host, families, settings)
-      }
-      fonts.size = settings.font_size
-    }
-    let now_json = settings_to_json(settings)
-    if now_json != saved && !is_mouse_down(0) {
-      let _ = save_settings(settings_file, settings)
-      saved = now_json
-    }
-    select = None
-    active = bar.shown
-    match bar.closing {
-      Some(n) => sessions[n].request_close(),
-      None => {},
-    }
-    // Tabs dragged into a new order: the list put in it, the shown tab still the same one.
-    if !in_order(bar.order) {
-      var moved: []Session = []
-      for old in bar.order { moved.push(sessions[old]) }
-      sessions = moved
-      for i in 0..<bar.order.len() {
-        if bar.order[i] == active {
-          active = i
-        }
-      }
-    }
-    if bar.add {
-      match open_session([], directory(sessions[active]), next_id) {
+  }
+  match command {
+    NewTab => {
+      match open_session([], directory(win.sessions[win.active]), win.next_id) {
         Some(s) => {
-          sessions.push(s)
-          active = sessions.len() - 1
-          select = Some(active)
+          win.sessions.push(s)
+          win.active = win.sessions.len() - 1
+          win.select = Some(win.active)
         },
         None => {},
       }
-      next_id += 1
-    }
-    let now = tab_title(sessions[active], home)
-    if now != title {
-      title = now
-      set_window_title(host, title)
-    }
-    let clear = clear_color(theme)
-    end_frame(host, clear.0, clear.1, clear.2)
+      win.next_id += 1
+    },
+    // ⌘W on the Settings tab closes it, not the terminal behind it.
+    CloseTab => if win.on_settings { win.settings_open = false } else { win.sessions[win.active].request_close() },
+    ShowTab(n) => {
+      win.active = n
+      win.select = Some(n)
+    },
+    OpenSettings => {
+      win.settings_open = true
+      win.select_settings = true
+    },
+    // A point at a time, within the settings' range; kept as any setting is.
+    FontBigger => { win.settings.font_size = (win.settings.font_size + 1.0).min(FONT_SIZE_RANGE.1) },
+    FontSmaller => { win.settings.font_size = (win.settings.font_size - 1.0).max(FONT_SIZE_RANGE.0) },
+    FontDefault => { win.settings.font_size = defaults().font_size },
+    NoCommand => {},
   }
-  for s in sessions { close_session(s) }
-  destroy_host(host)
+  // The faces are drawn at the size pushed: a new one takes at once.
+  win.fonts.size = win.settings.font_size
+
+  // The window: the tabs, and the one shown — a terminal, or the settings, whose change
+  // takes at once and is kept once the mouse is let go (not every frame of a slider's
+  // drag).
+  let faces_were = "${win.settings.font_family}|${win.settings.font_file}"
+  let (bar, ask) = draw_window(
+    win.sessions,
+    win.active,
+    win.select,
+    win.fonts,
+    win.theme,
+    win.home,
+    command,
+    win.menus,
+    SettingsTab { open: win.settings_open, select: win.select_settings },
+    win.settings,
+    win.families,
+    win.theme_name_typed
+  )
+  win.select_settings = false
+  if bar.settings_closed { win.settings_open = false }
+  win.on_settings = bar.settings_shown && win.settings_open
+  if ask.choose_file {
+    let _ = show_open_dialog(
+      win.host,
+      FONT_DIALOG,
+      [FileFilter { name: "Fonts", extensions: "ttf;otf;ttc" }]
+    )
+  }
+  // A font file chosen in the system's dialog becomes the font.
+  match poll_dialog(win.host) {
+    Some(Chosen(tag, path)) => if tag == FONT_DIALOG { win.settings.font_file = path },
+    _ => {},
+  }
+  if ask.changed || "${win.settings.font_family}|${win.settings.font_file}" != faces_were {
+    win.theme = theme_of(win.settings)
+    if "${win.settings.font_family}|${win.settings.font_file}" != faces_were {
+      win.fonts = load_fonts(win.host, win.families, win.settings)
+    }
+    win.fonts.size = win.settings.font_size
+  }
+  let now_json = settings_to_json(win.settings)
+  if now_json != win.saved && !is_mouse_down(0) {
+    let _ = save_settings(win.settings_file, win.settings)
+    win.saved = now_json
+  }
+  win.select = None
+  win.active = bar.shown
+  match bar.closing {
+    Some(n) => win.sessions[n].request_close(),
+    None => {},
+  }
+  // Tabs dragged into a new order: the list put in it, the shown tab still the same one.
+  if !in_order(bar.order) {
+    var moved: []Session = []
+    for old in bar.order { moved.push(win.sessions[old]) }
+    win.sessions = moved
+    for i in 0..<bar.order.len() {
+      if bar.order[i] == win.active {
+        win.active = i
+      }
+    }
+  }
+  if bar.add {
+    match open_session([], directory(win.sessions[win.active]), win.next_id) {
+      Some(s) => {
+        win.sessions.push(s)
+        win.active = win.sessions.len() - 1
+        win.select = Some(win.active)
+      },
+      None => {},
+    }
+    win.next_id += 1
+  }
+  let now = tab_title(win.sessions[win.active], win.home)
+  if now != win.title {
+    win.title = now
+    set_window_title(win.host, win.title)
+  }
+  let clear = clear_color(win.theme)
+  end_frame(win.host, clear.0, clear.1, clear.2)
+  true
 }
 
 /// The window: the tab bar, and the tab shown below it, drawn and given the keys — unless a

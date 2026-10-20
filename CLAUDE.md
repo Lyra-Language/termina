@@ -85,7 +85,7 @@ shell ⇄ bindings.pty ──bytes──▶ vt.Parser ──[]Action──▶ vt
 
 | file | what |
 |---|---|
-| `src/termina.lyra` | `main`: the ImGui host, the frame loop, the tabs and their bar, fonts |
+| `src/termina.lyra` | `main`: the ImGui host and the window's state (`App`), and `frame`: the tabs read, the menus and keys carried out, the window drawn; fonts |
 | `package.sh`, `tools/sdl3.sh` | a release archive with SDL3 inside — the Mac app signed and notarized when given an identity and key — and SDL3 built from source for it (Releases, above) |
 | `assets/` | the icon: `termina.svg` the source; `Termina.icns` (the app's) and `termina.png` made from it (`assets/README.md`); `Termina.entitlements`, what the signed app's commands may ask for (Releases, above) |
 | `src/session/session.lyra` | one tab: its PTY, screen, `Mode` and command line; read each frame, drawn and given keys when shown |
@@ -112,6 +112,13 @@ shell ⇄ bindings.pty ──bytes──▶ vt.Parser ──[]Action──▶ vt
 | `src/vttest.lyra` | the checks: byte strings against actions and screens, the editor on text, real programs, zsh and bash on a PTY (each skipped, and said so, where not installed) |
 | `src/uitest.lyra` | the command line on a headless host: injected input, the editor checked after |
 
+- **A frame is `frame()`, over the module-level `app`**, called by `main`'s loop and by the
+  host while the window is resized (`bindings.imgui`'s `set_redraw`, a `pub extern` called in
+  `unsafe`), so the contents follow the edge as it is dragged — on macOS AppKit's
+  resize loop holds the main thread inside `begin_frame` until the mouse is let go. **`app`
+  is read after `begin_frame`**: the frames drawn during a resize run inside it, and a copy
+  taken before would undo them, the terminals' parsed screens included. State a frame keeps
+  is a field of `App`, never a local of `main`.
 - **The parser recognises, the screen acts.** Neither reads the other's input: the parser is
   tested on bytes alone, the screen on actions. A new sequence is a `Screen.csi`/`esc`/`osc`
   case and a `vttest` line.
