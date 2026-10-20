@@ -47,6 +47,20 @@
   const TAB_COLORS = [("Tab", "tab"), ("Under the pointer", "tab_hovered"), ("Shown", "tab_selected")]
   const COMMAND_LINE_COLORS = [("Text", "editor_text"), ("Completion menu", "menu"), ("Chosen completion", "menu_chosen")]
 
+  /// A group of colors under its heading: each by label and field.
+  struct ColorGroup {
+    heading: string,
+    colors: [](string, string),
+  }
+
+  /// The groups, drawn side by side.
+  const COLOR_GROUPS = [
+    ColorGroup { heading: "Terminal", colors: COLORS },
+    ColorGroup { heading: "Sections", colors: SECTION_COLORS },
+    ColorGroup { heading: "Tabs", colors: TAB_COLORS },
+    ColorGroup { heading: "Command line", colors: COMMAND_LINE_COLORS },
+  ]
+
   /// Whether the theme in use is one the user saved.
   let is_saved = pure (s: Settings) -> bool => saved_colors(s.themes, s.theme_name) != None
 </script>
@@ -55,79 +69,96 @@
      save a theme as. -->
 <component name="settings_view" props={{s: Settings, families: []FontFamily, typed: string}} event={SettingsEvent}>
   <style>
+    Group.settings { gap: 18 }
     Text.group { color: #9aa0a6 }
+    Form { gap: 12 }
+    Row.columns { gap: 32 }
   </style>
-  <SeparatorText>Font</SeparatorText>
-  <Form>
-    <Field label="Family">
-      <Combo label="##family" id="combo Family" preview={family_shown(s)}>
-        <for each={f in families}>
-          <Selectable selected={s.font_file == "" && f.name == s.font_family} on_select={UseFamily(f.name)}>{f.name}</Selectable>
-        </for>
-      </Combo>
-      <Button id="button Other Font File" on_click={ChooseFontFile}>Other Font File…</Button>
-    </Field>
-    <Field label="Size">
-      <Slider label="##size" id="slider Size" value={s.font_size} min={FONT_SIZE_RANGE.0} max={FONT_SIZE_RANGE.1} format="%.0f pt" on_change={SetFontSize}/>
-    </Field>
-    <Field label="Line spacing">
-      <Slider label="##spacing" id="slider Line spacing" value={s.line_spacing} min={LINE_SPACING_RANGE.0} max={LINE_SPACING_RANGE.1} format="%.2f" on_change={SetLineSpacing}/>
-    </Field>
-  </Form>
 
-  <SeparatorText>Colors</SeparatorText>
-  <Form>
-    <Field label="Theme">
-      <Combo label="##theme" id="combo Theme" preview={s.theme_name}>
-        <for each={name in THEME_NAMES}>
-          <Selectable selected={name == s.theme_name} on_select={UseTheme(name)}>{name}</Selectable>
-        </for>
-        <if test={s.themes.len() > 0}>
-          <Separator/>
-        </if>
-        <for each={t in s.themes}>
-          <Selectable id="saved {t.name}" selected={t.name == s.theme_name} on_select={UseSavedTheme(t.name)}>{t.name}</Selectable>
-        </for>
-      </Combo>
-    </Field>
-    <Field label="Theme name">
-      <InputText label="##themename" id="field Theme name" hint="Theme name" value={typed} on_change={NameTheme} style="width: 14em"/>
-      <Button id="button Save Theme As" enabled={can_save_as(typed)} on_click={SaveThemeAs}>Save Theme As…</Button>
-      <if test={is_saved(s)}>
-        <Button id="button Delete Theme" on_click={DeleteSavedTheme}>Delete</Button>
-      </if>
-    </Field>
-    <for each={c in COLORS}>
-      <Field label={c.0}><color s={s} field={c.1}/></Field>
-    </for>
-    <Text class="group">Sections</Text>
-    <for each={c in SECTION_COLORS}>
-      <Field label={c.0}><color s={s} field={c.1}/></Field>
-    </for>
-    <Text class="group">Tabs</Text>
-    <for each={c in TAB_COLORS}>
-      <Field label={c.0}><color s={s} field={c.1}/></Field>
-    </for>
-    <Text class="group">Command line</Text>
-    <for each={c in COMMAND_LINE_COLORS}>
-      <Field label={c.0}><color s={s} field={c.1}/></Field>
-    </for>
-  </Form>
-  <Text class="group">ANSI colors</Text>
-  <Row>
-    <for each={k in 0..<8}>
-      <ansi s={s} k={k}/>
-    </for>
-  </Row>
-  <Row>
-    <for each={k in 8..<16}>
-      <ansi s={s} k={k}/>
-    </for>
-  </Row>
-  <Checkbox id="checkbox Bold is bright" checked={s.bold_is_bright} on_toggle={ToggleBoldBright}>Draw bold text in bright colors</Checkbox>
+  <Group class="settings">
+    <Group>
+      <SeparatorText>Font</SeparatorText>
+      <Form>
+        <Field label="Family">
+          <Combo label="##family" id="combo Family" preview={family_shown(s)}>
+            <for each={f in families}>
+              <Selectable selected={s.font_file == "" && f.name == s.font_family} on_select={UseFamily(f.name)}>{f.name}</Selectable>
+            </for>
+          </Combo>
+          <Button id="button Other Font File" on_click={ChooseFontFile}>Other Font File…</Button>
+        </Field>
+        <Field label="Size">
+          <Slider label="##size" id="slider Size" value={s.font_size} min={FONT_SIZE_RANGE.0} max={FONT_SIZE_RANGE.1} format="%.0f pt" on_change={SetFontSize}/>
+        </Field>
+        <Field label="Line spacing">
+          <Slider label="##spacing" id="slider Line spacing" value={s.line_spacing} min={LINE_SPACING_RANGE.0} max={LINE_SPACING_RANGE.1} format="%.2f" on_change={SetLineSpacing}/>
+        </Field>
+      </Form>
+    </Group>
 
-  <Separator/>
-  <Button id="button Reset" on_click={ResetSettings}>Reset to Defaults</Button>
+    <Group>
+      <SeparatorText>Colors</SeparatorText>
+      <Form>
+        <Field label="Theme">
+          <Combo label="##theme" id="combo Theme" preview={s.theme_name}>
+            <for each={name in THEME_NAMES}>
+              <Selectable selected={name == s.theme_name} on_select={UseTheme(name)}>{name}</Selectable>
+            </for>
+            <if test={s.themes.len() > 0}>
+              <Separator/>
+            </if>
+            <for each={t in s.themes}>
+              <Selectable id="saved {t.name}" selected={t.name == s.theme_name} on_select={UseSavedTheme(t.name)}>{t.name}</Selectable>
+            </for>
+          </Combo>
+        </Field>
+        <Field label="Theme name">
+          <InputText label="##themename" id="field Theme name" hint="Theme name" value={typed} on_change={NameTheme} style="width: 14em"/>
+          <Button id="button Save Theme As" enabled={can_save_as(typed)} on_click={SaveThemeAs}>Save Theme As…</Button>
+          <if test={is_saved(s)}>
+            <Button id="button Delete Theme" on_click={DeleteSavedTheme}>Delete</Button>
+          </if>
+        </Field>
+      </Form>
+    </Group>
+
+    <Group>
+      <!-- The colors in their groups, side by side as the window's width allows, wrapping
+           to a new line when it does not: each its heading over a form of its own, its
+           labels lined up in their own column. -->
+      <Row class="columns" wrap>
+        <for each={g in COLOR_GROUPS}>
+          <Group>
+            <Text class="group">{g.heading}</Text>
+            <Form>
+              <for each={c in g.colors}>
+                <Field label={c.0}><color s={s} field={c.1}/></Field>
+              </for>
+            </Form>
+          </Group>
+        </for>
+
+        <Group>
+          <Text class="group">ANSI colors</Text>
+          <Row>
+            <for each={k in 0..<8}>
+              <ansi s={s} k={k}/>
+            </for>
+          </Row>
+          <Row>
+            <for each={k in 8..<16}>
+              <ansi s={s} k={k}/>
+            </for>
+          </Row>
+          <Checkbox id="checkbox Bold is bright" checked={s.bold_is_bright} on_toggle={ToggleBoldBright}>Draw bold text in bright colors</Checkbox>
+        </Group>
+      </Row>
+    </Group>
+
+    <Separator/>
+
+    <Button id="button Reset" on_click={ResetSettings}>Reset to Defaults</Button>
+  </Group>
 </component>
 
 <!-- A color's swatch, the field of the settings' colors it edits named. -->

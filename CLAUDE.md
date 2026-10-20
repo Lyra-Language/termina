@@ -233,7 +233,9 @@ shell ⇄ bindings.pty ──bytes──▶ vt.Parser ──[]Action──▶ vt
   the sliders' values (the size made whole points), and each color by its field's name
   (`SetColor("tab_hovered", …)`, `settings.color_named`/`with_color`) or its ANSI index
   (`with_ansi`, into an array of its own — the one a theme's colors hold is shared by
-  every copy of them). An edited color makes the theme `Custom`. Settings… opens a
+  every copy of them). An edited color makes the theme `Custom`. The color groups stand side
+  by side as the width allows (a wrapping `Row` of `Group`s, each its heading over a form
+  of its own), wrapping to new lines in a narrow window; uitest draws it at both widths. Settings… opens a
   Settings tab at the tab bar's right end, out of the tabs' order (`TAB_ITEM_FLAGS_TRAILING`,
   as `+` is), and shows it; it fills the tabs' area in the interface's font. Its × or ⌘W
   while it is shown closes it; a terminal's tab chosen by a key or a click takes over. The

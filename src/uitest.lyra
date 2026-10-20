@@ -1044,12 +1044,34 @@ let check_settings = (host: Host) -> i64 => {
   var changed = false
   for _ in 0..<3 { changed = settings_frame(host, s, here) }
   failed += check("the settings draw, unchanged", "${changed}", "false")
-  editors_seen = []
-  let _ = editors_frame(host, here)
+  // Two frames at each width: a wrapping row decides by the widths its children had the
+  // frame before.
+  for _ in 0..<2 { let _ = editors_frame(host, here, 1400.0) }
   failed += check(
     "the settings' sliders and colors",
     editors_seen.join(","),
     "slider Size,slider Line spacing,color fg,color bg,color cursor,color selection,color input,color output,color input_text,color tab,color tab_hovered,color tab_selected,color editor_text,color menu,color menu_chosen,${[k in 0..<16 | "color ansi ${k}"].join(",")}"
+  )
+  // Wide, the color groups side by side: each group's first swatch on one line, left to
+  // right.
+  let firsts = [id in FIRST_SWATCHES | editor_at(id)]
+  failed += check(
+    "the color groups side by side ${[f in firsts | "(${f.x},${f.y})"].join(" ")}",
+    "${[k in 1..<firsts.len() | (firsts[k].y - firsts[0].y).abs() < 0.5 && firsts[k].x > firsts[k - 1].x + 40.0 | 1].len()}",
+    "3"
+  )
+  // Narrow, they wrap: on more than one line, and no swatch past the window's right edge.
+  for _ in 0..<2 { let _ = editors_frame(host, here, NARROW) }
+  let narrow = [id in FIRST_SWATCHES | editor_at(id)]
+  failed += check(
+    "the color groups wrap ${[f in narrow | "(${f.x},${f.y})"].join(" ")}",
+    "${[k in 1..<narrow.len() | narrow[k].y > narrow[0].y + 1.0 | 1].len() > 0}",
+    "true"
+  )
+  failed += check(
+    "no swatch cut off",
+    [i in 0..<editors_seen.len() | editors_seen[i].starts_with("color ") && editors_right[i] > NARROW | editors_seen[i]].join(","),
+    ""
   )
 
   // The tab's events, carried out.
@@ -1122,18 +1144,43 @@ let check_settings = (host: Host) -> i64 => {
   failed
 }
 
-/// The sliders and color editors the settings drew, by id, in the order drawn.
+/// The sliders and color editors the settings drew, by id, in the order drawn, and where
+/// each one's top left corner and right edge were.
 var editors_seen: []string = []
+var editors_at: []Vec2 = []
+var editors_right: []f32 = []
 
-/// One frame of the settings' markup alone, noting each slider and color editor.
-let editors_frame = (host: Host, families: []FontFamily) -> bool => {
+/// Each color group's first swatch.
+const FIRST_SWATCHES = ["color fg", "color input", "color tab", "color editor_text"]
+
+/// A window too narrow for the color groups side by side.
+const NARROW: f32 = 360.0
+
+/// Where the settings drew the editor `id`; far off when it drew none.
+let editor_at = (id: string) -> Vec2 => {
+  for i, seen in editors_seen { if seen == id { return editors_at[i] } }
+  Vec2 { x: -1.0, y: -1.0 }
+}
+
+let note_editor = (id: string) -> void => {
+  editors_seen.push(id)
+  editors_at.push(get_item_rect_min())
+  editors_right.push(get_item_rect_max().x)
+}
+
+/// One frame of the settings' markup alone in a window `width` wide, noting each slider and
+/// color editor.
+let editors_frame = (host: Host, families: []FontFamily, width: f32) -> bool => {
+  editors_seen = []
+  editors_at = []
+  editors_right = []
   if !begin_frame(host) { return false }
   set_next_window_pos(Vec2 { x: 0.0, y: 0.0 })
-  set_next_window_size(Vec2 { x: 800.0, y: 400.0 })
+  set_next_window_size(Vec2 { x: width, y: 900.0 })
   let _ = begin("editors", WINDOW_FLAGS_NO_DECORATION)
   let _ = render([settings_view(defaults(), families, "")], (node) => match node {
-    Slider(_) => editors_seen.push(node_id(node)),
-    ColorEdit(_) => editors_seen.push(node_id(node)),
+    Slider(_) => note_editor(node_id(node)),
+    ColorEdit(_) => note_editor(node_id(node)),
     _ => {},
   })
   end()
