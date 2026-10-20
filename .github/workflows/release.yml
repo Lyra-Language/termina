@@ -245,7 +245,9 @@ jobs:
             if grep -q 'macos.*— notarized' archives/built-with-*.txt; then
               echo "The Mac app is signed with a Developer ID and notarized by Apple."
             else
-              echo "The Mac app is not notarized: open it the first time with right-click ▸ Open."
+              echo "The Mac app is not notarized, so macOS refuses it the first time: open it,"
+              echo "then choose Open Anyway in System Settings ▸ Privacy & Security, and open it"
+              echo "again. (Since macOS 15, right-click ▸ Open no longer gets past Gatekeeper.)"
             fi
             echo "On Linux, make the AppImage executable and run it"
             echo "(\`chmod +x Termina-*.AppImage && ./Termina-*.AppImage\`), or unpack the"
