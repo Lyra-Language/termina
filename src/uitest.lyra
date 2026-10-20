@@ -151,7 +151,7 @@ import settings.{
   family_for,
   file_family,
   font_families,
-  fallback_fonts,
+  cjk_fallback,
   Settings,
   Colours,
   FontFamily,
@@ -812,19 +812,16 @@ let spot = (label: string) -> Maybe<Vec2> => {
 }
 
 // A glyph the family lacks — 中 in SF Mono or DejaVu Sans Mono — comes from a fallback font
-// merged into it. Skipped where the machine has no family or no fallback.
+// merged into it. Skipped where the machine has no family or no CJK fallback (DejaVu Sans,
+// the other fallback, has no CJK).
 let check_fallback_fonts = (host: Host) -> i64 => {
   let families = font_families()
-  let fallbacks = fallback_fonts()
-  if families.len() == 0 || fallbacks.len() == 0 { return 0 }
+  let Some(cjk) = cjk_fallback() else { return 0 }
+  if families.len() == 0 { return 0 }
   let Some(font) = font_file(host, families[0].regular, 14.0) else { return 0 }
   var failed = 0
-  failed += check(
-    "a fallback merged",
-    "${merge_font_file(host, font, fallbacks[0])}",
-    "true"
-  )
-  failed += check("merged again", "${merge_font_file(host, font, fallbacks[0])}", "true")
+  failed += check("a fallback merged", "${merge_font_file(host, font, cjk)}", "true")
+  failed += check("merged again", "${merge_font_file(host, font, cjk)}", "true")
   failed += check(
     "a missing file",
     "${merge_font_file(host, font, "/nonexistent/font.ttf")}",

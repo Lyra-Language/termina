@@ -79,7 +79,9 @@ jobs:
           sudo grep -rlE 'dl\.google\.com|packages\.microsoft\.com' \
             /etc/apt/sources.list.d/ 2>/dev/null | xargs -r sudo rm -f
           sudo apt-get update
+          # fonts-noto-cjk: Termina's CJK fallback, which uitest merges and draws from.
           sudo apt-get install -y clang cmake ninja-build pkg-config patchelf fonts-dejavu-core \
+            fonts-noto-cjk \
             libx11-dev libxext-dev libxrandr-dev libxcursor-dev libxfixes-dev libxi-dev \
             libxss-dev libxtst-dev libxkbcommon-dev libwayland-dev wayland-protocols \
             libdecor-0-dev libegl1-mesa-dev libgl1-mesa-dev libgles2-mesa-dev libdrm-dev \

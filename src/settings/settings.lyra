@@ -578,11 +578,19 @@ pub let family_named = pure (
 pub let fallback_fonts = () -> []string => {
   var out: []string = []
   for group in FALLBACKS {
-    var found = ""
-    for path in group { if found == "" && exists(path) { found = path } }
-    if found != "" { out.push(found) }
+    if let Some(found) = first_existing(group) { out.push(found) }
   }
   out
+}
+
+/// The fallback for Chinese, Japanese and Korean, if the machine has one — the first of
+/// [fallback_fonts] when it is there at all.
+pub let cjk_fallback = () -> Maybe<string> => first_existing(FALLBACKS[0])
+
+/// The first of `paths` that exists.
+let first_existing = (paths: []string) -> Maybe<string> => {
+  for path in paths { if exists(path) { return Some(path) } }
+  None
 }
 
 /// The fallback fonts, a group each, where macOS and the Linux distributions keep them.
