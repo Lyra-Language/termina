@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  What the hardened runtime lets Termina's commands do, signed into the app by package.sh.
+  Not Termina's own needs: macOS asks about a command's camera, microphone or Apple Events
+  as Termina's, the app that started it, and without these refuses a hardened app's
+  commands outright, with no prompt. Each has its reason in Info.plist (build.sh), which
+  the prompt shows.
+-->
+<plist version="1.0">
+<dict>
+  <!-- osascript, and scripts that drive Finder, Music and other apps. -->
+  <key>com.apple.security.automation.apple-events</key><true/>
+  <!-- Recording from the microphone: ffmpeg, sox. -->
+  <key>com.apple.security.device.audio-input</key><true/>
+  <!-- The camera: ffmpeg, imagesnap. -->
+  <key>com.apple.security.device.camera</key><true/>
+</dict>
+</plist>

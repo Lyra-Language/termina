@@ -14,7 +14,8 @@
 #   (`@rpath`, with `@executable_path/../Frameworks` its rpath), and the bundle signed —
 #   which a changed binary needs after install_name_tool:
 #   - with **`TERMINA_SIGN_IDENTITY`** (a Developer ID Application identity in a
-#     keychain), for the hardened runtime with a secure timestamp, as notarization asks;
+#     keychain), for the hardened runtime with a secure timestamp, as notarization asks,
+#     and the entitlements its commands need (`assets/Termina.entitlements`);
 #     and with **`TERMINA_NOTARY_KEY`**, `TERMINA_NOTARY_KEY_ID` and
 #     `TERMINA_NOTARY_ISSUER` too (an App Store Connect API key: the `.p8` file's path, its
 #     id, its issuer), notarized by Apple and the ticket stapled to the app, so it opens
@@ -68,9 +69,12 @@ case "$(uname -s)" in
     fi
     # The library first: a bundle's signature covers what is inside it, signed already.
     if [ -n "${TERMINA_SIGN_IDENTITY:-}" ]; then
-      for code in "$APP/Frameworks/libSDL3.0.dylib" "$STAGE/Termina.app"; do
-        codesign --force --options runtime --timestamp --sign "$TERMINA_SIGN_IDENTITY" "$code"
-      done
+      codesign --force --options runtime --timestamp --sign "$TERMINA_SIGN_IDENTITY" \
+        "$APP/Frameworks/libSDL3.0.dylib"
+      # The app with what its commands may ask for (assets/Termina.entitlements); the
+      # library with nothing, as entitlements belong to the program.
+      codesign --force --options runtime --timestamp --sign "$TERMINA_SIGN_IDENTITY" \
+        --entitlements "$ROOT/assets/Termina.entitlements" "$STAGE/Termina.app"
     else
       codesign --force --sign - "$APP/Frameworks/libSDL3.0.dylib"
       codesign --force --sign - "$STAGE/Termina.app"

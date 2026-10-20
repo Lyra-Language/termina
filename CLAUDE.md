@@ -64,6 +64,15 @@ git tag v0.2.0 && git push origin v0.2.0   # a release: built, checked and publi
   | `NOTARY_KEY_ID` | that key's id |
   | `NOTARY_ISSUER_ID` | the account's issuer id (App Store Connect ▸ Users and Access ▸ Integrations) |
 
+- **What the app may ask for is its commands'**: macOS asks about a child process's
+  camera, microphone, Apple Events, local network and folders as the app's that started it.
+  `assets/Termina.entitlements` (signed into the app, not SDL3) lets the hardened runtime
+  pass Apple Events, the microphone and the camera — without it they are refused with no
+  prompt — and `build.sh`'s `Info.plist` gives every prompt its reason (those three, Local
+  Network for `ssh` to a machine nearby, Desktop, Documents, Downloads, removable and
+  network volumes). Full Disk Access is the user's to grant. A new kind of access a command
+  needs is an entitlement there, if the hardened runtime gates it, and a usage string.
+
 ## Architecture
 
 ```
@@ -78,7 +87,7 @@ shell ⇄ bindings.pty ──bytes──▶ vt.Parser ──[]Action──▶ vt
 |---|---|
 | `src/termina.lyra` | `main`: the ImGui host, the frame loop, the tabs and their bar, fonts |
 | `package.sh`, `tools/sdl3.sh` | a release archive with SDL3 inside — the Mac app signed and notarized when given an identity and key — and SDL3 built from source for it (Releases, above) |
-| `assets/` | the icon: `termina.svg` the source; `Termina.icns` (the app's) and `termina.png` made from it (`assets/README.md`) |
+| `assets/` | the icon: `termina.svg` the source; `Termina.icns` (the app's) and `termina.png` made from it (`assets/README.md`); `Termina.entitlements`, what the signed app's commands may ask for (Releases, above) |
 | `src/session/session.lyra` | one tab: its PTY, screen, `Mode` and command line; read each frame, drawn and given keys when shown |
 | `src/ui/tabs.lyra` | the tab bar (reorderable, its order read back) and the tab shortcuts |
 | `src/menus_view.lui` | the menus as `.lui` markup, one tree for both bars; `menus_view.lyra` is generated from it (edit the `.lui`) |

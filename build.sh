@@ -47,6 +47,10 @@ if [ "$(uname -s)" = Darwin ]; then
   # keeps the file it started from (macOS kills a process whose code changes under it).
   cp "$ROOT/build/termina" "$APP/MacOS/termina.new"
   mv -f "$APP/MacOS/termina.new" "$APP/MacOS/termina"
+  # The usage strings are for the commands run in Termina, not Termina: macOS asks about a
+  # command's camera, microphone, Apple Events, local network or folders as the app's that
+  # started it, and shows the reason given here. The hardened runtime's half of the first
+  # three is assets/Termina.entitlements, signed in by package.sh.
   cat > "$APP/Info.plist" <<'PLIST'
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -59,6 +63,15 @@ if [ "$(uname -s)" = Darwin ]; then
   <key>CFBundleIconFile</key><string>Termina</string>
   <key>CFBundleShortVersionString</key><string>0.1</string>
   <key>NSHighResolutionCapable</key><true/>
+  <key>NSAppleEventsUsageDescription</key><string>A command run in Termina wants to control another app.</string>
+  <key>NSMicrophoneUsageDescription</key><string>A command run in Termina wants to use the microphone.</string>
+  <key>NSCameraUsageDescription</key><string>A command run in Termina wants to use the camera.</string>
+  <key>NSLocalNetworkUsageDescription</key><string>A command run in Termina, such as ssh, wants to reach a device on your local network.</string>
+  <key>NSDesktopFolderUsageDescription</key><string>A command run in Termina wants to use files in your Desktop folder.</string>
+  <key>NSDocumentsFolderUsageDescription</key><string>A command run in Termina wants to use files in your Documents folder.</string>
+  <key>NSDownloadsFolderUsageDescription</key><string>A command run in Termina wants to use files in your Downloads folder.</string>
+  <key>NSRemovableVolumesUsageDescription</key><string>A command run in Termina wants to use files on a removable volume.</string>
+  <key>NSNetworkVolumesUsageDescription</key><string>A command run in Termina wants to use files on a network volume.</string>
 </dict>
 </plist>
 PLIST
