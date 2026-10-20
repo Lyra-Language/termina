@@ -66,46 +66,46 @@ let is_saved = pure (s: Settings) -> bool => saved_colors(s.themes, s.theme_name
 /// From settings_view.lui, line 70.
 pub let settings_view = pure (s: Settings, families: []FontFamily, typed: string) -> Node<SettingsEvent> =>
   Component(settings_view_sheet, [
-    Group(GroupAttrs { class: "settings" }, [ // settings_view.lui:82
-      Group(GroupAttrs {}, [ // settings_view.lui:83
-        SeparatorText("Font"), // settings_view.lui:84
-        Form(FormAttrs {}, [ // settings_view.lui:85
-          Field(FieldAttrs { label: "Family" }, [ // settings_view.lui:86
-            Combo(ComboAttrs { label: "##family", id: "combo Family", preview: family_shown(s) }, [ // settings_view.lui:87
-              ...[f in families | Selectable(SelectableAttrs { label: "${f.name}", selected: s.font_file == "" && f.name == s.font_family, on_select: UseFamily(f.name) })], // settings_view.lui:88
+    Group(GroupAttrs { class: "settings" }, [ // settings_view.lui:83
+      Group(GroupAttrs {}, [ // settings_view.lui:84
+        SeparatorText("Font"), // settings_view.lui:85
+        Form(FormAttrs {}, [ // settings_view.lui:86
+          Field(FieldAttrs { label: "Family" }, [ // settings_view.lui:87
+            Combo(ComboAttrs { label: "##family", id: "combo Family", preview: family_shown(s) }, [ // settings_view.lui:88
+              ...[f in families | Selectable(SelectableAttrs { label: "${f.name}", selected: s.font_file == "" && f.name == s.font_family, on_select: UseFamily(f.name) })], // settings_view.lui:89
             ]),
-            Button(ButtonAttrs { label: "Other Font File…", id: "button Other Font File", on_click: ChooseFontFile }), // settings_view.lui:92
+            Button(ButtonAttrs { label: "Other Font File…", id: "button Other Font File", on_click: ChooseFontFile }), // settings_view.lui:98
           ]),
-          Field(FieldAttrs { label: "Size" }, [ // settings_view.lui:94
-            Slider(SliderAttrs { label: "##size", id: "slider Size", value: s.font_size, min: FONT_SIZE_RANGE.0, max: FONT_SIZE_RANGE.1, format: "%.0f pt", on_change: (value: f32) -> SettingsEvent => SetFontSize(value) }), // settings_view.lui:95
+          Field(FieldAttrs { label: "Size" }, [ // settings_view.lui:100
+            Slider(SliderAttrs { label: "##size", id: "slider Size", value: s.font_size, min: FONT_SIZE_RANGE.0, max: FONT_SIZE_RANGE.1, format: "%.0f pt", on_change: (value: f32) -> SettingsEvent => SetFontSize(value) }), // settings_view.lui:101
           ]),
-          Field(FieldAttrs { label: "Line spacing" }, [ // settings_view.lui:97
-            Slider(SliderAttrs { label: "##spacing", id: "slider Line spacing", value: s.line_spacing, min: LINE_SPACING_RANGE.0, max: LINE_SPACING_RANGE.1, format: "%.2f", on_change: (value: f32) -> SettingsEvent => SetLineSpacing(value) }), // settings_view.lui:98
+          Field(FieldAttrs { label: "Line spacing" }, [ // settings_view.lui:111
+            Slider(SliderAttrs { label: "##spacing", id: "slider Line spacing", value: s.line_spacing, min: LINE_SPACING_RANGE.0, max: LINE_SPACING_RANGE.1, format: "%.2f", on_change: (value: f32) -> SettingsEvent => SetLineSpacing(value) }), // settings_view.lui:112
           ]),
         ]),
       ]),
-      Group(GroupAttrs {}, [ // settings_view.lui:103
-        SeparatorText("Colors"), // settings_view.lui:104
-        Form(FormAttrs {}, [ // settings_view.lui:105
-          Field(FieldAttrs { label: "Theme" }, [ // settings_view.lui:106
-            Combo(ComboAttrs { label: "##theme", id: "combo Theme", preview: s.theme_name }, [ // settings_view.lui:107
-              ...[name in THEME_NAMES | Selectable(SelectableAttrs { label: "${name}", selected: name == s.theme_name, on_select: UseTheme(name) })], // settings_view.lui:108
-              ...(if s.themes.len() > 0 { // settings_view.lui:111
+      Group(GroupAttrs {}, [ // settings_view.lui:125
+        SeparatorText("Colors"), // settings_view.lui:126
+        Form(FormAttrs {}, [ // settings_view.lui:127
+          Field(FieldAttrs { label: "Theme" }, [ // settings_view.lui:128
+            Combo(ComboAttrs { label: "##theme", id: "combo Theme", preview: s.theme_name }, [ // settings_view.lui:129
+              ...[name in THEME_NAMES | Selectable(SelectableAttrs { label: "${name}", selected: name == s.theme_name, on_select: UseTheme(name) })], // settings_view.lui:130
+              ...(if s.themes.len() > 0 { // settings_view.lui:133
                 [
-                  Separator, // settings_view.lui:112
+                  Separator, // settings_view.lui:134
                 ]
               } else {
                 []
               }),
-              ...[t in s.themes | Selectable(SelectableAttrs { label: "${t.name}", id: "saved ${t.name}", selected: t.name == s.theme_name, on_select: UseSavedTheme(t.name) })], // settings_view.lui:114
+              ...[t in s.themes | Selectable(SelectableAttrs { label: "${t.name}", id: "saved ${t.name}", selected: t.name == s.theme_name, on_select: UseSavedTheme(t.name) })], // settings_view.lui:136
             ]),
           ]),
-          Field(FieldAttrs { label: "Theme name" }, [ // settings_view.lui:119
-            InputText(InputTextAttrs { label: "##themename", id: "field Theme name", hint: "Theme name", value: typed, on_change: (value: string) -> SettingsEvent => NameTheme(value), style: Style { width_em: Some(14.0) } }), // settings_view.lui:120
-            Button(ButtonAttrs { label: "Save Theme As…", id: "button Save Theme As", enabled: can_save_as(typed), on_click: SaveThemeAs }), // settings_view.lui:121
-            ...(if is_saved(s) { // settings_view.lui:122
+          Field(FieldAttrs { label: "Theme name" }, [ // settings_view.lui:147
+            InputText(InputTextAttrs { label: "##themename", id: "field Theme name", hint: "Theme name", value: typed, on_change: (value: string) -> SettingsEvent => NameTheme(value), style: Style { width_em: Some(14.0) } }), // settings_view.lui:148
+            Button(ButtonAttrs { label: "Save Theme As…", id: "button Save Theme As", enabled: can_save_as(typed), on_click: SaveThemeAs }), // settings_view.lui:156
+            ...(if is_saved(s) { // settings_view.lui:163
               [
-                Button(ButtonAttrs { label: "Delete", id: "button Delete Theme", on_click: DeleteSavedTheme }), // settings_view.lui:123
+                Button(ButtonAttrs { label: "Delete", id: "button Delete Theme", on_click: DeleteSavedTheme }), // settings_view.lui:164
               ]
             } else {
               []
@@ -113,49 +113,48 @@ pub let settings_view = pure (s: Settings, families: []FontFamily, typed: string
           ]),
         ]),
       ]),
-      Group(GroupAttrs {}, [ // settings_view.lui:129
-        Row(RowAttrs { class: "columns", wrap: true }, [ // settings_view.lui:133
-          ...[g in COLOR_GROUPS | Group(GroupAttrs {}, [ // settings_view.lui:134
-              Text(TextAttrs { text: "${g.heading}", class: "group" }), // settings_view.lui:136
-              Form(FormAttrs {}, [ // settings_view.lui:137
-                ...[c in g.colors | Field(FieldAttrs { label: c.0 }, [ // settings_view.lui:138
-                    color(s, c.1), // settings_view.lui:139
-                  ])],
+      Group(GroupAttrs {}, [ // settings_view.lui:170
+        Row(RowAttrs { class: "columns", wrap: true }, [ // settings_view.lui:174
+          ...[g in COLOR_GROUPS | Group(GroupAttrs {}, [ // settings_view.lui:175
+              Text(TextAttrs { text: "${g.heading}", class: "group" }), // settings_view.lui:177
+              Group(GroupAttrs { class: "swatches" }, [ // settings_view.lui:178
+                ...[c in g.colors | color(s, c.0, c.1)], // settings_view.lui:179
               ]),
             ])],
-          Group(GroupAttrs {}, [ // settings_view.lui:145
-            Text(TextAttrs { text: "ANSI colors", class: "group" }), // settings_view.lui:146
-            Row(RowAttrs {}, [ // settings_view.lui:147
-              ...[k in 0..<8 | ansi(s, k)], // settings_view.lui:148
+          Group(GroupAttrs {}, [ // settings_view.lui:186
+            Text(TextAttrs { text: "ANSI colors", class: "group" }), // settings_view.lui:187
+            Row(RowAttrs {}, [ // settings_view.lui:188
+              ...[k in 0..<8 | ansi(s, k)], // settings_view.lui:189
             ]),
-            Row(RowAttrs {}, [ // settings_view.lui:152
-              ...[k in 8..<16 | ansi(s, k)], // settings_view.lui:153
+            Row(RowAttrs {}, [ // settings_view.lui:193
+              ...[k in 8..<16 | ansi(s, k)], // settings_view.lui:194
             ]),
-            Checkbox(CheckboxAttrs { label: "Draw bold text in bright colors", id: "checkbox Bold is bright", checked: s.bold_is_bright, on_toggle: ToggleBoldBright }), // settings_view.lui:157
+            Checkbox(CheckboxAttrs { label: "Draw bold text in bright colors", id: "checkbox Bold is bright", checked: s.bold_is_bright, on_toggle: ToggleBoldBright }), // settings_view.lui:198
           ]),
         ]),
       ]),
-      Separator, // settings_view.lui:162
-      Button(ButtonAttrs { label: "Reset to Defaults", id: "button Reset", on_click: ResetSettings }), // settings_view.lui:164
+      Separator, // settings_view.lui:209
+      Button(ButtonAttrs { label: "Reset to Defaults", id: "button Reset", on_click: ResetSettings }), // settings_view.lui:211
     ]),
   ])
 
-/// From settings_view.lui, line 169.
-pub let color = pure (s: Settings, field: string) -> Node<SettingsEvent> =>
+/// From settings_view.lui, line 217.
+pub let color = pure (s: Settings, label: string, field: string) -> Node<SettingsEvent> =>
   Component(Sheet {}, [
-    ColorEdit(ColorEditAttrs { label: "##${field}", id: "color ${field}", value: color_named(s.colors, field), inputs: false, on_change: (v: u32) -> SettingsEvent => SetColor(field, v) }), // settings_view.lui:170
+    ColorEdit(ColorEditAttrs { label: "${label}##${field}", id: "color ${field}", value: color_named(s.colors, field), inputs: false, on_change: (v: u32) -> SettingsEvent => SetColor(field, v) }), // settings_view.lui:218
   ])
 
-/// From settings_view.lui, line 174.
+/// From settings_view.lui, line 228.
 pub let ansi = pure (s: Settings, k: i64) -> Node<SettingsEvent> =>
   Component(Sheet {}, [
-    ColorEdit(ColorEditAttrs { label: "##ansi${k}", id: "color ansi ${k}", value: s.colors.ansi[k], inputs: false, on_change: (v: u32) -> SettingsEvent => SetAnsi(k, v) }), // settings_view.lui:175
+    ColorEdit(ColorEditAttrs { label: "##ansi${k}", id: "color ansi ${k}", value: s.colors.ansi[k], inputs: false, on_change: (v: u32) -> SettingsEvent => SetAnsi(k, v) }), // settings_view.lui:229
   ])
 
 let settings_view_sheet = Sheet { // settings_view.lui:71
   rules: [
     StyleRule { selector: "Group.settings", style: Style { gap: Some(18.0) } },
     StyleRule { selector: "Form", style: Style { gap: Some(12.0) } },
+    StyleRule { selector: "Group.swatches", style: Style { gap: Some(12.0) } },
     StyleRule { selector: "Combo", style: Style { padding: Some(Vec2 { x: 6.0, y: 6.0 }), rounding: Some(4.0) } },
     StyleRule { selector: "Slider", style: Style { padding: Some(Vec2 { x: 6.0, y: 6.0 }), rounding: Some(4.0) } },
     StyleRule { selector: "InputText", style: Style { padding: Some(Vec2 { x: 6.0, y: 6.0 }), rounding: Some(4.0) } },

@@ -71,6 +71,7 @@
   <style>
     Group.settings { gap: 18 }
     Form { gap: 12 }
+    Group.swatches { gap: 12 }
     Combo { padding: 6; rounding: 4 }
     Slider { padding: 6; rounding: 4 }
     InputText { padding: 6; rounding: 4 }
@@ -86,16 +87,37 @@
         <Field label="Family">
           <Combo label="##family" id="combo Family" preview={family_shown(s)}>
             <for each={f in families}>
-              <Selectable selected={s.font_file == "" && f.name == s.font_family} on_select={UseFamily(f.name)}>{f.name}</Selectable>
+              <Selectable
+                selected={s.font_file == "" && f.name == s.font_family}
+                on_select={UseFamily(f.name)}
+              >
+                {f.name}
+              </Selectable>
             </for>
           </Combo>
           <Button id="button Other Font File" on_click={ChooseFontFile}>Other Font File…</Button>
         </Field>
         <Field label="Size">
-          <Slider label="##size" id="slider Size" value={s.font_size} min={FONT_SIZE_RANGE.0} max={FONT_SIZE_RANGE.1} format="%.0f pt" on_change={SetFontSize}/>
+          <Slider
+            label="##size"
+            id="slider Size"
+            value={s.font_size}
+            min={FONT_SIZE_RANGE.0}
+            max={FONT_SIZE_RANGE.1}
+            format="%.0f pt"
+            on_change={SetFontSize}
+          />
         </Field>
         <Field label="Line spacing">
-          <Slider label="##spacing" id="slider Line spacing" value={s.line_spacing} min={LINE_SPACING_RANGE.0} max={LINE_SPACING_RANGE.1} format="%.2f" on_change={SetLineSpacing}/>
+          <Slider
+            label="##spacing"
+            id="slider Line spacing"
+            value={s.line_spacing}
+            min={LINE_SPACING_RANGE.0}
+            max={LINE_SPACING_RANGE.1}
+            format="%.2f"
+            on_change={SetLineSpacing}
+          />
         </Field>
       </Form>
     </Group>
@@ -112,13 +134,32 @@
               <Separator/>
             </if>
             <for each={t in s.themes}>
-              <Selectable id="saved {t.name}" selected={t.name == s.theme_name} on_select={UseSavedTheme(t.name)}>{t.name}</Selectable>
+              <Selectable
+                id="saved {t.name}"
+                selected={t.name == s.theme_name}
+                on_select={UseSavedTheme(t.name)}
+              >
+                {t.name}
+              </Selectable>
             </for>
           </Combo>
         </Field>
         <Field label="Theme name">
-          <InputText label="##themename" id="field Theme name" hint="Theme name" value={typed} on_change={NameTheme} style="width: 14em"/>
-          <Button id="button Save Theme As" enabled={can_save_as(typed)} on_click={SaveThemeAs}>Save Theme As…</Button>
+          <InputText
+            label="##themename"
+            id="field Theme name"
+            hint="Theme name"
+            value={typed}
+            on_change={NameTheme}
+            style="width: 14em"
+          />
+          <Button
+            id="button Save Theme As"
+            enabled={can_save_as(typed)}
+            on_click={SaveThemeAs}
+          >
+            Save Theme As…
+          </Button>
           <if test={is_saved(s)}>
             <Button id="button Delete Theme" on_click={DeleteSavedTheme}>Delete</Button>
           </if>
@@ -128,17 +169,17 @@
 
     <Group>
       <!-- The colors in their groups, side by side as the window's width allows, wrapping
-           to a new line when it does not: each its heading over a form of its own, its
-           labels lined up in their own column. -->
+           to a new line when it does not: each its heading over its swatches, labelled
+           on their right. -->
       <Row class="columns" wrap>
         <for each={g in COLOR_GROUPS}>
           <Group>
             <Text class="group">{g.heading}</Text>
-            <Form>
+            <Group class="swatches">
               <for each={c in g.colors}>
-                <Field label={c.0}><color s={s} field={c.1}/></Field>
+                <color s={s} label={c.0} field={c.1}/>
               </for>
-            </Form>
+            </Group>
           </Group>
         </for>
 
@@ -154,7 +195,13 @@
               <ansi s={s} k={k}/>
             </for>
           </Row>
-          <Checkbox id="checkbox Bold is bright" checked={s.bold_is_bright} on_toggle={ToggleBoldBright}>Draw bold text in bright colors</Checkbox>
+          <Checkbox
+            id="checkbox Bold is bright"
+            checked={s.bold_is_bright}
+            on_toggle={ToggleBoldBright}
+          >
+              Draw bold text in bright colors
+          </Checkbox>
         </Group>
       </Row>
     </Group>
@@ -165,12 +212,25 @@
   </Group>
 </component>
 
-<!-- A color's swatch, the field of the settings' colors it edits named. -->
-<component name="color" props={{s: Settings, field: string}} event={SettingsEvent}>
-  <ColorEdit label="##{field}" id="color {field}" value={color_named(s.colors, field)} inputs={false} on_change={(v: u32) -> SettingsEvent => SetColor(field, v)}/>
+<!-- A color's swatch, its label to its right: ImGui's own layout for a labelled color
+     editor. `##` and the field keep two "Text"s apart. -->
+<component name="color" props={{s: Settings, label: string, field: string}} event={SettingsEvent}>
+  <ColorEdit
+    label="{label}##{field}"
+    id="color {field}"
+    value={color_named(s.colors, field)}
+    inputs={false}
+    on_change={(v: u32) -> SettingsEvent => SetColor(field, v)}
+  />
 </component>
 
 <!-- ANSI color `k`'s swatch, unlabelled. -->
 <component name="ansi" props={{s: Settings, k: i64}} event={SettingsEvent}>
-  <ColorEdit label="##ansi{k}" id="color ansi {k}" value={s.colors.ansi[k]} inputs={false} on_change={(v: u32) -> SettingsEvent => SetAnsi(k, v)}/>
+  <ColorEdit
+    label="##ansi{k}"
+    id="color ansi {k}"
+    value={s.colors.ansi[k]}
+    inputs={false}
+    on_change={(v: u32) -> SettingsEvent => SetAnsi(k, v)}
+  />
 </component>
