@@ -175,8 +175,12 @@ jobs:
             echo "TERMINA_NOTARY_ISSUER=$NOTARY_ISSUER_ID"
           } >> "$GITHUB_ENV"
 
+      # `bash`, not the default `bash -e`: with pipefail, a package.sh that fails fails the
+      # step, though its output goes through tee — without, a Linux archive was never made
+      # and the run passed.
       - name: Package
         working-directory: termina
+        shell: bash
         run: |
           if [ "$GITHUB_REF_TYPE" = tag ]; then
             version="${GITHUB_REF_NAME#v}"

@@ -118,9 +118,13 @@ case "$(uname -s)" in
     cp -L "$SDL_LIBDIR/libSDL3.so.0" "$STAGE/lib/"
     patchelf --set-rpath '$ORIGIN/lib' "$STAGE/termina"
     cp "$ROOT/LICENSE" "$ROOT/README.md" "$STAGE/"
-    # SDL3 found in the archive, not wherever the build machine had it.
-    ldd "$STAGE/termina" | grep -q "$STAGE/lib/libSDL3.so.0" ||
-      { ldd "$STAGE/termina" >&2; die "the program does not find the bundled SDL3"; }
+    # SDL3 found in the archive, not wherever the build machine had it — asked as a user's
+    # machine would ask, without the LD_LIBRARY_PATH a build may set, which outranks the
+    # rpath.
+    env -u LD_LIBRARY_PATH ldd "$STAGE/termina" | grep -q "$STAGE/lib/libSDL3.so.0" || {
+      env -u LD_LIBRARY_PATH ldd "$STAGE/termina" >&2
+      die "the program does not find the bundled SDL3"
+    }
     tar -czf "$OUT/$NAME.tar.gz" -C "$OUT" "$NAME"
     rm -rf "$STAGE"
     printf 'package: %s\n' "$OUT/$NAME.tar.gz"
