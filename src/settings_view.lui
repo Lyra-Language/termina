@@ -53,7 +53,7 @@
 
 <!-- The whole of the Settings tab, for the settings as they are and the name typed to
      save a theme as. -->
-<component name="settings_view" props="s: Settings, families: []FontFamily, typed: string" event="SettingsEvent">
+<component name="settings_view" props={{s: Settings, families: []FontFamily, typed: string}} event={SettingsEvent}>
   <style>
     Text.group { color: #9aa0a6 }
   </style>
@@ -131,11 +131,11 @@
 </component>
 
 <!-- A color's swatch, the field of the settings' colors it edits named. -->
-<component name="color" props="s: Settings, field: string" event="SettingsEvent">
+<component name="color" props={{s: Settings, field: string}} event={SettingsEvent}>
   <ColorEdit label="##{field}" id="color {field}" value={color_named(s.colors, field)} inputs={false} on_change={(v: u32) -> SettingsEvent => SetColor(field, v)}/>
 </component>
 
 <!-- ANSI color `k`'s swatch, unlabelled. -->
-<component name="ansi" props="s: Settings, k: i64" event="SettingsEvent">
+<component name="ansi" props={{s: Settings, k: i64}} event={SettingsEvent}>
   <ColorEdit label="##ansi{k}" id="color ansi {k}" value={s.colors.ansi[k]} inputs={false} on_change={(v: u32) -> SettingsEvent => SetAnsi(k, v)}/>
 </component>

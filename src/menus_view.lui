@@ -57,7 +57,7 @@
 <!-- The menus, for the tabs `tabs` with `active` shown, Edit's actions that would do
      something `can`, on a Mac or not (its keys, and whether Termina draws Quit and the
      Window menu — the Mac's own being macOS's), the window maximized or not. -->
-<component name="menus_view" props="tabs: []TabLabel, active: i64, can: []EditAction, mac: bool, maximized: bool" event="MenuChoice">
+<component name="menus_view" props={{tabs: []TabLabel, active: i64, can: []EditAction, mac: bool, maximized: bool}} event={MenuChoice}>
   <MainMenuBar>
     <Menu label="Termina">
       <MenuItem shortcut={key(",", false)} on_select={Tabs(OpenSettings)}>Settings…</MenuItem>
