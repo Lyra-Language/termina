@@ -9,7 +9,7 @@ module vt
 //! byte strings alone and the screen on actions alone.
 //!
 //! **Bytes in, across any boundary.** A read from a terminal can stop anywhere — inside a
-//! UTF-8 sequence, between `\e` and `[`, halfway through a colour — so every piece of state
+//! UTF-8 sequence, between `\e` and `[`, halfway through a color — so every piece of state
 //! is kept between calls, and feeding a stream a byte at a time gives the same actions as
 //! feeding it whole (text arriving in more, shorter runs).
 
@@ -35,7 +35,7 @@ pub struct CsiSequence {
   /// The parameters in order; one left out (`\e[;5H`) is 0, as is one too large to hold.
   params: []i64,
   /// Whether each parameter followed a `:` rather than a `;` — a sub-parameter, as in
-  /// `\e[38:2:255:0:0m`'s colour. As long as `params`.
+  /// `\e[38:2:255:0:0m`'s color. As long as `params`.
   sub: []bool,
   /// The characters between the parameters and the final one (`\e[2 q`'s space).
   intermediates: string,

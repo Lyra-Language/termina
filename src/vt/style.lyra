@@ -1,8 +1,8 @@
 module vt
-//! What a cell holds besides its rune — colours and attributes — and SGR (`\e[…m`), which
+//! What a cell holds besides its rune — colors and attributes — and SGR (`\e[…m`), which
 //! sets them. A [Pen] is the style the next character is written in; [Pen.sgr] changes it.
 //!
-//! **A colour is one `u32`**, so that a cell stays a few scalars and comparing two styles is
+//! **A color is one `u32`**, so that a cell stays a few scalars and comparing two styles is
 //! comparing integers: [DEFAULT] (the theme's own foreground or background), a palette
 //! index 0–255 ([indexed]), or 24-bit RGB ([rgb]). Turning one into pixels is the theme's
 //! (`../ui/theme.lyra`): the screen records what the program asked for, not what it looks
@@ -25,7 +25,7 @@ pub struct Pen {
   attrs: u32,
 }
 
-/// The theme's own colour: its foreground, or its background.
+/// The theme's own color: its foreground, or its background.
 pub const DEFAULT: u32 = 0
 
 /// The attributes.
@@ -40,7 +40,7 @@ pub const CURLY_UNDERLINE: u32 = 32
 pub const BLINK: u32 = 64
 /// Foreground and background swapped.
 pub const INVERSE: u32 = 128
-/// Drawn in the background's colour: there, but not shown.
+/// Drawn in the background's color: there, but not shown.
 pub const HIDDEN: u32 = 256
 pub const STRIKE: u32 = 512
 /// Not a style: on a line's last cell, the line went on to the next one when the text
@@ -58,10 +58,10 @@ pub let marks_of = pure (c: Cell) -> i64 => i64(c.attrs >> MARKS_SHIFT)
 /// Every underline.
 pub const UNDERLINES: u32 = UNDERLINE | DOUBLE_UNDERLINE | CURLY_UNDERLINE
 
-/// Palette entry `i`, 0–255: the 16 ANSI colours, a 6×6×6 cube, 24 greys.
+/// Palette entry `i`, 0–255: the 16 ANSI colors, a 6×6×6 cube, 24 greys.
 pub let indexed = pure (i: i64) -> u32 => KIND_INDEXED | u32(i.clamp(0, 255))
 
-/// A 24-bit colour, each channel 0–255.
+/// A 24-bit color, each channel 0–255.
 pub let rgb = pure (r: i64, g: i64, b: i64) -> u32 =>
   KIND_RGB | (u32(r.clamp(0, 255)) << 16) | (u32(g.clamp(0, 255)) << 8) | u32(b.clamp(
     0,
@@ -78,11 +78,11 @@ pub let rgb_of = pure (c: u32) -> Maybe<(i64, i64, i64)> =>
     Some((i64((c >> 16) & 0xFF), i64((c >> 8) & 0xFF), i64(c & 0xFF)))
   } else { None }
 
-/// The pen at the start, and after `\e[0m`: the theme's colours, no attributes.
+/// The pen at the start, and after `\e[0m`: the theme's colors, no attributes.
 pub let plain_pen = pure () -> Pen => Pen { fg: DEFAULT, bg: DEFAULT, attrs: 0 }
 
 /// A blank cell, as an erase leaves it: a space on `bg` — the background the pen had when
-/// it erased (xterm's *background colour erase*, which `TERM=xterm-256color` promises
+/// it erased (xterm's *background color erase*, which `TERM=xterm-256color` promises
 /// programs), and nothing else of the pen.
 pub let blank_cell = pure (bg: u32) -> Cell =>
   Cell { ch: ' ', fg: DEFAULT, bg: bg, attrs: 0 }
@@ -97,9 +97,9 @@ impl Pen {
   }
 
   /// Carry out SGR's parameters: each sets or clears something, left to right; an empty
-  /// list (`\e[m`) is a reset. Colours come as `38;5;n` and `38;2;r;g;b` (and `48` for the
+  /// list (`\e[m`) is a reset. Colors come as `38;5;n` and `38;2;r;g;b` (and `48` for the
   /// background), or in the colon spelling ISO 8613-6 intended — `38:5:n`, `38:2::r:g:b`,
-  /// with or without the colour-space field. A code this terminal does not know is skipped
+  /// with or without the color-space field. A code this terminal does not know is skipped
   /// with its sub-parameters.
   pub let sgr = (self: mut, params: []i64, sub: []bool) -> void => {
     if params.len() == 0 {
@@ -124,7 +124,7 @@ impl Pen {
         match color {
           Some(c) => {
             if p == 38 { self.fg = c } else if p == 48 { self.bg = c }
-            // 58 is the underline's colour, which is not drawn apart from the text yet.
+            // 58 is the underline's color, which is not drawn apart from the text yet.
           },
           None => {},
         }
@@ -136,7 +136,7 @@ impl Pen {
     }
   }
 
-  // One SGR code (not a colour introducer), with its sub-parameters.
+  // One SGR code (not a color introducer), with its sub-parameters.
   let code = (self: mut, p: i64, subs: []i64) -> void => {
     match p {
       0 => { self = plain_pen() },
@@ -175,8 +175,8 @@ impl Pen {
   }
 }
 
-/// A colour in the colon spelling: the sub-parameters after 38/48/58 — `5:n`, `2:r:g:b`, or
-/// `2:cs:r:g:b` with the colour space ISO 8613-6 puts first (which xterm ignores, as here).
+/// A color in the colon spelling: the sub-parameters after 38/48/58 — `5:n`, `2:r:g:b`, or
+/// `2:cs:r:g:b` with the color space ISO 8613-6 puts first (which xterm ignores, as here).
 let extended_colon = pure (subs: []i64) -> Maybe<u32> => {
   if subs[0] == 5 && subs.len() >= 2 { return Some(indexed(subs[1])) }
   if subs[0] == 2 && subs.len() >= 5 { return Some(rgb(subs[2], subs[3], subs[4])) }
@@ -184,8 +184,8 @@ let extended_colon = pure (subs: []i64) -> Maybe<u32> => {
   None
 }
 
-/// A colour in the semicolon spelling, its kind at `params[at]`: the colour, and where the
-/// next code starts — past whatever was read, even when the colour was cut short.
+/// A color in the semicolon spelling, its kind at `params[at]`: the color, and where the
+/// next code starts — past whatever was read, even when the color was cut short.
 let extended_semicolon = pure (params: []i64, at: i64) -> (Maybe<u32>, i64) => {
   if at >= params.len() { return (None, at) }
   let kind = params[at]
@@ -202,7 +202,7 @@ let extended_semicolon = pure (params: []i64, at: i64) -> (Maybe<u32>, i64) => {
   (None, at + 1)
 }
 
-/// A colour's kind, in its top byte.
+/// A color's kind, in its top byte.
 const KIND_MASK: u32 = 0xFF000000
 const KIND_INDEXED: u32 = 0x01000000
 const KIND_RGB: u32 = 0x02000000

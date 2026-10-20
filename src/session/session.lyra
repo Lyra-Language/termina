@@ -379,7 +379,7 @@ impl Session {
         },
       }
     }
-    // The program's questions answered (what terminal, where the cursor is, which colours).
+    // The program's questions answered (what terminal, where the cursor is, which colors).
     for reply in self.shown.take_replies() {
       let _ = self.pty.write(reply)
     }
@@ -419,7 +419,7 @@ pub let draw_session = (
   menus: bool
 ) -> void => {
   s.line.menu_keys = menus
-  // What a program asking (vim) is told the colours are: the theme's.
+  // What a program asking (vim) is told the colors are: the theme's.
   s.shown.fg_report = report_of(look.theme.fg)
   s.shown.bg_report = report_of(look.theme.bg)
   let cell = look.cell
@@ -538,7 +538,7 @@ pub let draw_session = (
     }
   }
   // The rows in view that are a block's input — its prompt and command — drawn with the
-  // input's text colour.
+  // input's text color.
   let input_theme = theme.for_input()
   var input_rows: []bool = [false; (bottom - top).max(0)]
   if !s.shown.alt {
@@ -674,7 +674,7 @@ pub let draw_session = (
         menu: theme.menu,
         menu_chosen: theme.menu_chosen,
         faint: theme.palette[8],
-        // The syntax in the theme's own ANSI colours: green, cyan, yellow, magenta, blue.
+        // The syntax in the theme's own ANSI colors: green, cyan, yellow, magenta, blue.
         command: theme.palette[2],
         option: theme.palette[6],
         quoted: theme.palette[3],
@@ -1155,7 +1155,7 @@ let duration_text = pure (nanos: i64) -> string => {
 const FAILED_BAR: f32 = 3.0
 
 /// A block's card: the room between cards, the padding inside each around its input and
-/// its output, and its corners' rounding. Its colours are the theme's sections'.
+/// its output, and its corners' rounding. Its colors are the theme's sections'.
 const BLOCK_MARGIN: f32 = 10.0
 const BLOCK_PAD: f32 = 6.0
 const BLOCK_ROUNDING: f32 = 8.0
@@ -1228,7 +1228,7 @@ const PROMPT_ROWS: i64 = 4
 /// The command line's box: how far it reaches past the grid on each side, how far its text
 /// is set in from the grid's sides, the space inside it above and below its rows, between
 /// the prompt's row and the command's, and between it and a completion menu above it, and
-/// its corners' rounding. Its colours are the theme's: the input section's, and its rule.
+/// its corners' rounding. Its colors are the theme's: the input section's, and its rule.
 const BOX_MARGIN: f32 = 12.0
 const BOX_INSET: f32 = 2.0
 const BOX_PADDING: f32 = 12.0

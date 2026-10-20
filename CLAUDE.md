@@ -16,9 +16,9 @@ build/termina               # the login shell ($SHELL -l) in a window of tabs: �
                             #    shown tab's directory), ⌘W close, ⌘1–⌘9, ⌘⇧[ ⌘⇧]; a tab
                             #    closes when its shell ends, the window with the last
 build/termina CMD [ARG…]    # that program instead (as xterm -e), no integration — a test
-                            #    script's colours, say, seen without typing
+                            #    script's colors, say, seen without typing
 open build/Termina.app      # the same, as a Mac app
-                            # Settings… (⌘,; Ctrl+, off macOS): font, size, spacing, colours —
+                            # Settings… (⌘,; Ctrl+, off macOS): font, size, spacing, colors —
                             #    kept in ~/.config/termina/settings.json ($XDG_CONFIG_HOME)
 build/vttest                # parser, screen, editor, PTY, zsh and bash checks; exit 1 on a failure
 SDL_VIDEODRIVER=dummy build/uitest   # the command line on a headless ImGui host, driven by
@@ -95,7 +95,7 @@ shell ⇄ bindings.pty ──bytes──▶ vt.Parser ──[]Action──▶ vt
 | `src/menutest.lyra` | the menu bar installed and read back |
 | `src/shell/shell.lyra` | shell integration (zsh's `.zshenv` through `ZDOTDIR`, bash's rc file through `--rcfile`): the marks, Tab's completion widget and its request file, the history files, what Return sends |
 | `src/editor/editor.lyra` | the command line's editor — text, caret, selection, motions, words, undo, layout; **pure** |
-| `src/editor/syntax.lyra` | the command line's syntax for colouring: each rune's kind (command, option, quoted, variable, operator, comment); **pure** |
+| `src/editor/syntax.lyra` | the command line's syntax for coloring: each rune's kind (command, option, quoted, variable, operator, comment); **pure** |
 | `src/ui/modifiers.lyra` | the modifier keys as pressed — ImGui's macOS Ctrl/⌘ swap undone |
 | `src/ui/typeahead.lyra` | keys typed ahead, raw, made into lines (Backspace, Ctrl+U/W applied; escapes dropped) |
 | `src/ui/command_line.lyra` | the editor at the prompt: keys and mouse into editor calls, history, the completion menu, drawing |
@@ -103,11 +103,11 @@ shell ⇄ bindings.pty ──bytes──▶ vt.Parser ──[]Action──▶ vt
 | `src/vt/screen.lyra` | `Action`s → the cell grid, cursor, scroll region, scrollback ring |
 | `src/vt/width.lyra` | how many cells a rune takes: 2 wide (CJK, emoji), 0 combining, 1 the rest |
 | `src/vt/selection.lyra` | a selection on the screen and scrollback: its text, a word's span; **pure** |
-| `src/vt/style.lyra` | a `Cell`'s colours and attributes, and SGR on the `Pen` that writes them; **pure** |
+| `src/vt/style.lyra` | a `Cell`'s colors and attributes, and SGR on the `Pen` that writes them; **pure** |
 | `src/settings/settings.lyra` | the user's settings, the themes offered, the file (read leniently), the monospaced families found |
-| `src/settings_view.lui` | the Settings tab as `.lui` markup — font family or file, size, spacing, theme (saved ones too), every colour, bold as bright; `settings_view.lyra` is generated from it |
-| `src/ui/settings_window.lyra` | the Settings tab drawn: the markup rendered, its events carried out, its Slots (sliders, colour editors) drawn |
-| `src/ui/theme.lyra` | recorded colours → pixels: the theme's own pair, ANSI 16, xterm's 256; inverse, dim, hidden |
+| `src/settings_view.lui` | the Settings tab as `.lui` markup — font family or file, size, spacing, theme (saved ones too), every color, bold as bright; `settings_view.lyra` is generated from it |
+| `src/ui/settings_window.lyra` | the Settings tab drawn: the markup rendered and its events carried out (`carry_out`) |
+| `src/ui/theme.lyra` | recorded colors → pixels: the theme's own pair, ANSI 16, xterm's 256; inverse, dim, hidden |
 | `src/ui/grid.lyra` | a screen line drawn: background runs, text runs of one style, faces, underlines, strike |
 | `src/vttest.lyra` | the checks: byte strings against actions and screens, the editor on text, real programs, zsh and bash on a PTY (each skipped, and said so, where not installed) |
 | `src/uitest.lyra` | the command line on a headless host: injected input, the editor checked after |
@@ -150,7 +150,7 @@ shell ⇄ bindings.pty ──bytes──▶ vt.Parser ──[]Action──▶ vt
   `?2004` (`session.pasted`). With the menu bar the command line leaves ⌘Z/⌘X/⌘C/⌘V/⌘A to
   it (`menu_keys`), and each frame greys what would do nothing (`Session.can`).
 - **The screen answers questions through `replies`** (DA1, DA2, XTVERSION, DSR, DECRQM, the
-  colour queries OSC 10/11/12), which a session writes to the program each frame; a check
+  color queries OSC 10/11/12), which a session writes to the program each frame; a check
   running a program on a PTY must answer them too (`vttest`'s `full_screen`).
 - **The alternate screen keeps no scrollback and shows none**: lines leaving it are not
   history, and a session draws from the screen's first row while it is on (`base`). The main
@@ -176,12 +176,12 @@ shell ⇄ bindings.pty ──bytes──▶ vt.Parser ──[]Action──▶ vt
   too. Hinted advances are whole pixels, so a cell is.
 - **Glyphs a family lacks come from fallback fonts** (`settings.fallback_fonts`: Arial
   Unicode or Noto Sans CJK, then Apple Symbols or DejaVu Sans), merged into every face
-  (`bindings.imgui`'s `merge_font_file`). Colour emoji are not drawn: stb_truetype has no
-  colour, and ImGui's 16-bit `ImWchar` reaches only the BMP.
+  (`bindings.imgui`'s `merge_font_file`). Color emoji are not drawn: stb_truetype has no
+  color, and ImGui's 16-bit `ImWchar` reaches only the BMP.
 - **A command is a block of the transcript** (`Session.blocks`, `Block`): `C` opens one
   from the last prompt's `A` line (`OutputStart(line)`), `D` closes it
   (`CommandEnd(status, line)`, its line the first the output did not write on). Drawn as a
-  card: the input on the theme's input colour, the output on its output colour, rounded,
+  card: the input on the theme's input color, the output on its output color, rounded,
   with padding around each and a margin between cards; the duration and a failure's `exit N` over its
   first row's right end where the text leaves room, a red bar down a failed one's left.
 - **On the main screen the grid ends at the rows in use** (`Screen.used_rows`: the cursor's
@@ -208,40 +208,44 @@ shell ⇄ bindings.pty ──bytes──▶ vt.Parser ──[]Action──▶ vt
   `READS_PER_FRAME` reads, so a program that never stops writing cannot freeze the window.
 - **Settings live in `~/.config/termina/settings.json`** (`$XDG_CONFIG_HOME` first); with
   none there, the file the terminal kept as Sulafat (`~/.config/sulafat/`, `OLD_NAME`) is
-  read, and the next save writes the new one. The old file is left alone.
+  read, and the next save writes the new one. The old file is left alone. **Colors are
+  `colors` in it, read as `colours` where a file has no `colors`** (`colors_in`,
+  `OLD_COLORS_KEY`): files from before 10/20 spelled them so, the current ones and each
+  saved theme's.
 - **Settings take at once and are kept when the mouse is let go**: a change rebuilds the
   theme (`ui.theme_of`), reloads the faces only when the family or file changed (ImGui keeps
   a face per file; its size is chosen as it is pushed), and is written to the file once no
   button is held, not every frame of a slider's drag. The file is read leniently — a
-  setting missing or wrong keeps its default — and a theme named in it gives the colours a
-  `colours` object does not. Programs asking the colours (OSC 10/11) are told the theme's.
-- **A theme is every colour Termina draws**, not only the grid's: the sections' input (the
+  setting missing or wrong keeps its default — and a theme named in it gives the colors a
+  `colors` object does not. Programs asking the colors (OSC 10/11) are told the theme's.
+- **A theme is every color Termina draws**, not only the grid's: the sections' input (the
   box, a block's prompt and command) and output, the input's text (where a program gave
-  it no colour: `Theme.for_input`, for the rows in view a block's input takes and the
+  it no color: `Theme.for_input`, for the rows in view a block's input takes and the
   box's prompt), the tabs (a tab, under the pointer, shown —
-  labelled in the text's colour), and the command line's text, completion menu and chosen
+  labelled in the text's color), and the command line's text, completion menu and chosen
   row. A theme names its text, background, cursor, selection, sections and ANSI sixteen;
-  the rest is made from them (`settings.colours_of`), and a dark theme's sections lighten
+  the rest is made from them (`settings.colors_of`), and a dark theme's sections lighten
   its background, a light one's darken it (`sections_of`). The settings edit each, and an
   edit makes the theme `Custom`. Only ImGui's own widgets — the settings' fields, the
   menus — keep ImGui's style.
 - **The settings are a tab** (`ui.settings_panel` in `draw_window`), written as markup
-  (`settings_view.lui`): `bindings.imgui.ui` has no slider or colour editor yet, so those
-  are drawn by hand in the markup's Slots, on a module-level copy of the settings
-  (`drawing`) — `render`'s `seen` cannot reach the caller's locals — and the rest are
-  events (`SettingsEvent`, `carry_out`). Settings… opens a
+  (`settings_view.lui`) whose every control is an event (`SettingsEvent`, `carry_out`):
+  the sliders' values (the size made whole points), and each color by its field's name
+  (`SetColor("tab_hovered", …)`, `settings.color_named`/`with_color`) or its ANSI index
+  (`with_ansi`, into an array of its own — the one a theme's colors hold is shared by
+  every copy of them). An edited color makes the theme `Custom`. Settings… opens a
   Settings tab at the tab bar's right end, out of the tabs' order (`TAB_ITEM_FLAGS_TRAILING`,
   as `+` is), and shows it; it fills the tabs' area in the interface's font. Its × or ⌘W
   while it is shown closes it; a terminal's tab chosen by a key or a click takes over. The
   terminals go on being read behind it.
 - **The user's themes are saved in the settings file** (`Settings.themes`, `SavedTheme`):
-  the colours under a name not Termina's own nor `Custom` (`can_save_as`; a saved one of
-  that name replaced), listed after Termina's, deleted to `Custom` with the colours kept.
+  the colors under a name not Termina's own nor `Custom` (`can_save_as`; a saved one of
+  that name replaced), listed after Termina's, deleted to `Custom` with the colors kept.
   A theme named in the file is looked for among them before Termina's.
 - **Font families are found by file name** (`Mono`, `Code`, `Courier`, `Consol`, as
   capitalised; faces by `-Bold`/` Bold`/`Bold` suffixes), after the ones Termina knows by path
   (SF Mono, Menlo, DejaVu Sans Mono), whose files are not offered twice.
-- **A colour is one `u32`** (`DEFAULT`, a palette index, or RGB — `vt/style.lyra`): the
+- **A color is one `u32`** (`DEFAULT`, a palette index, or RGB — `vt/style.lyra`): the
   screen records what the program asked for; the theme decides what it looks like.
 - **Erases and scrolls fill with the pen's background** (xterm's BCE, which
   `TERM=xterm-256color` promises), and nothing else of the pen.
@@ -324,8 +328,8 @@ shell ⇄ bindings.pty ──bytes──▶ vt.Parser ──[]Action──▶ vt
   completion's `/` or space gives way** to the next key when that would double it or end
   the word (`suffix_left`): zsh's `AUTO_REMOVE_SLASH`. `compinit` is loaded only if the
   user's config has not, its dump in Termina's cache.
-- **The command line is coloured by its syntax** (`editor.kinds`, a small lexer that only
-  ever chooses a colour): commands, options, quoted text, variables, operators and comments,
+- **The command line is colored by its syntax** (`editor.kinds`, a small lexer that only
+  ever chooses a color): commands, options, quoted text, variables, operators and comments,
   in the theme's ANSI green, cyan, yellow, magenta, blue and its faint grey. `$(…)` is
   lexed as a command line of its own.
 - **Ctrl+R searches the history** (`CommandLine.searching`): the editor's text is the query,
@@ -347,20 +351,20 @@ shell ⇄ bindings.pty ──bytes──▶ vt.Parser ──[]Action──▶ vt
 ## Plan
 
 1. **M0 — a terminal (done 10/16)**: PTY, parser, monochrome grid, scrollback, keys, paste.
-2. **M1 — a classic terminal (done 10/16)**: SGR colours and attributes, wide characters, the
+2. **M1 — a classic terminal (done 10/16)**: SGR colors and attributes, wide characters, the
    DEC private modes (alternate screen, cursor keys, autowrap, DECSCUSR, bracketed paste,
    mouse reporting, focus), device reports, selection and copy, Alt as Meta. vim, less and
    top run correctly (`vttest`'s `check_full_screen`).
 3. **M2 — blocks (begun 10/19)**: the shell integration's marks (zsh's and bash's) — OSC
    133 (`A` prompt, `B` command, `C` output, `D;status` end) and OSC 7 (directory). Each
-   command is a block, drawn as a card — its input and output in the theme's colours,
+   command is a block, drawn as a card — its input and output in the theme's colors,
    padded, with room between cards — its duration and a failure's status at its right, a
    red bar down a failed one. Next: selecting, copying and folding a block whole.
 4. **M3 — the editor (begun 10/16, before M1 and the block cards)**: zsh's integration,
    then the command line as Termina's editor — multi-line, soft wrap, the mouse (click,
    drag, double-click a word, triple-click a line), word and line motions, undo, the
    clipboard, history from `~/.zsh_history`, Tab completion (zsh's own, in a menu); bash's
-   integration and its completion, syntax colouring, Ctrl+R history search, prompts of
+   integration and its completion, syntax coloring, Ctrl+R history search, prompts of
    several lines and right prompts in the box, the box kept, greyed, while a command runs
    (10/19).
 

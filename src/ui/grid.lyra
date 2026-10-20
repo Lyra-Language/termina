@@ -1,7 +1,7 @@
 module ui
 //! A screen line drawn: its backgrounds, its text in runs of one style, and the lines an
 //! underline or a strike adds. A run is as long as the style stays the same, so a line of
-//! plain text is one `add_text`, as it was before colour. **A wide rune is drawn alone**,
+//! plain text is one `add_text`, as it was before color. **A wide rune is drawn alone**,
 //! across its two cells: a run's glyphs are spaced a cell apart, which a wide glyph is not.
 //! So is a rune with combining marks, drawn as it and its marks, so that a mark's own
 //! advance (the font's, not the grid's) cannot move what follows.
@@ -58,14 +58,14 @@ pub let draw_line = (
   let n = upto.min(cells.len())
   if n <= 0 { return }
   draw_backgrounds(list, theme, at, cells, n)
-  // Text, a run of one colour and face at a time. Trailing blanks are not drawn.
+  // Text, a run of one color and face at a time. Trailing blanks are not drawn.
   var end = n
   while end > 0 && cells[end - 1].ch == ' ' && cells[end - 1].attrs & (UNDERLINE_ANY | STRIKE) == 0 {
     end -= 1
   }
   var start = 0
   while start < end {
-    let (fg, _) = theme.colours(cells[start])
+    let (fg, _) = theme.colors(cells[start])
     let attrs = cells[start].attrs
     if cells[start].ch == SPACER {
       // The second cell of a wide rune (or one left alone by an erase): nothing to draw.
@@ -97,15 +97,15 @@ let one_cell = pure (c: Cell) -> bool =>
 /// Every underline's bit.
 const UNDERLINE_ANY: u32 = UNDERLINE | DOUBLE_UNDERLINE | CURLY_UNDERLINE
 
-/// The attributes that change how text is drawn, rather than its colour.
+/// The attributes that change how text is drawn, rather than its color.
 const DRAWN: u32 = BOLD | ITALIC | UNDERLINE_ANY | STRIKE
 
 let same_run = pure (theme: Theme, c: Cell, fg: u32, attrs: u32) -> bool => {
-  let (cfg, _) = theme.colours(c)
+  let (cfg, _) = theme.colors(c)
   cfg == fg && c.attrs & DRAWN == attrs & DRAWN
 }
 
-// Runs of one background colour as rectangles; the theme's own is the window's, and is not
+// Runs of one background color as rectangles; the theme's own is the window's, and is not
 // drawn.
 let draw_backgrounds = (
   list: DrawList,
@@ -116,17 +116,17 @@ let draw_backgrounds = (
 ) -> void => {
   var start = 0
   while start < n {
-    let (_, bg) = theme.colours(cells[start])
+    let (_, bg) = theme.colors(cells[start])
     var stop = start + 1
-    while stop < n && theme.colours(cells[stop]).1 == bg { stop += 1 }
+    while stop < n && theme.colors(cells[stop]).1 == bg { stop += 1 }
     match bg {
-      Some(colour) => {
+      Some(color) => {
         let x0 = at.origin.x + f32(start) * at.cell.x
         let x1 = at.origin.x + f32(stop) * at.cell.x
         list.add_rect_filled(
           Vec2 { x: x0, y: at.origin.y },
           Vec2 { x: x1, y: at.origin.y + at.cell.y },
-          colour
+          color
         )
       },
       None => {},
@@ -230,7 +230,7 @@ let curl = (
   x1: f32,
   y: f32,
   amp: f32,
-  colour: u32,
+  color: u32,
   thick: f32
 ) -> void => {
   let step = amp * 4.0
@@ -243,7 +243,7 @@ let curl = (
       Vec2 { x: x, y: y },
       Vec2 { x: (x + nx) / 2.0, y: peak },
       Vec2 { x: nx, y: y },
-      colour,
+      color,
       thick
     )
     x = nx

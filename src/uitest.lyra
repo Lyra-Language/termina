@@ -72,13 +72,17 @@ import ui.{
 import editor.{ Wrap }
 import bindings.imgui.ui.{
   Node,
-  Slot,
+  Slider,
+  ColorEdit,
   Menu,
   MenuItem,
   render,
   item_id,
+  node_id,
   menu_items,
-  shortcut_text
+  shortcut_text,
+  rgb_channels,
+  rgb_of
 }
 import menus.{ draw_menu_bar, tab_command_of }
 import menus_view.{
@@ -94,6 +98,10 @@ import menus_view.{
   EDIT_ACTIONS,
 }
 import settings_view.{
+  SetFontSize,
+  SetLineSpacing,
+  SetColor,
+  SetAnsi,
   settings_view,
   UseFamily,
   UseTheme,
@@ -116,8 +124,6 @@ import ui.{
   settings_panel,
   carry_out,
   theme_of,
-  channels,
-  packed,
   tab_bar,
   order_by,
   TabBar,
@@ -139,13 +145,13 @@ import settings.{
   defaults,
   settings_to_json,
   settings_from_json,
-  theme_colours,
+  theme_colors,
   THEME_NAMES,
   sections_of,
   can_save_as,
   save_theme,
   delete_theme,
-  colour_of,
+  color_of,
   hex_of,
   families_of,
   family_for,
@@ -153,7 +159,7 @@ import settings.{
   font_families,
   cjk_fallback,
   Settings,
-  Colours,
+  Colors,
   FontFamily,
 }
 import session.{
@@ -867,49 +873,49 @@ let check_settings = (host: Host) -> i64 => {
     settings_to_json(settings_from_json("{ nope")),
     settings_to_json(d)
   )
-  let odd = settings_from_json(`{"font_size": 99, "theme": "Nord", "colours": {"background": "#000000", "ansi": ["#fff"]}, "bold_is_bright": true}`)
+  let odd = settings_from_json(`{"font_size": 99, "theme": "Nord", "colors": {"background": "#000000", "ansi": ["#fff"]}, "bold_is_bright": true}`)
   failed += check("a size too large is the largest", "${odd.font_size}", "32")
   failed += check(
-    "the theme's colours",
-    hex_of(odd.colours.fg),
-    hex_of(theme_colours("Nord").fg)
+    "the theme's colors",
+    hex_of(odd.colors.fg),
+    hex_of(theme_colors("Nord").fg)
   )
-  failed += check("one written over them", hex_of(odd.colours.bg), "#000000")
+  failed += check("one written over them", hex_of(odd.colors.bg), "#000000")
   failed += check(
     "a short ANSI list is not taken",
-    "${odd.colours.ansi.len()} ${hex_of(odd.colours.ansi[1])}",
-    "16 ${hex_of(theme_colours("Nord").ansi[1])}"
+    "${odd.colors.ansi.len()} ${hex_of(odd.colors.ansi[1])}",
+    "16 ${hex_of(theme_colors("Nord").ansi[1])}"
   )
   failed += check("a flag", "${odd.bold_is_bright}", "true")
-  // The sections', tabs' and command line's colours: a file without them takes the theme's,
+  // The sections', tabs' and command line's colors: a file without them takes the theme's,
   // one with them keeps them; a theme's own shades are made from its background.
-  failed += check("the theme's sections", hex_of(odd.colours.input), "#3b4252")
+  failed += check("the theme's sections", hex_of(odd.colors.input), "#3b4252")
   failed += check(
     "Gruvbox, dark and light",
-    "${THEME_NAMES.contains("Gruvbox Dark")} ${hex_of(theme_colours("Gruvbox Dark").bg)} ${hex_of(theme_colours("Gruvbox Light").bg)}",
+    "${THEME_NAMES.contains("Gruvbox Dark")} ${hex_of(theme_colors("Gruvbox Dark").bg)} ${hex_of(theme_colors("Gruvbox Light").bg)}",
     "true #282828 #fbf1c7"
   )
-  let tabbed = settings_from_json(`{"colours": {"tab": "#123456", "menu_chosen": "#654321"}}`)
+  let tabbed = settings_from_json(`{"colors": {"tab": "#123456", "menu_chosen": "#654321"}}`)
   failed += check(
-    "tab and menu colours read",
-    "${hex_of(tabbed.colours.tab)} ${hex_of(tabbed.colours.menu_chosen)}",
+    "tab and menu colors read",
+    "${hex_of(tabbed.colors.tab)} ${hex_of(tabbed.colors.menu_chosen)}",
     "#123456 #654321"
   )
   // The input section's text: the theme's text until set; set, what its rows are drawn in.
   failed += check(
     "input text, the text's",
-    hex_of(d.colours.input_text),
-    hex_of(d.colours.fg)
+    hex_of(d.colors.input_text),
+    hex_of(d.colors.fg)
   )
-  let greened = Settings { d | colours: Colours { d.colours | input_text: 0x00FF00 } }
+  let greened = Settings { d | colors: Colors { d.colors | input_text: 0x00FF00 } }
   failed += check(
     "input rows' text",
     hex(theme_of(greened).for_input().fg),
     hex(abgr(0x00FF00))
   )
-  // Saved themes: the colours under a name of the user's (not one of Termina's), chosen
+  // Saved themes: the colors under a name of the user's (not one of Termina's), chosen
   // then; kept in the file, a theme named there found among them; deleted, Custom.
-  var mine = Settings { d | colours: Colours { d.colours | bg: 0x101010 } }
+  var mine = Settings { d | colors: Colors { d.colors | bg: 0x101010 } }
   failed += check(
     "Termina's names are not to save as",
     "${can_save_as("Nord")}|${can_save_as(" ")}|${can_save_as("Mine")}",
@@ -917,21 +923,34 @@ let check_settings = (host: Host) -> i64 => {
   )
   save_theme(mine, " Mine ")
   failed += check("saved and chosen", "${mine.themes.len()}|${mine.theme_name}", "1|Mine")
-  mine.colours = Colours { mine.colours | bg: 0x202020 }
+  mine.colors = Colors { mine.colors | bg: 0x202020 }
   save_theme(mine, "Mine")
   failed += check(
     "saved again, replaced",
-    "${mine.themes.len()}|${hex_of(mine.themes[0].colours.bg)}",
+    "${mine.themes.len()}|${hex_of(mine.themes[0].colors.bg)}",
     "1|#202020"
   )
   let reread = settings_from_json(settings_to_json(mine))
   failed += check("kept in the file", settings_to_json(reread), settings_to_json(mine))
-  let named = settings_from_json(`{"theme": "Mine", "themes": [{"name": "Mine", "colours": {"background": "#303030"}}]}`)
-  failed += check("a saved theme by name", hex_of(named.colours.bg), "#303030")
+  let named = settings_from_json(`{"theme": "Mine", "themes": [{"name": "Mine", "colors": {"background": "#303030"}}]}`)
+  failed += check("a saved theme by name", hex_of(named.colors.bg), "#303030")
+  // A file written before 10/20 spells it `colours`: its colors and saved themes are kept,
+  // and the next save writes `colors`.
+  let old = settings_from_json(`{"theme": "Custom", "colours": {"foreground": "#123456"}, "themes": [{"name": "Mine", "colours": {"background": "#abcdef"}}]}`)
+  failed += check(
+    "an old file's colours",
+    "${hex_of(old.colors.fg)} ${old.themes.len()} ${hex_of(old.themes[0].colors.bg)}",
+    "#123456 1 #abcdef"
+  )
+  failed += check(
+    "saved as colors",
+    "${settings_to_json(old).contains("\"colors\"")} ${settings_to_json(old).contains("colours")}",
+    "true false"
+  )
   delete_theme(mine, "Mine")
   failed += check(
-    "deleted, the colours stay",
-    "${mine.themes.len()}|${mine.theme_name}|${hex_of(mine.colours.bg)}",
+    "deleted, the colors stay",
+    "${mine.themes.len()}|${mine.theme_name}|${hex_of(mine.colors.bg)}",
     "0|Custom|#202020"
   )
   failed += check(
@@ -939,16 +958,16 @@ let check_settings = (host: Host) -> i64 => {
     "${hex_of(sections_of(0x181A1E).0)} ${hex_of(sections_of(0xFAF8F5).0)}",
     "#26282c #eeece9"
   )
-  failed += check("a colour read", "${colour_of("#1a2B3c") ?? 0}", "${u32(0x1A2B3C)}")
+  failed += check("a color read", "${color_of("#1a2B3c") ?? 0}", "${u32(0x1A2B3C)}")
   failed += check(
-    "not a colour",
-    "${colour_of("#12345") == None} ${colour_of("zzzzzz") == None}",
+    "not a color",
+    "${color_of("#12345") == None} ${color_of("zzzzzz") == None}",
     "true true"
   )
-  failed += check("a colour written", hex_of(0x0A0B0C), "#0a0b0c")
+  failed += check("a color written", hex_of(0x0A0B0C), "#0a0b0c")
   failed += check(
     "picker channels and back",
-    hex_of(packed(channels(0x3A6EA5))),
+    hex_of(rgb_of(rgb_channels(0x3A6EA5))),
     "#3a6ea5"
   )
 
@@ -1011,25 +1030,26 @@ let check_settings = (host: Host) -> i64 => {
 
   // The theme the settings make.
   let t = theme_of(d)
-  failed += check("the theme's background", hex(t.bg), hex(abgr(d.colours.bg)))
+  failed += check("the theme's background", hex(t.bg), hex(abgr(d.colors.bg)))
   failed += check("the selection is translucent", "${(t.selection >> 24) < 0xFF}", "true")
   failed += check(
-    "the palette from the ANSI colours",
+    "the palette from the ANSI colors",
     hex(t.palette[4]),
-    hex(abgr(d.colours.ansi[4]))
+    hex(abgr(d.colors.ansi[4]))
   )
 
-  // The settings draw, unchanged without input, every Slot drawn where the markup puts it.
+  // The settings draw, unchanged without input: the two sliders, a swatch for every color,
+  // and the ANSI sixteen.
   var s = defaults()
   var changed = false
   for _ in 0..<3 { changed = settings_frame(host, s, here) }
   failed += check("the settings draw, unchanged", "${changed}", "false")
-  slots_seen = []
-  let _ = slots_frame(host, here)
+  editors_seen = []
+  let _ = editors_frame(host, here)
   failed += check(
-    "the settings' slots",
-    slots_seen.join(","),
-    "font size,line spacing,colour fg,colour bg,colour cursor,colour selection,colour input,colour output,colour input_text,colour tab,colour tab_hovered,colour tab_selected,colour editor_text,colour menu,colour menu_chosen,ansi"
+    "the settings' sliders and colors",
+    editors_seen.join(","),
+    "slider Size,slider Line spacing,color fg,color bg,color cursor,color selection,color input,color output,color input_text,color tab,color tab_hovered,color tab_selected,color editor_text,color menu,color menu_chosen,${[k in 0..<16 | "color ansi ${k}"].join(",")}"
   )
 
   // The tab's events, carried out.
@@ -1050,8 +1070,8 @@ let check_settings = (host: Host) -> i64 => {
   let _ = carry_out(e, typed, UseTheme("Gruvbox Dark"))
   failed += check(
     "a theme chosen",
-    "${e.theme_name} ${hex(e.colours.bg)}",
-    "Gruvbox Dark ${hex(theme_colours("Gruvbox Dark").bg)}"
+    "${e.theme_name} ${hex(e.colors.bg)}",
+    "Gruvbox Dark ${hex(theme_colors("Gruvbox Dark").bg)}"
   )
   let named = carry_out(e, typed, NameTheme("Mine"))
   failed += check(
@@ -1064,6 +1084,28 @@ let check_settings = (host: Host) -> i64 => {
     "saved under it",
     "${e.themes.len()} ${e.theme_name} '${typed}'",
     "1 Mine ''"
+  )
+  // The sliders' and swatches' values: whole points; a color edited makes the theme
+  // Custom; an ANSI color is set in an array of its own, not the one every copy shares.
+  let sized = carry_out(e, typed, SetFontSize(15.6))
+  let _ = carry_out(e, typed, SetLineSpacing(1.25))
+  failed += check(
+    "the size and spacing slid",
+    "${e.font_size} ${e.line_spacing} ${sized.changed}",
+    "16 1.25 true"
+  )
+  let before = e.colors
+  let _ = carry_out(e, typed, SetColor("tab_hovered", 0x123456))
+  failed += check(
+    "a color picked",
+    "${hex_of(e.colors.tab_hovered)} ${e.theme_name}",
+    "#123456 Custom"
+  )
+  let _ = carry_out(e, typed, SetAnsi(3, 0xABCDEF))
+  failed += check(
+    "an ANSI color picked, alone",
+    "${hex_of(e.colors.ansi[3])} ${hex_of(before.ansi[3]) != "#abcdef"} ${hex_of(theme_colors("Termina Dark").ansi[3]) != "#abcdef"}",
+    "#abcdef true true"
   )
   let _ = carry_out(e, typed, ToggleBoldBright)
   failed += check(
@@ -1080,17 +1122,19 @@ let check_settings = (host: Host) -> i64 => {
   failed
 }
 
-/// The Slots the settings' markup asked for, in the order drawn.
-var slots_seen: []string = []
+/// The sliders and color editors the settings drew, by id, in the order drawn.
+var editors_seen: []string = []
 
-/// One frame of the settings' markup alone, noting each Slot.
-let slots_frame = (host: Host, families: []FontFamily) -> bool => {
+/// One frame of the settings' markup alone, noting each slider and color editor.
+let editors_frame = (host: Host, families: []FontFamily) -> bool => {
   if !begin_frame(host) { return false }
   set_next_window_pos(Vec2 { x: 0.0, y: 0.0 })
   set_next_window_size(Vec2 { x: 800.0, y: 400.0 })
-  let _ = begin("slots", WINDOW_FLAGS_NO_DECORATION)
-  let _ = render([settings_view(defaults(), families, "")], (node) => {
-    if let Slot(name) = node { slots_seen.push(name) }
+  let _ = begin("editors", WINDOW_FLAGS_NO_DECORATION)
+  let _ = render([settings_view(defaults(), families, "")], (node) => match node {
+    Slider(_) => editors_seen.push(node_id(node)),
+    ColorEdit(_) => editors_seen.push(node_id(node)),
+    _ => {},
   })
   end()
   end_frame(host, 0.0, 0.0, 0.0)
@@ -1117,16 +1161,16 @@ let check_meta_and_bright = () -> i64 => {
   let off = dark_theme()
   let on = Theme { off | bold_is_bright: true }
   let bold_red = Cell { ch: 'x', fg: indexed(1), bg: DEFAULT, attrs: BOLD }
-  failed += check("bold red, as asked", hex(off.colours(bold_red).0), hex(off.palette[1]))
-  failed += check("bold red, bright", hex(on.colours(bold_red).0), hex(off.palette[9]))
+  failed += check("bold red, as asked", hex(off.colors(bold_red).0), hex(off.palette[1]))
+  failed += check("bold red, bright", hex(on.colors(bold_red).0), hex(off.palette[9]))
   let bold_208 = Cell { ch: 'x', fg: indexed(208), bg: DEFAULT, attrs: BOLD }
   failed += check(
     "past the first eight, as asked",
-    hex(on.colours(bold_208).0),
+    hex(on.colors(bold_208).0),
     hex(off.palette[208])
   )
   let plain_red = Cell { ch: 'x', fg: indexed(1), bg: DEFAULT, attrs: 0 }
-  failed += check("not bold, as asked", hex(on.colours(plain_red).0), hex(off.palette[1]))
+  failed += check("not bold, as asked", hex(on.colors(plain_red).0), hex(off.palette[1]))
   failed
 }
 
@@ -1587,7 +1631,7 @@ let check_typed_ahead = () -> i64 => {
   failed
 }
 
-// The theme: what a cell's recorded colours look like.
+// The theme: what a cell's recorded colors look like.
 let check_theme = () -> i64 => {
   let t = dark_theme()
   var failed = 0
@@ -1596,10 +1640,10 @@ let check_theme = () -> i64 => {
   failed += check("cube white", hex(t.palette[231]), hex(abgr(0xFFFFFF)))
   failed += check("cube 0,95,135", hex(t.palette[16 + 1 * 6 + 2]), hex(abgr(0x005F87)))
   failed += check("first grey", hex(t.palette[232]), hex(abgr(0x080808)))
-  failed += check("24-bit", hex(t.colour(rgb(1, 2, 3), 0)), hex(abgr(0x010203)))
-  let (fg, bg) = t.colours(Cell { ch: 'x', fg: DEFAULT, bg: DEFAULT, attrs: 0 })
+  failed += check("24-bit", hex(t.color(rgb(1, 2, 3), 0)), hex(abgr(0x010203)))
+  let (fg, bg) = t.colors(Cell { ch: 'x', fg: DEFAULT, bg: DEFAULT, attrs: 0 })
   failed += check("plain", "${hex(fg)} ${bg == None}", "${hex(t.fg)} true")
-  let (ifg, ibg) = t.colours(Cell { ch: 'x', fg: DEFAULT, bg: DEFAULT, attrs: INVERSE })
+  let (ifg, ibg) = t.colors(Cell { ch: 'x', fg: DEFAULT, bg: DEFAULT, attrs: INVERSE })
   failed += check(
     "inverse of the defaults",
     "${hex(ifg)} ${hex(ibg ?? 0)}",
@@ -1608,18 +1652,18 @@ let check_theme = () -> i64 => {
   let (
     rfg,
     rbg
-  ) = t.colours(Cell { ch: 'x', fg: indexed(1), bg: indexed(4), attrs: INVERSE })
+  ) = t.colors(Cell { ch: 'x', fg: indexed(1), bg: indexed(4), attrs: INVERSE })
   failed += check(
-    "inverse of colours",
+    "inverse of colors",
     "${hex(rfg)} ${hex(rbg ?? 0)}",
     "${hex(t.palette[4])} ${hex(t.palette[1])}"
   )
   let (
     hfg,
     _
-  ) = t.colours(Cell { ch: 'x', fg: indexed(1), bg: indexed(4), attrs: HIDDEN })
+  ) = t.colors(Cell { ch: 'x', fg: indexed(1), bg: indexed(4), attrs: HIDDEN })
   failed += check("hidden is the background", hex(hfg), hex(t.palette[4]))
-  let (dfg, _) = t.colours(Cell { ch: 'x', fg: DEFAULT, bg: DEFAULT, attrs: DIM })
+  let (dfg, _) = t.colors(Cell { ch: 'x', fg: DEFAULT, bg: DEFAULT, attrs: DIM })
   failed += check("dim is nearer the background", "${hex(dfg) != hex(t.fg)}", "true")
   failed
 }

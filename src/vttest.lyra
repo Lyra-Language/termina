@@ -116,7 +116,7 @@ let installed = (paths: []string, what: string) -> bool => {
   false
 }
 
-// The command line's colouring: each rune's kind, a letter each — P plain, C command, O
+// The command line's coloring: each rune's kind, a letter each — P plain, C command, O
 // option, Q quoted, V variable, X operator, # comment.
 let check_syntax = () -> i64 => {
   var failed = 0
@@ -199,7 +199,7 @@ let check_screen = () -> i64 => {
   failed
 }
 
-// SGR: colours in each spelling, attributes set and cleared, and erases on the pen's
+// SGR: colors in each spelling, attributes set and cleared, and erases on the pen's
 // background.
 let check_style = () -> i64 => {
   var failed = 0
@@ -223,7 +223,7 @@ let check_style = () -> i64 => {
     style(rgb(10, 20, 30), DEFAULT, 0)
   )
   failed += check(
-    "24-bit, colons, no colour space",
+    "24-bit, colons, no color space",
     style_at("\e[48:2:10:20:30mx", 0),
     style(DEFAULT, rgb(10, 20, 30), 0)
   )
@@ -233,7 +233,7 @@ let check_style = () -> i64 => {
     style(DEFAULT, indexed(17), 0)
   )
   failed += check(
-    "codes around a colour",
+    "codes around a color",
     style_at("\e[1;38;5;9;4mx", 0),
     style(indexed(9), DEFAULT, BOLD | UNDERLINE)
   )
@@ -268,7 +268,7 @@ let check_style = () -> i64 => {
     style(DEFAULT, DEFAULT, 0)
   )
   failed += check(
-    "a colour cut short",
+    "a color cut short",
     style_at("\e[38;5mx", 0),
     style(DEFAULT, DEFAULT, 0)
   )
@@ -437,11 +437,11 @@ let check_reports = () -> i64 => {
   failed += check("DECRQM reset", replies("\e[?1$p"), "\\e[?1;2$y")
   failed += check("DECRQM unknown", replies("\e[?9999$p"), "\\e[?9999;0$y")
   failed += check(
-    "background colour",
+    "background color",
     replies("\e]11;?\x07"),
     "\\e]11;rgb:1818/1a1a/1e1e\\e\\"
   )
-  failed += check("text colour", replies("\e]10;?\e\\"), "\\e]10;rgb:e6e6/e1e1/dcdc\\e\\")
+  failed += check("text color", replies("\e]10;?\e\\"), "\\e]10;rgb:e6e6/e1e1/dcdc\\e\\")
   failed += check("several, in order", replies("\e[c\e[5n"), "\\e[?62;22c|\\e[0n")
   failed += check("no question, no answer", replies("hello\e[m"), "")
   failed

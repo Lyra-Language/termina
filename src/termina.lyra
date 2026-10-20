@@ -4,7 +4,7 @@
 //   build/termina              the login shell ($SHELL, else /bin/sh), in the home directory
 //   build/termina CMD [ARG…]   that program instead, in this directory (as `xterm -e`)
 //
-// A classic terminal, in colour, in tabs, whose command line is an editor of its own while
+// A classic terminal, in color, in tabs, whose command line is an editor of its own while
 // zsh is at a prompt (its integration says when — shell/shell.lyra; the keys are in
 // ui/command_line.lyra). Each tab is a session (session/session.lyra); a tab closes when
 // its program ends, and the window with its last. ⌘V (Ctrl+Shift+V off macOS) pastes; the
@@ -106,7 +106,7 @@ import ui.{
   settings_panel,
   SettingsAsk,
   theme_of,
-  clear_colour,
+  clear_color,
   OpenSettings,
   FontBigger,
   FontSmaller,
@@ -152,7 +152,7 @@ let main = () -> void => {
   var settings_open = false
   var select_settings = false
   var on_settings = false
-  // What is typed in the settings window to save the colours as a theme.
+  // What is typed in the settings window to save the colors as a theme.
   var theme_name_typed = ""
   let home = lookup("HOME") ?? ""
   // A program given on the command line runs in the first tab instead of the shell,
@@ -323,7 +323,7 @@ let main = () -> void => {
       title = now
       set_window_title(host, title)
     }
-    let clear = clear_colour(theme)
+    let clear = clear_color(theme)
     end_frame(host, clear.0, clear.1, clear.2)
   }
   for s in sessions { close_session(s) }

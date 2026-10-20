@@ -1,6 +1,6 @@
 module editor
-//! The command line's syntax, for colouring it: each rune's kind, from a lexer of the shell
-//! language small enough to be wrong only quietly — it never decides anything but a colour.
+//! The command line's syntax, for coloring it: each rune's kind, from a lexer of the shell
+//! language small enough to be wrong only quietly — it never decides anything but a color.
 //!
 //! **What it knows**: words and blanks; `'…'`, `"…"` and `$'…'` quoting, and `\` escapes;
 //! `$NAME`, `${…}` and `$(`; the operators `| & ; ( ) < >` and their doubles; `#` comments at

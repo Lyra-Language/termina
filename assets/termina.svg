@@ -1,6 +1,6 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024">
   <!-- Termina's icon: a prompt and its cursor, and a star of Lyra's. The body sits on macOS's
-       icon grid (824 square, 100 in from each edge); the colours are the default theme's. -->
+       icon grid (824 square, 100 in from each edge); the colors are the default theme's. -->
   <defs>
     <linearGradient id="body" x1="0" y1="0" x2="0" y2="1">
       <stop offset="0" stop-color="#2B2F37"/>

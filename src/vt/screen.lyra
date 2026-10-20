@@ -2,7 +2,7 @@ module vt
 //! The screen a program draws on: a grid of cells, a cursor, and the lines that have scrolled
 //! off the top. [Screen.apply] carries out the parser's [Action]s; nothing here reads bytes.
 //!
-//! **What it models**: text in colour with attributes (`style.lyra`), the cursor movements
+//! **What it models**: text in color with attributes (`style.lyra`), the cursor movements
 //! and erases a shell's line editor uses (`\r`, backspace, tabs, `\e[K`, `\e[J`, cursor
 //! positioning), scrolling with a scroll region, xterm's deferred wrap at the last column,
 //! the window title, the shell's marks, and the DEC private modes full-screen programs use:
@@ -82,9 +82,9 @@ pub struct Screen {
   alternate_scroll: bool,
   focus_events: bool,
   /// Answers to the program's questions — what terminal this is, where the cursor is,
-  /// which colours — waiting to be written to it ([Screen.take_replies]).
+  /// which colors — waiting to be written to it ([Screen.take_replies]).
   replies: []string,
-  /// The colours reported to a program that asks (OSC 10, 11, 12), as `rgb:` triples of
+  /// The colors reported to a program that asks (OSC 10, 11, 12), as `rgb:` triples of
   /// 16-bit hex: the theme's text and background. vim and neovim ask, to choose a dark or a
   /// light scheme.
   fg_report: string,
@@ -439,7 +439,7 @@ impl Screen {
     ) }
     else if f == 's' { self.save_cursor() }
     else if f == 'u' { self.restore_cursor() }
-    // `m` (colours) and everything else: not yet.
+    // `m` (colors) and everything else: not yet.
   }
 
   let esc = (self: mut, seq: EscSequence) -> void => {
@@ -465,7 +465,7 @@ impl Screen {
     } else if text.starts_with("133;") {
       self.shell_mark(text.slice(4, text.len()))
     } else if text == "10;?" || text == "11;?" || text == "12;?" {
-      // A colour asked for: the text's (10, and the cursor's, 12) or the background's (11).
+      // A color asked for: the text's (10, and the cursor's, 12) or the background's (11).
       let triple = if text == "11;?" { self.bg_report } else { self.fg_report }
       self.replies.push("\e]${text.slice(0, 2)};rgb:${triple}\e\\")
     } else if text.starts_with("7770;") {
@@ -521,7 +521,7 @@ impl Screen {
   let report = (self: mut, seq: CsiSequence) -> bool => {
     let f = seq.final
     let plain = seq.intermediates == ""
-    // DA1 — what this is: a VT220 with ANSI colour, as most terminals answer.
+    // DA1 — what this is: a VT220 with ANSI color, as most terminals answer.
     if seq.marker == "" && plain && f == 'c' && seq.param_or(0, 0) == 0 {
       self.replies.push("\e[?62;22c")
     } else if seq.marker == ">" && plain && f == 'c' {

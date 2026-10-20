@@ -1,5 +1,5 @@
 module settings
-//! What the user has chosen — the font, its size, the line spacing, the colours — kept in
+//! What the user has chosen — the font, its size, the line spacing, the colors — kept in
 //! `$XDG_CONFIG_HOME/termina/settings.json` (else `~/.config/…`) and read at start. The
 //! settings window (`../ui/settings_window.lyra`) changes it; the theme and the faces are
 //! made from it (`../ui/theme.lyra`'s [theme_of], `../termina.lyra`).
@@ -8,7 +8,7 @@ module settings
 //! its default, so a file written by an older or newer Termina, or edited by hand, still
 //! starts — with what of it makes sense.
 //!
-//! A colour is `0xRRGGBB` here, as people write them; `#rrggbb` in the file.
+//! A color is `0xRRGGBB` here, as people write them; `#rrggbb` in the file.
 
 import std.env.{ lookup }
 import std.io.{ read_file, write_file, create_dir_all, read_dir }
@@ -33,22 +33,22 @@ pub struct Settings {
   /// The text's size in points, and a line's height as a multiple of it.
   font_size: f32,
   line_spacing: f32,
-  /// The theme the colours came from, by name — `"Custom"` once one is changed.
+  /// The theme the colors came from, by name — `"Custom"` once one is changed.
   theme_name: string,
-  colours: Colours,
+  colors: Colors,
   /// The themes the user saved, in the order saved.
   themes: []SavedTheme,
   bold_is_bright: bool,
 }
 
-/// A theme the user saved: its name, none of Termina's own, and its colours.
+/// A theme the user saved: its name, none of Termina's own, and its colors.
 pub struct SavedTheme {
   name: string,
-  colours: Colours,
+  colors: Colors,
 }
 
-/// A theme's colours, each `0xRRGGBB`.
-pub struct Colours {
+/// A theme's colors, each `0xRRGGBB`.
+pub struct Colors {
   fg: u32,
   bg: u32,
   cursor: u32,
@@ -58,10 +58,10 @@ pub struct Colours {
   input: u32,
   output: u32,
   /// The input section's text — the prompt and command, where a program gave them no
-  /// colour of their own.
+  /// color of their own.
   input_text: u32,
   /// The tabs' backgrounds: a tab's, under the pointer, and the one shown. Their labels are
-  /// in the text's colour.
+  /// in the text's color.
   tab: u32,
   tab_hovered: u32,
   tab_selected: u32,
@@ -69,7 +69,7 @@ pub struct Colours {
   editor_text: u32,
   menu: u32,
   menu_chosen: u32,
-  /// The 16 ANSI colours: black, red, green, yellow, blue, magenta, cyan, white, then
+  /// The 16 ANSI colors: black, red, green, yellow, blue, magenta, cyan, white, then
   /// their bright versions.
   ansi: []u32,
 }
@@ -81,7 +81,7 @@ pub let defaults = pure () -> Settings => Settings {
   font_size: 14.0,
   line_spacing: 1.2,
   theme_name: "Termina Dark",
-  colours: theme_colours("Termina Dark"),
+  colors: theme_colors("Termina Dark"),
   themes: [],
   bold_is_bright: false,
 }
@@ -104,10 +104,10 @@ pub const THEME_NAMES: []string = [
   "Gruvbox Light",
 ]
 
-/// A theme's colours by name; Termina Dark's for a name not known.
-pub let theme_colours = pure (name: string) -> Colours => {
+/// A theme's colors by name; Termina Dark's for a name not known.
+pub let theme_colors = pure (name: string) -> Colors => {
   if name == "Termina Light" {
-    return colours_of(
+    return colors_of(
       0x2B2D33,
       0xFAF8F5,
       0x2B2D33,
@@ -121,7 +121,7 @@ pub let theme_colours = pure (name: string) -> Colours => {
   }
   if name == "Solarized Dark" || name == "Solarized Light" {
     let dark = name == "Solarized Dark"
-    return colours_of(
+    return colors_of(
       if dark { 0x839496 } else { 0x657B83 },
       if dark { 0x002B36 } else { 0xFDF6E3 },
       if dark { 0x93A1A1 } else { 0x586E75 },
@@ -135,7 +135,7 @@ pub let theme_colours = pure (name: string) -> Colours => {
     )
   }
   if name == "Dracula" {
-    return colours_of(
+    return colors_of(
       0xF8F8F2,
       0x282A36,
       0xF8F8F2,
@@ -149,7 +149,7 @@ pub let theme_colours = pure (name: string) -> Colours => {
   }
   if name == "Gruvbox Dark" || name == "Gruvbox Light" {
     let dark = name == "Gruvbox Dark"
-    return colours_of(
+    return colors_of(
       if dark { 0xEBDBB2 } else { 0x3C3836 },
       if dark { 0x282828 } else { 0xFBF1C7 },
       if dark { 0xEBDBB2 } else { 0x3C3836 },
@@ -170,7 +170,7 @@ pub let theme_colours = pure (name: string) -> Colours => {
     )
   }
   if name == "Nord" {
-    return colours_of(
+    return colors_of(
       0xD8DEE9,
       0x2E3440,
       0xD8DEE9,
@@ -184,7 +184,7 @@ pub let theme_colours = pure (name: string) -> Colours => {
     )
   }
   // Termina Dark: the window's #181A1E behind #E6E1DC, an ANSI set in the spirit of One Dark.
-  colours_of(
+  colors_of(
     0xE6E1DC,
     0x181A1E,
     0xE6E1DC,
@@ -197,19 +197,19 @@ pub let theme_colours = pure (name: string) -> Colours => {
   )
 }
 
-/// A theme from its own colours — text, background, cursor, selection, the sections' input
+/// A theme from its own colors — text, background, cursor, selection, the sections' input
 /// and output, the ANSI sixteen — and the rest made from them: tabs from the input
 /// section's shade towards the text (the selected one the selection's), the command line's
 /// text the theme's, its completion menu a shade off the background and its chosen row
 /// towards the selection.
-let colours_of = pure (
+let colors_of = pure (
   fg: u32,
   bg: u32,
   cursor: u32,
   selection: u32,
   sections: (u32, u32),
   ansi: []u32
-) -> Colours => Colours {
+) -> Colors => Colors {
   fg: fg,
   bg: bg,
   cursor: cursor,
@@ -231,12 +231,12 @@ let colours_of = pure (
 pub let can_save_as = pure (name: string) -> bool =>
   name.trim() != "" && name.trim() != "Custom" && !THEME_NAMES.contains(name.trim())
 
-/// The current colours saved as theme `name` (one of that name replaced), and made the
+/// The current colors saved as theme `name` (one of that name replaced), and made the
 /// current theme. Nothing for a name [can_save_as] refuses.
 pub let save_theme = (s: mut Settings, name: string) -> void => {
   if !can_save_as(name) { return }
   let n = name.trim()
-  let saved = SavedTheme { name: n, colours: s.colours }
+  let saved = SavedTheme { name: n, colors: s.colors }
   var replaced = false
   for k in 0..<s.themes.len() {
     if s.themes[k].name == n {
@@ -248,22 +248,68 @@ pub let save_theme = (s: mut Settings, name: string) -> void => {
   s.theme_name = n
 }
 
-/// Saved theme `name` gone; the colours stay, a theme of their own now (`Custom`) if it was
+/// Saved theme `name` gone; the colors stay, a theme of their own now (`Custom`) if it was
 /// the current one.
 pub let delete_theme = (s: mut Settings, name: string) -> void => {
   s.themes = [t in s.themes | t.name != name | t]
   if s.theme_name == name { s.theme_name = "Custom" }
 }
 
-/// Saved theme `name`'s colours, if there is one.
-pub let saved_colours = pure (themes: []SavedTheme, name: string) -> Maybe<Colours> => {
-  for t in themes { if t.name == name { return Some(t.colours) } }
+/// Saved theme `name`'s colors, if there is one.
+pub let saved_colors = pure (themes: []SavedTheme, name: string) -> Maybe<Colors> => {
+  for t in themes { if t.name == name { return Some(t.colors) } }
   None
+}
+
+/// The color a [Colors] field holds, by the field's name (`"fg"`, `"tab_hovered"`, …; not
+/// `ansi`): what the settings' color editors are named by. 0 for any other name.
+pub let color_named = pure (c: Colors, field: string) -> u32 => match field {
+  "fg" => c.fg,
+  "bg" => c.bg,
+  "cursor" => c.cursor,
+  "selection" => c.selection,
+  "input" => c.input,
+  "output" => c.output,
+  "input_text" => c.input_text,
+  "tab" => c.tab,
+  "tab_hovered" => c.tab_hovered,
+  "tab_selected" => c.tab_selected,
+  "editor_text" => c.editor_text,
+  "menu" => c.menu,
+  "menu_chosen" => c.menu_chosen,
+  _ => 0,
+}
+
+/// `c` with the field named `field` (as [color_named] names them) set to `rgb`; `c` itself
+/// for any other name.
+pub let with_color = pure (c: Colors, field: string, rgb: u32) -> Colors => match field {
+  "fg" => Colors { c | fg: rgb },
+  "bg" => Colors { c | bg: rgb },
+  "cursor" => Colors { c | cursor: rgb },
+  "selection" => Colors { c | selection: rgb },
+  "input" => Colors { c | input: rgb },
+  "output" => Colors { c | output: rgb },
+  "input_text" => Colors { c | input_text: rgb },
+  "tab" => Colors { c | tab: rgb },
+  "tab_hovered" => Colors { c | tab_hovered: rgb },
+  "tab_selected" => Colors { c | tab_selected: rgb },
+  "editor_text" => Colors { c | editor_text: rgb },
+  "menu" => Colors { c | menu: rgb },
+  "menu_chosen" => Colors { c | menu_chosen: rgb },
+  _ => c,
+}
+
+/// `c` with ANSI color `k` set to `rgb`, in an array of its own: `c`'s is shared with every
+/// copy of these colors, a saved theme's among them.
+pub let with_ansi = pure (c: Colors, k: i64, rgb: u32) -> Colors => {
+  var ansi = [...c.ansi]
+  if k >= 0 && k < ansi.len() { ansi[k] = rgb }
+  Colors { c | ansi: ansi }
 }
 
 /// Whether no theme among `themes` is called `name`.
 let is_free_name = pure (themes: []SavedTheme, name: string) -> bool =>
-  saved_colours(themes, name) == None
+  saved_colors(themes, name) == None
 
 /// The sections' backgrounds a theme of background `bg` has, input and output: a dark one
 /// lightened, 6% towards white and 3%; a light one darkened, 5% towards black and 2.5%.
@@ -315,6 +361,15 @@ let config_dir = () -> string => match lookup("XDG_CONFIG_HOME") {
 /// The terminal's name before it was Termina, where its settings may still be.
 const OLD_NAME: string = "sulafat"
 
+/// An object's colors in the file: `colors`, else `colours`, as the file was written before
+/// 10/20 — a user's colors and saved themes are kept, and the next save writes `colors`.
+let colors_in = pure (v: JsonValue) -> JsonValue => match v.field("colors") {
+  Some(c) => c,
+  None => v.field(OLD_COLORS_KEY) ?? JsonObject([]),
+}
+
+const OLD_COLORS_KEY: string = "colours"
+
 /// Keep `s` at `path`, making its directory; whether it was written.
 pub let save_settings = (path: string, s: Settings) -> bool => {
   match path.parent() {
@@ -332,10 +387,10 @@ pub let settings_to_json = pure (s: Settings) -> string => JsonObject([
   member("line_spacing", JsonNumber(f64(s.line_spacing))),
   member("theme", JsonString(s.theme_name)),
   member("bold_is_bright", JsonBool(s.bold_is_bright)),
-  member("colours", colours_to_json(s.colours)),
+  member("colors", colors_to_json(s.colors)),
   member("themes", JsonArray([t in s.themes | JsonObject([
     member("name", JsonString(t.name)),
-    member("colours", colours_to_json(t.colours)),
+    member("colors", colors_to_json(t.colors)),
   ])])),
 ]).to_json_pretty()
 
@@ -347,24 +402,24 @@ pub let settings_from_json = pure (text: string) -> Settings => {
     Ok(v) => v,
     Err(_) => return d,
   }
-  // The saved themes, each with a name and its colours over the default theme's.
+  // The saved themes, each with a name and its colors over the default theme's.
   var themes: []SavedTheme = []
   for t in (doc.field("themes") ?? JsonArray([])).elements() {
     let name = text_field(t, "name") ?? ""
     if name != "" && is_free_name(themes, name) {
       themes.push(SavedTheme {
         name: name,
-        colours: colours_from_json(t.field("colours") ?? JsonObject([]), d.colours),
+        colors: colors_from_json(colors_in(t), d.colors),
       })
     }
   }
   let theme = text_field(doc, "theme") ?? d.theme_name
-  // The theme's colours first — a saved one's or one of Termina's — then any written out
+  // The theme's colors first — a saved one's or one of Termina's — then any written out
   // over them.
-  let base = if theme == "Custom" { d.colours } else { saved_colours(
+  let base = if theme == "Custom" { d.colors } else { saved_colors(
     themes,
     theme
-  ) ?? theme_colours(theme) }
+  ) ?? theme_colors(theme) }
   Settings {
     font_family: text_field(doc, "font_family") ?? d.font_family,
     font_file: text_field(doc, "font_file") ?? d.font_file,
@@ -374,14 +429,14 @@ pub let settings_from_json = pure (text: string) -> Settings => {
       LINE_SPACING_RANGE.1
     ),
     theme_name: theme,
-    colours: colours_from_json(doc.field("colours") ?? JsonObject([]), base),
+    colors: colors_from_json(colors_in(doc), base),
     themes: themes,
     bold_is_bright: (doc.field("bold_is_bright") ?? JsonBool(d.bold_is_bright)).as_bool() ?? d.bold_is_bright,
   }
 }
 
-/// A theme's colours as the file holds them, `#rrggbb` each.
-let colours_to_json = pure (c: Colours) -> JsonValue => JsonObject([
+/// A theme's colors as the file holds them, `#rrggbb` each.
+let colors_to_json = pure (c: Colors) -> JsonValue => JsonObject([
   member("foreground", JsonString(hex_of(c.fg))),
   member("background", JsonString(hex_of(c.bg))),
   member("cursor", JsonString(hex_of(c.cursor))),
@@ -398,36 +453,36 @@ let colours_to_json = pure (c: Colours) -> JsonValue => JsonObject([
   member("ansi", JsonArray([x in c.ansi | JsonString(hex_of(x))])),
 ])
 
-/// Colours from the file's object `c`: each written there that makes sense, `base`'s for
+/// Colors from the file's object `c`: each written there that makes sense, `base`'s for
 /// the rest — the ANSI sixteen only when all sixteen are.
-let colours_from_json = pure (c: JsonValue, base: Colours) -> Colours => {
+let colors_from_json = pure (c: JsonValue, base: Colors) -> Colors => {
   var ansi = base.ansi
   let written = (c.field("ansi") ?? JsonArray([])).elements()
   if written.len() == 16 {
     var whole = true
     var read: []u32 = []
     for v in written {
-      match colour_of(v.as_text() ?? "") {
+      match color_of(v.as_text() ?? "") {
         Some(rgb) => read.push(rgb),
         None => { whole = false },
       }
     }
     if whole { ansi = read }
   }
-  Colours {
-    fg: colour_field(c, "foreground") ?? base.fg,
-    bg: colour_field(c, "background") ?? base.bg,
-    cursor: colour_field(c, "cursor") ?? base.cursor,
-    selection: colour_field(c, "selection") ?? base.selection,
-    input: colour_field(c, "input") ?? base.input,
-    output: colour_field(c, "output") ?? base.output,
-    input_text: colour_field(c, "input_text") ?? base.input_text,
-    tab: colour_field(c, "tab") ?? base.tab,
-    tab_hovered: colour_field(c, "tab_hovered") ?? base.tab_hovered,
-    tab_selected: colour_field(c, "tab_selected") ?? base.tab_selected,
-    editor_text: colour_field(c, "command_text") ?? base.editor_text,
-    menu: colour_field(c, "menu") ?? base.menu,
-    menu_chosen: colour_field(c, "menu_chosen") ?? base.menu_chosen,
+  Colors {
+    fg: color_field(c, "foreground") ?? base.fg,
+    bg: color_field(c, "background") ?? base.bg,
+    cursor: color_field(c, "cursor") ?? base.cursor,
+    selection: color_field(c, "selection") ?? base.selection,
+    input: color_field(c, "input") ?? base.input,
+    output: color_field(c, "output") ?? base.output,
+    input_text: color_field(c, "input_text") ?? base.input_text,
+    tab: color_field(c, "tab") ?? base.tab,
+    tab_hovered: color_field(c, "tab_hovered") ?? base.tab_hovered,
+    tab_selected: color_field(c, "tab_selected") ?? base.tab_selected,
+    editor_text: color_field(c, "command_text") ?? base.editor_text,
+    menu: color_field(c, "menu") ?? base.menu,
+    menu_chosen: color_field(c, "menu_chosen") ?? base.menu_chosen,
     ansi: ansi,
   }
 }
@@ -436,7 +491,7 @@ let colours_from_json = pure (c: JsonValue, base: Colours) -> Colours => {
 pub let hex_of = pure (rgb: u32) -> string => "#${(rgb & 0xFFFFFF).to_hex(6)}"
 
 /// `#rrggbb` (or `rrggbb`) as `0xRRGGBB`; `None` for anything else.
-pub let colour_of = pure (text: string) -> Maybe<u32> => {
+pub let color_of = pure (text: string) -> Maybe<u32> => {
   let digits = if text.starts_with("#") { text.slice(1, text.len()) } else { text }
   if digits.len() != 6 { return None }
   var v: u32 = 0
@@ -466,9 +521,9 @@ let number_field = pure (doc: JsonValue, key: string) -> Maybe<f64> =>
     None => None,
   }
 
-let colour_field = pure (doc: JsonValue, key: string) -> Maybe<u32> =>
+let color_field = pure (doc: JsonValue, key: string) -> Maybe<u32> =>
   match text_field(doc, key) {
-    Some(t) => colour_of(t),
+    Some(t) => color_of(t),
     None => None,
   }
 

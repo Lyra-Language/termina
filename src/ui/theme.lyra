@@ -1,10 +1,10 @@
 module ui
-//! The colours a cell's style is drawn in. The screen records what a program asked for —
+//! The colors a cell's style is drawn in. The screen records what a program asked for —
 //! palette entry 1, the default background (`../vt/style.lyra`) — and the theme says what
-//! that looks like: its own foreground and background, the 16 ANSI colours, and xterm's
-//! 256-colour palette built from them.
+//! that looks like: its own foreground and background, the 16 ANSI colors, and xterm's
+//! 256-color palette built from them.
 //!
-//! Colours here are ImGui's: `0xAABBGGRR`, as `IM_COL32` packs them. A theme is made from
+//! Colors here are ImGui's: `0xAABBGGRR`, as `IM_COL32` packs them. A theme is made from
 //! the user's settings ([theme_of]); `../settings/settings.lyra` holds the themes offered.
 
 import settings.{ Settings, defaults }
@@ -20,18 +20,18 @@ import vt.{
   rgb_of,
 }
 
-/// A theme: its own text and background colours, and a 256-entry palette.
+/// A theme: its own text and background colors, and a 256-entry palette.
 pub struct Theme {
   fg: u32,
   bg: u32,
-  /// The cursor's colour, and the selection's (drawn over the text, so translucent).
+  /// The cursor's color, and the selection's (drawn over the text, so translucent).
   cursor: u32,
   selection: u32,
   /// The sections' backgrounds: the input's (the box, a block's prompt and command) and a
-  /// block's output's; and the rule along the box's top, the text's colour faintly.
+  /// block's output's; and the rule along the box's top, the text's color faintly.
   input: u32,
   output: u32,
-  /// The input section's text, where a program gave it no colour ([Theme.for_input]).
+  /// The input section's text, where a program gave it no color ([Theme.for_input]).
   input_text: u32,
   rule: u32,
   /// The tabs' backgrounds — a tab, the one under the pointer, the one shown — and the
@@ -43,28 +43,28 @@ pub struct Theme {
   menu: u32,
   menu_chosen: u32,
   palette: []u32,
-  /// Draw bold text in colours 0–7 as their bright versions (8–15), as older programs that
-  /// used bold *for* brightness expect. Off: bold is a heavier face, the colour as asked.
+  /// Draw bold text in colors 0–7 as their bright versions (8–15), as older programs that
+  /// used bold *for* brightness expect. Off: bold is a heavier face, the color as asked.
   bold_is_bright: bool,
 }
 
 /// The theme the settings describe.
 pub let theme_of = pure (s: Settings) -> Theme => Theme {
-  fg: abgr(s.colours.fg),
-  bg: abgr(s.colours.bg),
-  cursor: abgr(s.colours.cursor),
-  selection: (abgr(s.colours.selection) & 0x00FFFFFF) | 0x99000000,
-  input: abgr(s.colours.input),
-  output: abgr(s.colours.output),
-  input_text: abgr(s.colours.input_text),
-  rule: (abgr(s.colours.fg) & 0x00FFFFFF) | 0x30000000,
-  tab: abgr(s.colours.tab),
-  tab_hovered: abgr(s.colours.tab_hovered),
-  tab_selected: abgr(s.colours.tab_selected),
-  editor_text: abgr(s.colours.editor_text),
-  menu: abgr(s.colours.menu),
-  menu_chosen: abgr(s.colours.menu_chosen),
-  palette: palette_256(s.colours.ansi),
+  fg: abgr(s.colors.fg),
+  bg: abgr(s.colors.bg),
+  cursor: abgr(s.colors.cursor),
+  selection: (abgr(s.colors.selection) & 0x00FFFFFF) | 0x99000000,
+  input: abgr(s.colors.input),
+  output: abgr(s.colors.output),
+  input_text: abgr(s.colors.input_text),
+  rule: (abgr(s.colors.fg) & 0x00FFFFFF) | 0x30000000,
+  tab: abgr(s.colors.tab),
+  tab_hovered: abgr(s.colors.tab_hovered),
+  tab_selected: abgr(s.colors.tab_selected),
+  editor_text: abgr(s.colors.editor_text),
+  menu: abgr(s.colors.menu),
+  menu_chosen: abgr(s.colors.menu_chosen),
+  palette: palette_256(s.colors.ansi),
   bold_is_bright: s.bold_is_bright,
 }
 
@@ -72,20 +72,20 @@ pub let theme_of = pure (s: Settings) -> Theme => Theme {
 pub let dark_theme = pure () -> Theme => theme_of(defaults())
 
 impl Theme {
-  /// The theme an input section's text is drawn in: its default text the input's colour.
+  /// The theme an input section's text is drawn in: its default text the input's color.
   pub let for_input = pure (self) -> Theme => Theme { self | fg: self.input_text }
 
-  /// The colours `cell` is drawn in: its text, and its background — `None` for the theme's
+  /// The colors `cell` is drawn in: its text, and its background — `None` for the theme's
   /// own, which the window is already. Inverse swaps the two (the theme's own included), a
   /// hidden cell's text is its background, and dim text is half-way to the background.
-  pub let colours = pure (self, cell: Cell) -> (u32, Maybe<u32>) => {
-    // Bold as bright, when the theme has it: one of the first eight colours, brightened.
+  pub let colors = pure (self, cell: Cell) -> (u32, Maybe<u32>) => {
+    // Bold as bright, when the theme has it: one of the first eight colors, brightened.
     let asked = match palette_index(cell.fg) {
       Some(i) => if self.bold_is_bright && cell.attrs & BOLD != 0 && i < 8 { indexed(i + 8) } else { cell.fg },
       None => cell.fg,
     }
-    var fg = self.colour(asked, self.fg)
-    var bg = if cell.bg == DEFAULT { None } else { Some(self.colour(cell.bg, self.bg)) }
+    var fg = self.color(asked, self.fg)
+    var bg = if cell.bg == DEFAULT { None } else { Some(self.color(cell.bg, self.bg)) }
     if cell.attrs & INVERSE != 0 {
       let was = fg
       fg = bg ?? self.bg
@@ -96,8 +96,8 @@ impl Theme {
     (fg, bg)
   }
 
-  /// A recorded colour drawn: `fallback` for the default.
-  pub let colour = pure (self, c: u32, fallback: u32) -> u32 => {
+  /// A recorded color drawn: `fallback` for the default.
+  pub let color = pure (self, c: u32, fallback: u32) -> u32 => {
     match palette_index(c) {
       Some(i) => return self.palette[i],
       None => {},
@@ -109,7 +109,7 @@ impl Theme {
   }
 }
 
-/// An ImGui colour as a program asking for it (OSC 10, 11) is told it: `rrrr/gggg/bbbb`, each
+/// An ImGui color as a program asking for it (OSC 10, 11) is told it: `rrrr/gggg/bbbb`, each
 /// channel's byte twice, as X11's 16-bit form.
 pub let report_of = pure (c: u32) -> string => {
   let r = (c & 0xFF).to_hex(2)
@@ -119,7 +119,7 @@ pub let report_of = pure (c: u32) -> string => {
 }
 
 /// The theme's background as the window is cleared to it: red, green, blue, 0 to 1.
-pub let clear_colour = pure (t: Theme) -> (f32, f32, f32) => (
+pub let clear_color = pure (t: Theme) -> (f32, f32, f32) => (
   f32(t.bg & 0xFF) / 255.0,
   f32((t.bg >> 8) & 0xFF) / 255.0,
   f32((t.bg >> 16) & 0xFF) / 255.0,
@@ -129,7 +129,7 @@ pub let clear_colour = pure (t: Theme) -> (f32, f32, f32) => (
 pub let abgr = pure (rgb: u32) -> u32 =>
   0xFF000000 | ((rgb & 0xFF) << 16) | (rgb & 0xFF00) | ((rgb >> 16) & 0xFF)
 
-/// xterm's 256 colours: the 16 given, then a 6×6×6 cube (levels 0, 95, 135, 175, 215, 255),
+/// xterm's 256 colors: the 16 given, then a 6×6×6 cube (levels 0, 95, 135, 175, 215, 255),
 /// then 24 greys from 8 to 238.
 let palette_256 = pure (ansi: []u32) -> []u32 => {
   var out: []u32 = [c in ansi | abgr(c)]
@@ -147,7 +147,7 @@ let palette_256 = pure (ansi: []u32) -> []u32 => {
   out
 }
 
-/// Half-way between two ImGui colours, opaque.
+/// Half-way between two ImGui colors, opaque.
 let blend = pure (a: u32, b: u32) -> u32 => {
   let r = ((a & 0xFF) + (b & 0xFF)) / 2
   let g = (((a >> 8) & 0xFF) + ((b >> 8) & 0xFF)) / 2

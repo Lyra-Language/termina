@@ -9,14 +9,14 @@ milestones are in `CLAUDE.md` § Plan; finished items move to `done.md`.
 
 ## The command line (M3)
 
-- **[OPEN] A command that does not exist** — syntax colouring could show it red, but Termina cannot see the shell's aliases and functions; asking the shell (`type`) per command word would.
+- **[OPEN] A command that does not exist** — syntax coloring could show it red, but Termina cannot see the shell's aliases and functions; asking the shell (`type`) per command word would.
 
 ## Tabs
 
 
 ## M1 — a classic terminal
 
-- **[OPEN] Colour emoji** — CJK and symbols come from fallback fonts, but emoji need ImGui's FreeType loader with colour, and `IMGUI_USE_WCHAR32` (below) to reach them at all.
+- **[OPEN] Color emoji** — CJK and symbols come from fallback fonts, but emoji need ImGui's FreeType loader with color, and `IMGUI_USE_WCHAR32` (below) to reach them at all.
 - **[OPEN] Copies keep the filler before a wrapped wide rune** — a wide rune that wrapped early leaves a blank in the last column, which a joined copy includes as a space.
 
 ## Settings

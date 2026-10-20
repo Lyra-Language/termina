@@ -1,44 +1,35 @@
 module ui
-//! The settings: the font — its family, size and line spacing — and the colours —
+//! The settings: the font — its family, size and line spacing — and the colors —
 //! a theme to start from, then the text, background, cursor, selection, the sections'
-//! (input and output), the tabs', the command line's and the 16 ANSI colours one by one,
+//! (input and output), the tabs', the command line's and the 16 ANSI colors one by one,
 //! and bold as bright. Changes take at once; `../termina.lyra` keeps
 //! them (`../settings/settings.lyra`). Drawn in a Settings tab of the tab bar, opened by
 //! Termina ▸ Settings… (⌘,, or Ctrl+, off macOS).
 //!
-//! The tab is markup, `../settings_view.lui`; its events are carried out here, and its
-//! Slots — the sliders and colour editors, which `bindings.imgui.ui` has no elements for
-//! yet — drawn here, on [drawing].
+//! The tab is markup, `../settings_view.lui`; its events are carried out here.
 
-import bindings.imgui.{
-  slider_float,
-  color_edit3,
-  same_line,
-  push_id_int,
-  pop_id,
-  push_item_width,
-  pop_item_width,
-  COLOR_EDIT_FLAGS_NO_INPUTS,
-  COLOR_EDIT_FLAGS_NO_LABEL,
-}
-import bindings.imgui.ui.{ Node, Slot, render }
+import bindings.imgui.{ push_item_width, pop_item_width }
+import bindings.imgui.ui.{ render }
 import settings.{
   Settings,
-  Colours,
   FontFamily,
   defaults,
-  theme_colours,
+  theme_colors,
   save_theme,
   delete_theme,
-  saved_colours,
-  FONT_SIZE_RANGE,
-  LINE_SPACING_RANGE,
+  saved_colors,
+  with_color,
+  with_ansi,
 }
 import settings_view.{
   settings_view,
   SettingsEvent,
   UseFamily,
   ChooseFontFile,
+  SetFontSize,
+  SetLineSpacing,
+  SetColor,
+  SetAnsi,
   UseTheme,
   UseSavedTheme,
   NameTheme,
@@ -58,7 +49,7 @@ pub struct SettingsAsk {
 
 /// Draw the settings into the window drawing now — the Settings tab's area — editing `s`, the
 /// font families on offer being `families`; `theme_name` is what is typed to save the
-/// colours as a theme, kept between frames.
+/// colors as a theme, kept between frames.
 pub let settings_panel = (
   s: mut Settings,
   families: []FontFamily,
@@ -66,18 +57,9 @@ pub let settings_panel = (
 ) -> SettingsAsk => {
   // Fields as wide as their contents need, not the tab's width.
   push_item_width(SETTINGS_FIELD_WIDTH)
-  drawing = s
-  slid = false
-  recoloured = false
-  let events = render([settings_view(s, families, theme_name)], draw_slot)
+  let events = render([settings_view(s, families, theme_name)], (_) => {})
   pop_item_width()
-  s = drawing
-  var changed = slid
-  // A colour changed by hand makes the theme the user's own.
-  if recoloured {
-    s.theme_name = "Custom"
-    changed = true
-  }
+  var changed = false
   var choose_file = false
   for event in events {
     let ask = carry_out(s, theme_name, event)
@@ -101,20 +83,32 @@ pub let carry_out = (
       s.font_file = ""
     },
     ChooseFontFile => { return SettingsAsk { changed: false, choose_file: true } },
+    // Whole points: a fractional size blurs every glyph.
+    SetFontSize(size) => { s.font_size = f32(size.round()) },
+    SetLineSpacing(spacing) => { s.line_spacing = spacing },
+    // A color changed by hand makes the theme the user's own.
+    SetColor(field, rgb) => {
+      s.colors = with_color(s.colors, field, rgb)
+      s.theme_name = "Custom"
+    },
+    SetAnsi(k, rgb) => {
+      s.colors = with_ansi(s.colors, k, rgb)
+      s.theme_name = "Custom"
+    },
     UseTheme(name) => {
       s.theme_name = name
-      s.colours = theme_colours(name)
+      s.colors = theme_colors(name)
     },
     UseSavedTheme(name) => {
-      let Some(colours) = saved_colours(s.themes, name) else { return UNCHANGED }
+      let Some(saved) = saved_colors(s.themes, name) else { return UNCHANGED }
       s.theme_name = name
-      s.colours = colours
+      s.colors = saved
     },
     NameTheme(text) => {
       theme_name = text
       return UNCHANGED
     },
-    // The colours as they are, under a name of the user's — one of theirs replaced,
+    // The colors as they are, under a name of the user's — one of theirs replaced,
     // Termina's own not.
     SaveThemeAs => {
       save_theme(s, theme_name)
@@ -132,114 +126,3 @@ const UNCHANGED = SettingsAsk { changed: false, choose_file: false }
 
 /// How wide the settings' fields are, in points.
 const SETTINGS_FIELD_WIDTH: f32 = 320.0
-
-/// The settings the Slots edit as the tab is drawn, put back into the caller's after: a
-/// slot is drawn from `render`'s `seen`, a callback that cannot reach the caller's locals.
-var drawing: Settings = defaults()
-/// A slider moved this frame.
-var slid = false
-/// A colour was edited by hand this frame.
-var recoloured = false
-
-/// The settings' Slots, drawn where the markup puts them: the size and spacing sliders,
-/// each colour's swatch (`colour <field>`), and the ANSI sixteen.
-let draw_slot = (node: Node<SettingsEvent>) -> void => {
-  let Slot(name) = node else { return }
-  if name == "font size" {
-    if slider_float(
-      "##size",
-      drawing.font_size,
-      FONT_SIZE_RANGE.0,
-      FONT_SIZE_RANGE.1,
-      "%.0f pt"
-    ) {
-      // Whole points: a fractional size blurs every glyph.
-      drawing.font_size = f32(drawing.font_size.round())
-      slid = true
-    }
-  } else if name == "line spacing" {
-    if slider_float(
-      "##spacing",
-      drawing.line_spacing,
-      LINE_SPACING_RANGE.0,
-      LINE_SPACING_RANGE.1,
-      "%.2f"
-    ) {
-      slid = true
-    }
-  } else if name == "ansi" {
-    var ansi = [...drawing.colours.ansi]
-    var edited = false
-    for k in 0..<16 {
-      if k % 8 != 0 { same_line() }
-      push_id_int(i32(k))
-      if colour_swatch(ansi, k) { edited = true }
-      pop_id()
-    }
-    if edited {
-      drawing.colours.ansi = ansi
-      recoloured = true
-    }
-  } else if let Some(field) = name.strip_prefix("colour ") {
-    var c = drawing.colours
-    if edit_colour(c, field) {
-      drawing.colours = c
-      recoloured = true
-    }
-  }
-}
-
-/// The colour named `field` (a [Colours] field's name) edited by its swatch; whether it was
-/// changed.
-let edit_colour = (c: mut Colours, field: string) -> bool => match field {
-  "fg" => colour_field("##fg", c.fg),
-  "bg" => colour_field("##bg", c.bg),
-  "cursor" => colour_field("##cursor", c.cursor),
-  "selection" => colour_field("##selection", c.selection),
-  "input" => colour_field("##input", c.input),
-  "output" => colour_field("##output", c.output),
-  "input_text" => colour_field("##input_text", c.input_text),
-  "tab" => colour_field("##tab", c.tab),
-  "tab_hovered" => colour_field("##tab_hovered", c.tab_hovered),
-  "tab_selected" => colour_field("##tab_selected", c.tab_selected),
-  "editor_text" => colour_field("##editor_text", c.editor_text),
-  "menu" => colour_field("##menu", c.menu),
-  "menu_chosen" => colour_field("##menu_chosen", c.menu_chosen),
-  _ => false,
-}
-
-/// A colour's swatch and picker, its label hidden (the markup's field shows it); whether it
-/// was changed.
-let colour_field = (label: string, rgb: mut u32) -> bool => {
-  var c = channels(rgb)
-  if color_edit3(label, c, COLOR_EDIT_FLAGS_NO_INPUTS) {
-    rgb = packed(c)
-    return true
-  }
-  false
-}
-
-/// ANSI colour `k`'s swatch, unlabelled; whether it was changed.
-let colour_swatch = (ansi: mut []u32, k: i64) -> bool => {
-  var c = channels(ansi[k])
-  if color_edit3("##ansi", c, COLOR_EDIT_FLAGS_NO_INPUTS | COLOR_EDIT_FLAGS_NO_LABEL) {
-    ansi[k] = packed(c)
-    return true
-  }
-  false
-}
-
-/// `0xRRGGBB` as the three channels a colour picker edits, 0 to 1.
-pub let channels = pure (rgb: u32) -> [3]f32 => #[
-  f32((rgb >> 16) & 0xFF) / 255.0,
-  f32((rgb >> 8) & 0xFF) / 255.0,
-  f32(rgb & 0xFF) / 255.0,
-]
-
-/// Three channels, 0 to 1, as `0xRRGGBB`.
-pub let packed = pure (c: [3]f32) -> u32 => {
-  let r = u32((c[0].clamp(0.0, 1.0) * 255.0).round())
-  let g = u32((c[1].clamp(0.0, 1.0) * 255.0).round())
-  let b = u32((c[2].clamp(0.0, 1.0) * 255.0).round())
-  (r << 16) | (g << 8) | b
-}

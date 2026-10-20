@@ -1,18 +1,33 @@
 <!--
   Termina's settings, as markup: `../lyra/build/lui src/settings_view.lui` writes
-  settings_view.lyra beside it. The Settings tab draws it (`ui.settings_panel`), with the
-  sliders and colour editors — which bindings.imgui.ui has no elements for yet — drawn in
-  its Slots, and carries out its events.
+  settings_view.lyra beside it. The Settings tab draws it (`ui.settings_panel`) and carries
+  out its events.
 -->
 
 <script>
-  import settings.{ Settings, FontFamily, file_family, can_save_as, saved_colours, THEME_NAMES }
+  import settings.{
+    Settings,
+    FontFamily,
+    file_family,
+    can_save_as,
+    saved_colors,
+    color_named,
+    THEME_NAMES,
+    FONT_SIZE_RANGE,
+    LINE_SPACING_RANGE,
+  }
 
-  /// What the settings can be asked to do; the Settings tab carries it out. The sliders and
-  /// colours are drawn in Slots and change the settings themselves.
+  /// What the settings can be asked to do; the Settings tab carries it out.
   pub data SettingsEvent =
     UseFamily(string)
     | ChooseFontFile
+    /// The font's size or the line spacing, as the slider is dragged.
+    | SetFontSize(f32)
+    | SetLineSpacing(f32)
+    /// A color, by its field's name (`fg`, `tab_hovered`, …), as it is picked.
+    | SetColor(string, u32)
+    /// ANSI color `k`, 0 to 15.
+    | SetAnsi(i64, u32)
     | UseTheme(string)
     | UseSavedTheme(string)
     | NameTheme(string)
@@ -25,15 +40,15 @@
   let family_shown = pure (s: Settings) -> string =>
     if s.font_file != "" { file_family(s.font_file).name } else { s.font_family }
 
-  /// The colours the settings edit, by label and the Slot drawing each (`colour <name>`),
-  /// in their groups: the grid's own, the sections', the tabs', the command line's.
-  const COLOURS = [("Text", "fg"), ("Background", "bg"), ("Cursor", "cursor"), ("Selection", "selection")]
-  const SECTION_COLOURS = [("Input", "input"), ("Output", "output"), ("Input text", "input_text")]
-  const TAB_COLOURS = [("Tab", "tab"), ("Under the pointer", "tab_hovered"), ("Shown", "tab_selected")]
-  const COMMAND_LINE_COLOURS = [("Text", "editor_text"), ("Completion menu", "menu"), ("Chosen completion", "menu_chosen")]
+  /// The colors the settings edit, by label and field (`settings.color_named`), in their
+  /// groups: the grid's own, the sections', the tabs', the command line's.
+  const COLORS = [("Text", "fg"), ("Background", "bg"), ("Cursor", "cursor"), ("Selection", "selection")]
+  const SECTION_COLORS = [("Input", "input"), ("Output", "output"), ("Input text", "input_text")]
+  const TAB_COLORS = [("Tab", "tab"), ("Under the pointer", "tab_hovered"), ("Shown", "tab_selected")]
+  const COMMAND_LINE_COLORS = [("Text", "editor_text"), ("Completion menu", "menu"), ("Chosen completion", "menu_chosen")]
 
   /// Whether the theme in use is one the user saved.
-  let is_saved = pure (s: Settings) -> bool => saved_colours(s.themes, s.theme_name) != None
+  let is_saved = pure (s: Settings) -> bool => saved_colors(s.themes, s.theme_name) != None
 </script>
 
 <!-- The whole of the Settings tab, for the settings as they are and the name typed to
@@ -53,14 +68,14 @@
       <Button id="button Other Font File" on_click={ChooseFontFile}>Other Font File…</Button>
     </Field>
     <Field label="Size">
-      <Slot name="font size"/>
+      <Slider label="##size" id="slider Size" value={s.font_size} min={FONT_SIZE_RANGE.0} max={FONT_SIZE_RANGE.1} format="%.0f pt" on_change={SetFontSize}/>
     </Field>
     <Field label="Line spacing">
-      <Slot name="line spacing"/>
+      <Slider label="##spacing" id="slider Line spacing" value={s.line_spacing} min={LINE_SPACING_RANGE.0} max={LINE_SPACING_RANGE.1} format="%.2f" on_change={SetLineSpacing}/>
     </Field>
   </Form>
 
-  <SeparatorText>Colours</SeparatorText>
+  <SeparatorText>Colors</SeparatorText>
   <Form>
     <Field label="Theme">
       <Combo label="##theme" id="combo Theme" preview={s.theme_name}>
@@ -76,32 +91,51 @@
       </Combo>
     </Field>
     <Field label="Theme name">
-      <InputText label="##themename" id="field Theme name" value={typed} on_change={NameTheme} style="width: 14em"/>
+      <InputText label="##themename" id="field Theme name" hint="Theme name" value={typed} on_change={NameTheme} style="width: 14em"/>
       <Button id="button Save Theme As" enabled={can_save_as(typed)} on_click={SaveThemeAs}>Save Theme As…</Button>
       <if test={is_saved(s)}>
         <Button id="button Delete Theme" on_click={DeleteSavedTheme}>Delete</Button>
       </if>
     </Field>
-    <for each={c in COLOURS}>
-      <Field label={c.0}><Slot name="colour {c.1}"/></Field>
+    <for each={c in COLORS}>
+      <Field label={c.0}><color s={s} field={c.1}/></Field>
     </for>
     <Text class="group">Sections</Text>
-    <for each={c in SECTION_COLOURS}>
-      <Field label={c.0}><Slot name="colour {c.1}"/></Field>
+    <for each={c in SECTION_COLORS}>
+      <Field label={c.0}><color s={s} field={c.1}/></Field>
     </for>
     <Text class="group">Tabs</Text>
-    <for each={c in TAB_COLOURS}>
-      <Field label={c.0}><Slot name="colour {c.1}"/></Field>
+    <for each={c in TAB_COLORS}>
+      <Field label={c.0}><color s={s} field={c.1}/></Field>
     </for>
     <Text class="group">Command line</Text>
-    <for each={c in COMMAND_LINE_COLOURS}>
-      <Field label={c.0}><Slot name="colour {c.1}"/></Field>
+    <for each={c in COMMAND_LINE_COLORS}>
+      <Field label={c.0}><color s={s} field={c.1}/></Field>
     </for>
   </Form>
-  <Text class="group">ANSI colours</Text>
-  <Slot name="ansi"/>
-  <Checkbox id="checkbox Bold is bright" checked={s.bold_is_bright} on_toggle={ToggleBoldBright}>Draw bold text in bright colours</Checkbox>
+  <Text class="group">ANSI colors</Text>
+  <Row>
+    <for each={k in 0..<8}>
+      <ansi s={s} k={k}/>
+    </for>
+  </Row>
+  <Row>
+    <for each={k in 8..<16}>
+      <ansi s={s} k={k}/>
+    </for>
+  </Row>
+  <Checkbox id="checkbox Bold is bright" checked={s.bold_is_bright} on_toggle={ToggleBoldBright}>Draw bold text in bright colors</Checkbox>
 
   <Separator/>
   <Button id="button Reset" on_click={ResetSettings}>Reset to Defaults</Button>
+</component>
+
+<!-- A color's swatch, the field of the settings' colors it edits named. -->
+<component name="color" props="s: Settings, field: string" event="SettingsEvent">
+  <ColorEdit label="##{field}" id="color {field}" value={color_named(s.colors, field)} inputs={false} on_change={(v: u32) -> SettingsEvent => SetColor(field, v)}/>
+</component>
+
+<!-- ANSI color `k`'s swatch, unlabelled. -->
+<component name="ansi" props="s: Settings, k: i64" event="SettingsEvent">
+  <ColorEdit label="##ansi{k}" id="color ansi {k}" value={s.colors.ansi[k]} inputs={false} on_change={(v: u32) -> SettingsEvent => SetAnsi(k, v)}/>
 </component>

@@ -186,7 +186,7 @@ pub struct Style {
   menu: u32,
   menu_chosen: u32,
   faint: u32,
-  /// The syntax's colours (`../editor/syntax.lyra`): commands, options, quoted text,
+  /// The syntax's colors (`../editor/syntax.lyra`): commands, options, quoted text,
   /// variables, operators and redirections.
   command: u32,
   option: u32,
@@ -787,7 +787,7 @@ impl CommandLine {
     var run_row = 0
     var run_col = 0
     var run_end = 0
-    var run_colour = style.text
+    var run_color = style.text
     for k in 0..<text.len() {
       let (row, col) = places[k]
       let r = text[k]
@@ -802,31 +802,31 @@ impl CommandLine {
           style.selection
         )
       }
-      let paint = colour_of(style, kind[k])
+      let paint = color_of(style, kind[k])
       let apart = r == '\n' ||
         w == 2 ||
         row != run_row ||
         col != run_end ||
-        paint != run_colour
+        paint != run_color
       if apart && run.len() > 0 {
-        flush(list, at, run_row, run_col, run, run_colour)
+        flush(list, at, run_row, run_col, run, run_color)
         run = []
       }
       if r != '\n' {
         if run.len() == 0 {
           run_row = row
           run_col = col
-          run_colour = paint
+          run_color = paint
         }
         push_rune(run, i64(r))
         run_end = col + w
         if w == 2 {
-          flush(list, at, run_row, run_col, run, run_colour)
+          flush(list, at, run_row, run_col, run, run_color)
           run = []
         }
       }
     }
-    flush(list, at, run_row, run_col, run, run_colour)
+    flush(list, at, run_row, run_col, run, run_color)
     if focused {
       let (r, c) = position(text, at.wrap, self.edit.cursor)
       let p = cell_pos(at, r, c)
@@ -892,8 +892,8 @@ impl CommandLine {
   }
 }
 
-/// The colour a rune of `kind` is drawn in.
-let colour_of = pure (style: Style, kind: Kind) -> u32 => match kind {
+/// The color a rune of `kind` is drawn in.
+let color_of = pure (style: Style, kind: Kind) -> u32 => match kind {
   Plain => style.text,
   Command => style.command,
   Option => style.option,

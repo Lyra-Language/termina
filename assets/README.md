@@ -1,7 +1,7 @@
 # Termina's icon
 
 `termina.svg` is the source: a prompt and its cursor, and a star of Lyra's, on macOS's icon
-grid (an 824-point body, 100 in from each edge of 1024), in the default theme's colours.
+grid (an 824-point body, 100 in from each edge of 1024), in the default theme's colors.
 The other files are made from it and kept so that a build needs no SVG renderer:
 
 - `Termina.icns` — the app's icon, copied into `Termina.app` by `../build.sh`.

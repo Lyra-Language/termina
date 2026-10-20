@@ -83,7 +83,7 @@ pub struct TabBar {
 }
 
 /// Draw the tab bar for `tabs`, `active` shown and `select` (a tab chosen by a key, or just
-/// opened) made the shown one, in `theme`'s tab colours; its tabs dragged into another
+/// opened) made the shown one, in `theme`'s tab colors; its tabs dragged into another
 /// order as the user likes. With `settings`, a Settings tab at the bar's right end — made
 /// the shown one by `select_settings`.
 pub let tab_bar = (
@@ -104,7 +104,7 @@ pub let tab_bar = (
   // Roomier than ImGui's own: the inside of a tab, the gap between tabs and between a
   // tab's name and its close button, and the space under the bar.
   // The theme's tabs, the same while the window is not focused, labelled in its text's
-  // colour, the shown one's overline its selection's.
+  // color, the shown one's overline its selection's.
   push_style_color(COL_TAB, theme.tab)
   push_style_color(COL_TAB_DIMMED, theme.tab)
   push_style_color(COL_TAB_HOVERED, theme.tab_hovered)
