@@ -106,6 +106,11 @@ jobs:
       - name: Build lyra
         working-directory: lyra
         run: |
+          # The grammar's Go binding `#include`s its parser.c, which Go's build cache does
+          # not hash: a cache setup-go restores keeps the parser it was built with, and a
+          # grammar change since is a syntax error in lyra's own bindings (v0.2.0's first
+          # run, at `pub extern`). lyra's CI clears it for the same reason.
+          go clean -cache
           ./build.sh
           test -f build/lib/liblyra-imgui.a || { echo "bindings.imgui did not build"; exit 1; }
 

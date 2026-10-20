@@ -37,7 +37,9 @@ git tag v0.2.0 && git push origin v0.2.0   # a release: built, checked and publi
 ## Releases
 
 - **A tag is a release.** `release.yml` checks out lyra and tree-sitter-lyra at `main`
-  (a dry run may name other refs) beside Termina, builds SDL3, lyra and Termina, runs
+  (a dry run may name other refs) beside Termina, builds SDL3, lyra (Go's build cache
+  cleared first: it does not hash the grammar's `#include`d parser, so a restored one
+  builds lyra with the old grammar) and Termina, runs
   vttest, uitest and menutest, packages, and publishes the archives with the commits each
   was built from in the notes — a tag of Termina pins nothing of the compiler's.
 - **SDL3 is built from source** (`tools/sdl3.sh`, lyra's pin — move the two together) and
