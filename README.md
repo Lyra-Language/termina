@@ -20,7 +20,7 @@ build/termina
 ```
 
 Releases (`git tag vX.Y.Z` and push it) carry Termina.app for Apple silicon, signed with a
-Developer ID and notarized, and archives for Linux on x86_64 and arm64: unpack and run
-`./termina`. Each has SDL3 inside.
+Developer ID and notarized, and for Linux on x86_64 and arm64 an AppImage (make it
+executable and run it) and an archive (unpack and run `./termina`). Each has SDL3 inside.
 
 MIT licensed (`LICENSE`).

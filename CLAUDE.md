@@ -28,7 +28,8 @@ build/menutest              # the Mac's menu bar, installed and read back (SDL's
 ../lyra/build/lui src/menus_view.lui     # regenerate a markup's module after editing it
                             #    (or `lui --watch src/*.lui`); build.sh refuses a stale one
 ./package.sh 0.2.0          # after build.sh: build/release/Termina-0.2.0-macos-arm64.zip, or
-                            #    termina-0.2.0-linux-<arch>.tar.gz, SDL3 inside
+                            #    termina-0.2.0-linux-<arch>.tar.gz, SDL3 inside; with
+                            #    TERMINA_APPIMAGE=1 on Linux, Termina-0.2.0-linux-<arch>.AppImage
 git tag v0.2.0 && git push origin v0.2.0   # a release: built, checked and published by
                             #    .github/workflows/release.yml (macOS arm64, Linux x86_64
                             #    and arm64); Actions ▸ Release ▸ Run workflow is a dry run
@@ -46,6 +47,13 @@ git tag v0.2.0 && git push origin v0.2.0   # a release: built, checked and publi
   **travels with the program**: in `Termina.app/Contents/Frameworks` (found through
   `@rpath`), or in the archive's `lib/` (an rpath of `$ORIGIN/lib`, set by patchelf).
   Homebrew's is built for the Mac it runs on, and Ubuntu 24.04 has none.
+- **Linux releases are an AppImage too**: the archive's directory as an AppDir (`AppRun` a
+  link to the program, `assets/termina.desktop` and the icon beside it), made by
+  appimagetool and its runtime as `tools/appimagetool.sh` pins them, SHA-256 checked. No
+  sandbox — a Flatpak's would need the shell started on the host — and no
+  `LD_LIBRARY_PATH`, so the shells Termina starts load nothing of its. Run extracted, not
+  mounted, where there is no FUSE (`APPIMAGE_EXTRACT_AND_RUN`); an AppImage of another
+  processor does not run under emulation, its header's magic tripping the emulator.
 - **The Mac app runs on macOS 13 and later** (`MACOSX_DEPLOYMENT_TARGET`, read by clang,
   SDL3's CMake and ImGui's build). Linux archives run on glibc 2.39 and later (Ubuntu
   24.04's).
@@ -88,7 +96,7 @@ shell ⇄ bindings.pty ──bytes──▶ vt.Parser ──[]Action──▶ vt
 | file | what |
 |---|---|
 | `src/termina.lyra` | `main`: the ImGui host and the window's state (`App`), and `frame`: the tabs read, the menus and keys carried out, the window drawn; fonts |
-| `package.sh`, `tools/sdl3.sh` | a release archive with SDL3 inside — the Mac app signed and notarized when given an identity and key — and SDL3 built from source for it (Releases, above) |
+| `package.sh`, `tools/sdl3.sh`, `tools/appimagetool.sh` | a release archive with SDL3 inside — the Mac app signed and notarized when given an identity and key, an AppImage on Linux — SDL3 built from source for it, and the pinned appimagetool (Releases, above) |
 | `assets/` | the icon: `termina.svg` the source; `Termina.icns` (the app's) and `termina.png` made from it (`assets/README.md`); `Termina.entitlements`, what the signed app's commands may ask for (Releases, above) |
 | `src/session/session.lyra` | one tab: its PTY, screen, `Mode` and command line; read each frame, drawn and given keys when shown |
 | `src/ui/tabs.lyra` | the tab bar (reorderable, its order read back) and the tab shortcuts |

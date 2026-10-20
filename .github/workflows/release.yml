@@ -192,6 +192,8 @@ jobs:
           else
             version="dev-$(git rev-parse --short HEAD)"
           fi
+          # On Linux an AppImage too, beside the archive (tools/appimagetool.sh's pins).
+          if [ "$RUNNER_OS" = Linux ]; then export TERMINA_APPIMAGE=1; fi
           ./package.sh "$version" | tee "$RUNNER_TEMP/package.log"
           # package.sh's last line says how the Mac app was signed: `(notarized)`, …
           signed="$(tail -1 "$RUNNER_TEMP/package.log" | sed -n 's/.*(\(.*\))$/\1/p')"
@@ -245,10 +247,12 @@ jobs:
             else
               echo "The Mac app is not notarized: open it the first time with right-click ▸ Open."
             fi
-            echo "On Linux, unpack the archive and run \`./termina\`."
+            echo "On Linux, make the AppImage executable and run it"
+            echo "(\`chmod +x Termina-*.AppImage && ./Termina-*.AppImage\`), or unpack the"
+            echo "archive and run \`./termina\`."
           } > notes.md
           gh release create "$GITHUB_REF_NAME" \
             --repo "$GITHUB_REPOSITORY" \
             --title "Termina ${GITHUB_REF_NAME#v}" \
             --notes-file notes.md \
-            archives/*.zip archives/*.tar.gz
+            archives/*.zip archives/*.tar.gz archives/*.AppImage

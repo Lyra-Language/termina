@@ -1,0 +1,10 @@
+[Desktop Entry]
+Type=Application
+Name=Termina
+Comment=A terminal whose command line edits like a text editor
+Exec=termina
+Icon=termina
+Terminal=false
+Categories=System;TerminalEmulator;
+Keywords=shell;terminal;console;command;
+StartupWMClass=Termina

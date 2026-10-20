@@ -4,6 +4,8 @@
 #
 #   ./package.sh <version>      # -> build/release/Termina-<version>-macos-arm64.zip
 #                               #    build/release/termina-<version>-linux-<arch>.tar.gz
+#   TERMINA_APPIMAGE=1 ./package.sh <version>   # on Linux, and
+#                               #    build/release/Termina-<version>-linux-<arch>.AppImage
 #
 # **SDL3 goes with the program**, the one library Termina links that a machine may not
 # have (the PTY, ImGui and FreeType are linked in). It is taken from where pkg-config's
@@ -24,7 +26,11 @@
 #     (right-click ▸ Open).
 # - **Linux**: into `lib/` beside the program, found through an rpath of `$ORIGIN/lib`
 #   (needs patchelf). The C library is the build machine's: built on Ubuntu 24.04, it runs
-#   on glibc 2.39 and newer.
+#   on glibc 2.39 and newer. **With `TERMINA_APPIMAGE`, an AppImage too**: the same
+#   directory as an AppDir — `AppRun` a link to the program, the desktop entry and icon
+#   beside it — made by the pinned appimagetool (`tools/appimagetool.sh`, into
+#   build/deps/appimage). No sandbox and no `LD_LIBRARY_PATH`, so the shell Termina starts
+#   is the user's own, with nothing of the AppImage's in its libraries.
 set -euo pipefail
 
 readonly ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -126,8 +132,29 @@ case "$(uname -s)" in
       die "the program does not find the bundled SDL3"
     }
     tar -czf "$OUT/$NAME.tar.gz" -C "$OUT" "$NAME"
-    rm -rf "$STAGE"
     printf 'package: %s\n' "$OUT/$NAME.tar.gz"
+    if [ -n "${TERMINA_APPIMAGE:-}" ]; then
+      readonly TOOLS="$ROOT/build/deps/appimage"
+      "$ROOT/tools/appimagetool.sh" "$TOOLS"
+      readonly APPDIR="$OUT/Termina.AppDir"
+      rm -rf "$APPDIR"
+      cp -R "$STAGE" "$APPDIR"
+      # The runtime runs AppRun; through the link the program is still at the AppDir's top,
+      # so its `$ORIGIN/lib` finds the SDL3 beside it.
+      ln -s termina "$APPDIR/AppRun"
+      cp "$ROOT/assets/termina.desktop" "$ROOT/assets/termina.png" "$APPDIR/"
+      ln -s termina.png "$APPDIR/.DirIcon"
+      readonly IMAGE="$OUT/Termina-$VERSION-linux-$ARCH.AppImage"
+      rm -f "$IMAGE"
+      # Extracted and run, not mounted: a container or a CI runner has no FUSE.
+      # appimagetool's ARCH is the machine's name for it (aarch64), through env: this
+      # script's own ARCH is read-only.
+      env APPIMAGE_EXTRACT_AND_RUN=1 ARCH="$(uname -m)" \
+        "$TOOLS/appimagetool" --no-appstream --runtime-file "$TOOLS/runtime" "$APPDIR" "$IMAGE"
+      rm -rf "$APPDIR"
+      printf 'package: %s\n' "$IMAGE"
+    fi
+    rm -rf "$STAGE"
     ;;
   *) die "no packaging for $(uname -s)" ;;
 esac
