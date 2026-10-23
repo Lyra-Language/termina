@@ -1,4 +1,4 @@
-module ui
+module term
 //! The colors a cell's style is drawn in. The screen records what a program asked for —
 //! palette entry 1, the default background (`../vt/style.lyra`) — and the theme says what
 //! that looks like: its own foreground and background, the 16 ANSI colors, and xterm's

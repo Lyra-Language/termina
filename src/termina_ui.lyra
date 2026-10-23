@@ -1,0 +1,305 @@
+// termina-ui: Termina on `ui`, beside the ImGui app (`termina.lyra`) until `ui` has what the
+// rest needs — a tab bar of its own, menus drawn off macOS, the Settings tab's controls, a
+// title bar the program draws (`../lyra/ui/TERMINAL.md`). The tabs, the grid, the blocks, the
+// command line and its box are Termina's own (`session`, `term`, `face`); the settings are
+// read, not edited.
+//
+//     build/termina-ui                # the login shell, in a window of tabs
+//     build/termina-ui CMD [ARG…]     # that program instead, as termina's
+//     build/termina-ui --print CMD …  # and when it ends, its screen printed
+//     build/termina-ui --script STEPS [--png FILE] [CMD …]
+//                                     # played headless (SDL_VIDEODRIVER=dummy) through SDL's
+//                                     #   2D renderer, `ui.script`'s steps — a `wait:N` taking N
+//                                     #   real milliseconds, for the shell — and the last frame
+//                                     #   written to FILE
+//
+// Termina's flags come before the command, whose own are its: `std.collections.parse_args`
+// would take `ls -la`'s `-la` for one of Termina's.
+
+import ui.gpu
+import ui.sdl3
+import ui.sdl3.{ SdlRenderer, capture }
+import ui.app.{ App, Running, run, running, step_running, Shortcuts }
+import ui.script.{ ScriptPlatform, timed_platform, parse_steps, Step, Waited }
+import ui.draw.{ Point, Size }
+import ui.text.{ Fonts, FontSpec, FontMetrics, fonts_new, glyph_atlas }
+import ui.style.{ OverflowVisible }
+import ui.layout.{ paint }
+import bindings.sdl3.{ platform, set_hint }
+import bindings.freetype.{ HintNone, HintLight }
+import std.env.{ lookup, program_args }
+import std.io.{ write_bytes, sleep_ms }
+import std.png.{ write_png }
+import settings.{
+  load_settings,
+  settings_path,
+  font_families,
+  family_for,
+  fallback_fonts,
+  Settings
+}
+import session.{ open_session, close_session }
+import term.{ Theme, theme_of }
+import desktop.{ APP_ID }
+import face.{
+  Term,
+  TermEvent,
+  term_of,
+  screen_text,
+  view,
+  update,
+  subscriptions,
+  shortcuts,
+  grid_of,
+  color
+}
+
+const WIDTH: f32 = 960.0
+const HEIGHT: f32 = 600.0
+
+/// What a script's `wait:` is played in: a pass a slice, so the shell's output is read as
+/// it comes rather than once at the end.
+const SLICE_MS: i64 = 10
+
+let main = () -> u8 => {
+  var args = program_args().slice(1, program_args().len())
+  var printing = false
+  var script: Maybe<string> = None
+  var png: Maybe<string> = None
+  while args.len() > 0 && args[0].starts_with("--") {
+    let flag = args[0]
+    if flag == "--print" {
+      printing = true
+      args = args.slice(1, args.len())
+    } else if (flag == "--script" || flag == "--png") && args.len() > 1 {
+      if flag == "--script" { script = Some(args[1]) } else { png = Some(args[1]) }
+      args = args.slice(2, args.len())
+    } else {
+      println("termina-ui: ${flag}? (--print, --script STEPS, --png FILE)")
+      return 2
+    }
+  }
+  if platform() == "Linux" { let _ = set_hint("SDL_APP_ID", APP_ID) }
+  let settings = load_settings(settings_path())
+  let theme = theme_of(settings)
+  var fonts = fonts_new()
+  // A Mac draws text unhinted; elsewhere a pixel is most often a point, and unhinted stems
+  // straddle two of them.
+  fonts.hinting = if platform() == "macOS" { HintNone } else { HintLight }
+  let _ = fonts.add_system_font()
+  add_family(fonts, settings)
+  for k, path in fallback_fonts() {
+    let family = "fallback ${k}"
+    if fonts.add(family, path) { fonts.add_fallback(family) }
+  }
+  let app = App {
+    view: view,
+    update: update,
+    subscriptions: subscriptions,
+    background: color(theme.bg),
+    window_overflow: OverflowVisible,
+    shortcuts: [Shortcuts { of: shortcuts }],
+  }
+  let status = match script {
+    Some(steps) => scripted(app, steps, png, args, settings, theme, fonts),
+    None => windowed(app, args, settings, theme, fonts),
+  }
+  if status.0 != 0 { return status.0 }
+  if printing { print_last(status.1) }
+  0
+}
+
+/// The window on the GPU, until it is closed: its status, and the window as it was left.
+let windowed = (
+  app: App<Term, TermEvent>,
+  args: []string,
+  settings: Settings,
+  theme: Theme,
+  given: Fonts
+) -> (u8, Term) => {
+  var fonts = given
+  let window = match gpu.open("Termina", WIDTH, HEIGHT) {
+    Ok(w) => w,
+    Err(why) => {
+      println("termina-ui: ${why}")
+      fonts.close()
+      return (2, empty_term(theme, settings))
+    },
+  }
+  var platform_ = window.platform
+  var renderer = window.renderer
+  let Some(start) = started(args, settings, theme, fonts, platform_.scale()) else {
+    gpu.close(platform_, renderer)
+    fonts.close()
+    return (1, empty_term(theme, settings))
+  }
+  let last = run(app, start, platform_, renderer, fonts)
+  gpu.close(platform_, renderer)
+  for s in last.tabs { close_session(s) }
+  fonts.close()
+  (0, last)
+}
+
+/// `steps` played headless through SDL's 2D renderer, the last frame written to `png`: its
+/// status, and the window as the script left it.
+let scripted = (
+  app: App<Term, TermEvent>,
+  steps: string,
+  png: Maybe<string>,
+  args: []string,
+  settings: Settings,
+  theme: Theme,
+  given: Fonts
+) -> (u8, Term) => {
+  var fonts = given
+  let parsed = match parse_steps(steps) {
+    Ok(p) => p,
+    Err(why) => {
+      println("termina-ui: the script: ${why}")
+      fonts.close()
+      return (2, empty_term(theme, settings))
+    },
+  }
+  let window = match sdl3.open("Termina", WIDTH, HEIGHT) {
+    Ok(w) => w,
+    Err(why) => {
+      println("termina-ui: ${why}")
+      fonts.close()
+      return (2, empty_term(theme, settings))
+    },
+  }
+  var renderer = window.renderer
+  let Some(start) = started(args, settings, theme, fonts, 1.0) else {
+    sdl3.close(window.platform, renderer)
+    fonts.close()
+    return (1, empty_term(theme, settings))
+  }
+  let played = running(
+    app,
+    start,
+    timed_platform(sliced(parsed), Size { w: WIDTH, h: HEIGHT }),
+    renderer,
+    fonts
+  )
+  loop {
+    let p = played.platform
+    if p.next < p.steps.len() {
+      if let Waited(_) = p.steps[p.next] { sleep_ms(SLICE_MS) }
+    }
+    if !step_running(played) { break }
+  }
+  var status: u8 = 0
+  if let Some(path) = png {
+    if !save(played, path) {
+      println("termina-ui: the frame could not be written to ${path}")
+      status = 1
+    }
+  }
+  let last = played.host.state
+  for s in last.tabs { close_session(s) }
+  sdl3.close(window.platform, played.renderer)
+  played.fonts.close()
+  (status, last)
+}
+
+/// Each `wait:` cut into slices of `SLICE_MS`, each a pass of its own.
+let sliced = pure (steps: []Step) -> []Step => {
+  var out: []Step = []
+  for step in steps {
+    match step {
+      Waited(ms) => {
+        var left = ms
+        while left > 0 {
+          out.push(Waited(left.min(SLICE_MS)))
+          left -= SLICE_MS
+        }
+      },
+      other => out.push(other),
+    }
+  }
+  out
+}
+
+/// The first tab, running `args` — a program instead of the shell, without its integration,
+/// where Termina was started — or the login shell; `None`, said why, if it could not start.
+let started = (
+  args: []string,
+  settings: Settings,
+  theme: Theme,
+  fonts: mut Fonts,
+  scale: f32
+) -> Maybe<Term> => {
+  let spec = FontSpec { family: "mono", size: settings.font_size }
+  let grid = grid_of(spec, fonts.metrics(spec, scale), settings.line_spacing)
+  let Some(s) = open_session(
+    args,
+    if args.len() > 0 { lookup("PWD") } else { None },
+    0
+  ) else {
+    println("termina-ui: the shell could not start")
+    return None
+  }
+  Some(term_of([s], theme, grid, settings.line_spacing, lookup("HOME") ?? ""))
+}
+
+/// A window of no tabs, for a status returned before any opened: nothing is drawn in it, so
+/// its font is not measured.
+let empty_term = (theme: Theme, settings: Settings) -> Term => {
+  let spec = FontSpec { family: "mono", size: settings.font_size }
+  term_of(
+    [],
+    theme,
+    grid_of(spec, FontMetrics {}, settings.line_spacing),
+    settings.line_spacing,
+    ""
+  )
+}
+
+/// The frame the host last laid out, drawn without showing it and written as a PNG.
+let save = (
+  played: shared Running<Term, TermEvent, ScriptPlatform, SdlRenderer>,
+  path: string
+) -> bool => {
+  var atlas = glyph_atlas()
+  var f = played.fonts
+  var r = played.renderer
+  let ops = paint(played.host.shown[0], Point {}, 1.0, f, atlas, r)
+  let Some(frame) = capture(
+    r,
+    color(played.host.state.theme.bg),
+    ops
+  ) else { return false }
+  var bytes: []u8 = []
+  for p in frame.argb {
+    bytes.push(u8((p >> 16) & 0xFF))
+    bytes.push(u8((p >> 8) & 0xFF))
+    bytes.push(u8(p & 0xFF))
+    bytes.push(u8((p >> 24) & 0xFF))
+  }
+  match write_png(frame.width, frame.height, bytes) {
+    Ok(image) => write_bytes(path, image),
+    Err(_) => false,
+  }
+}
+
+/// The settings' family — a chosen font file's, else the family named, else the first found —
+/// as `mono`'s faces: its regular, bold, italic and bold italic where it has them.
+let add_family = (fonts: mut Fonts, s: Settings) -> void => {
+  let Some(family) = family_for(s, font_families()) else { return }
+  for (path, weight, italic) in [
+    (family.regular, 400, false),
+    (family.bold, 700, false),
+    (family.italic, 400, true),
+    (family.bold_italic, 700, true),
+  ] {
+    if path != "" { let _ = fonts.add("mono", path, 0, weight, italic) }
+  }
+}
+
+/// The shown tab's screen, a line a row, trailing blanks dropped — or, with every tab closed,
+/// the one the last tab's program left.
+let print_last = (t: Term) -> void => {
+  let lines = if t.tabs.len() > 0 { screen_text(t.tabs[t.active]) } else { t.closed_screen }
+  println("termina-ui: ${lines.len()} lines")
+  for line in lines { println(line) }
+}

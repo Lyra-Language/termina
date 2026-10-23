@@ -1,4 +1,4 @@
-module ui
+module gui
 //! The modifier keys held, as the keyboard has them. **ImGui swaps Ctrl and ⌘ on macOS**
 //! (`ConfigMacOSXBehaviors`, since 1.90.7): its `KeyCtrl` is "the shortcut key", ⌘ on a Mac,
 //! so that its own widgets' Ctrl+C is ⌘C there. A terminal needs the keys themselves —

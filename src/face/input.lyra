@@ -1,0 +1,299 @@
+module face
+//! A tab's input on `ui`: keys, typed text and the pointer as the painter hears them raw, given
+//! to the command line at a prompt (`term.CommandLine.input`, the same as ImGui's front end
+//! feeds it) or encoded for the program otherwise, as `../gui/session_view.lyra`'s `send_keys`
+//! does — **the terminal's own chord is ⌘ on a Mac, Ctrl+Shift elsewhere** (copy, paste and the
+//! rest of the Edit menu's), Ctrl and a letter the control character, Alt the Meta prefix off a
+//! Mac. The pointer selects on the grid, edits in the box, and is reported to a program that
+//! asked for it (`?1000`…), Shift taking it back for selecting; the wheel scrolls the view, or
+//! is the program's arrows on the alternate screen.
+
+import ui.app.{ Command, CopyText, PasteText }
+import bindings.pty
+import ui.backend.{
+  Modifiers,
+  Character,
+  Backspace,
+  PointerButton,
+  Primary,
+  Secondary,
+  Middle,
+  OtherButton,
+}
+import ui.layout.{
+  KeyInput,
+  TextInput,
+  TypedText,
+  PointerInput,
+  PointerPress,
+  PointerRelease,
+  PointerMove,
+  PointerWheel,
+}
+import session.{
+  Session,
+  AtPrompt,
+  Raw,
+  key_sequence,
+  control_bytes,
+  meta,
+  mouse_report,
+  wheel_keys,
+  wheel_notches,
+}
+import term.{
+  LineKey,
+  LineText,
+  Outcome,
+  Clip,
+  PasteWanted,
+  Copy,
+  Cut,
+  SelectAll,
+  Undo,
+  Redo,
+}
+
+/// The lines a wheel's line scrolls the view.
+const WHEEL_ROWS: f32 = 3.0
+
+/// A key: the terminal's chord's Edit keys first; then at a prompt the command line's, and
+/// otherwise the bytes a terminal sends for it.
+pub let key_heard = (t: mut Term, k: KeyInput) -> []Command<TermEvent> => {
+  t.mods = k.mods
+  if !k.pressed || t.tabs.len() == 0 { return [] }
+  let i = t.active
+  if edit_chord(t, k.mods) {
+    if let Character(c) = k.key {
+      return match c {
+        'c' => copied(t.tabs[i].edit_action(Copy)),
+        'x' => copied(t.tabs[i].edit_action(Cut)),
+        'v' => [PasteText(ClipboardRead)],
+        'a' => {
+          let _ = t.tabs[i].edit_action(SelectAll)
+          []
+        },
+        'z' => {
+          let _ = t.tabs[i].edit_action(if k.mods.shift { Redo } else { Undo })
+          []
+        },
+        _ => [],
+      }
+    }
+    return []
+  }
+  match t.tabs[i].mode {
+    AtPrompt(_, _) => {
+      let wrap = layout_at(t, t.size).wrap
+      t.views[i].sticking = true
+      outcome(t, t.tabs[i].line.input(wrap, LineKey(k.key, k.mods)))
+    },
+    Raw => {
+      let bytes = key_bytes(t, t.tabs[i], k)
+      if bytes.len() > 0 {
+        let _ = t.tabs[i].pty.write_bytes(bytes)
+        t.views[i].sticking = true
+      }
+      []
+    },
+  }
+}
+
+/// Text typed: the command line's at a prompt; otherwise the program's — not while Ctrl or the
+/// terminal's chord is held (their keys say what they send), with Alt the Meta prefix off a
+/// Mac. An input method's composition in progress is not drawn yet.
+pub let text_heard = (t: mut Term, x: TextInput) -> void => {
+  if t.tabs.len() == 0 { return }
+  let i = t.active
+  let TypedText(text) = x else { return }
+  match t.tabs[i].mode {
+    AtPrompt(_, _) => {
+      let wrap = layout_at(t, t.size).wrap
+      t.views[i].sticking = true
+      // Without the modifiers: the platform types nothing for a chord of Ctrl or ⌘ — the
+      // command line's guard against one is ImGui's polling — and the last key's may be
+      // stale (a script's text comes with no key before it).
+      let _ = outcome(t, t.tabs[i].line.input(wrap, LineText(text, Modifiers {})))
+    },
+    Raw => {
+      if t.mods.control || edit_chord(t, t.mods) { return }
+      // Alt as Meta off a Mac: its key sent it already (key_bytes), so the text it types is not.
+      if !t.mac && t.mods.alt { return }
+      let _ = t.tabs[i].pty.write(text)
+      t.views[i].sticking = true
+    },
+  }
+}
+
+/// The pointer: told to a program that asked for it (without Shift); else the wheel scrolls
+/// the view (or is a full-screen program's arrows), a press in the box edits the command line,
+/// and one on the grid selects, a drag after either extending it.
+pub let pointer_heard = (t: mut Term, p: PointerInput) -> void => {
+  if t.tabs.len() == 0 { return }
+  let i = t.active
+  let f = layout_at(t, t.size)
+  let g = t.grid
+  let s = t.tabs[i]
+  let raw = f.input_line < 0
+  if (raw && s.shown.mouse_mode != 0 && !p.mods.shift) || t.holding == 3 {
+    report(t, f, p)
+    return
+  }
+  match p.kind {
+    PointerWheel(_, down) => {
+      if raw && s.shown.alt && s.shown.alternate_scroll && s.shown.mouse_mode == 0 {
+        let notches = wheel_notches(t.tabs[i], -down)
+        if notches != 0 { let _ = t.tabs[i].pty.write(wheel_keys(
+          notches,
+          s.shown.cursor_keys
+        )) }
+        return
+      }
+      let most = (f.page - (t.size.h - 2.0 * PAD)).max(0.0)
+      let to = (t.views[i].scroll + down * WHEEL_ROWS * g.cell_y).clamp(0.0, most)
+      t.views[i] = View { scroll: to, sticking: to >= most - 1.0 }
+    },
+    PointerPress(Primary, clicks) => {
+      let in_box = (f.prompt.is_some() || f.running_box) && p.at.y >= f.box_top
+      if f.prompt.is_some() && in_box {
+        let _ = t.tabs[i].line.press(place_of(f, g), p.at, clicks, p.mods.shift, true)
+        t.holding = 2
+      } else if !in_box && p.at.y < f.rows.y_of(f.grid_lines) {
+        let (at_line, under, edge) = grid_spot(t.tabs[i], f, g, p.at)
+        t.tabs[i].select_press(at_line, under, edge, clicks)
+        t.holding = 1
+      }
+    },
+    PointerMove => {
+      if t.holding == 2 { t.tabs[i].line.drag(place_of(f, g), p.at) }
+      if t.holding == 1 {
+        let (at_line, under, edge) = grid_spot(t.tabs[i], f, g, p.at)
+        t.tabs[i].select_drag(at_line, under, edge)
+      }
+    },
+    PointerRelease(Primary) => {
+      if t.holding == 2 { t.tabs[i].line.release() }
+      if t.holding == 1 { t.tabs[i].select_release() }
+      t.holding = 0
+    },
+    _ => {},
+  }
+}
+
+/// The grid's place under `at`: the absolute line, the cell, and the column boundary nearest.
+let grid_spot = pure (
+  s: Session,
+  f: FrameLayout,
+  g: Grid,
+  at: Point
+) -> (i64, i64, i64) => {
+  let i = f.rows.line_at_y(at.y, f.grid_lines).clamp(0, (f.grid_lines - 1).max(0))
+  let fx = (at.x - PAD) / g.cell_x
+  (
+    s.shown.absolute(i),
+    i64(fx.floor()).clamp(0, s.shown.cols - 1),
+    i64((fx + 0.5).floor()).clamp(0, s.shown.cols)
+  )
+}
+
+/// The pointer told to a program that asked (`?1000`, `?1002`, `?1003`): presses and releases
+/// of each button, motion a cell at a time — with a button held for 1002, always for 1003 — and
+/// the wheel, with Shift, Alt and Ctrl, in SGR's encoding or X10's. A press holds the pointer
+/// for the program until it is let go.
+let report = (t: mut Term, f: FrameLayout, p: PointerInput) -> void => {
+  let i = t.active
+  let s = t.tabs[i]
+  let g = t.grid
+  let col = i64(((p.at.x - PAD) / g.cell_x).floor()).clamp(0, s.shown.cols - 1)
+  let cell_row = (f.base + i64(((p.at.y - f.rows.origin_y) / g.cell_y).floor()) - s.shown.scrollback_len()).clamp(
+    0,
+    s.shown.rows - 1
+  )
+  let extra = (if p.mods.shift { 4 } else { 0 }) + (if p.mods.alt { 8 } else { 0 }) + (if p.mods.control { 16 } else { 0 })
+  let sgr = s.shown.mouse_sgr
+  var out: []u8 = []
+  match p.kind {
+    PointerPress(b, _) => {
+      let code = button_code(b)
+      out = mouse_report(code + extra, col, cell_row, true, sgr)
+      t.holding = 3
+      t.button = code
+    },
+    PointerRelease(b) => {
+      out = mouse_report(button_code(b) + extra, col, cell_row, false, sgr)
+      t.holding = 0
+      t.button = -1
+    },
+    PointerMove => {
+      let moved = s.mouse_cell.0 != col || s.mouse_cell.1 != cell_row
+      if moved && s.mouse_cell.0 >= 0 {
+        if t.button >= 0 && s.shown.mouse_mode >= 1002 {
+          out = mouse_report(t.button + 32 + extra, col, cell_row, true, sgr)
+        } else if t.button < 0 && s.shown.mouse_mode == 1003 {
+          out = mouse_report(3 + 32 + extra, col, cell_row, true, sgr)
+        }
+      }
+    },
+    PointerWheel(_, down) => {
+      let notches = wheel_notches(t.tabs[i], -down)
+      let wheel = if notches > 0 { 64 } else { 65 }
+      for _ in 0..<notches.abs() { out = [
+        ...out,
+        ...mouse_report(wheel + extra, col, cell_row, true, sgr)
+      ] }
+    },
+  }
+  t.tabs[i].mouse_cell = (col, cell_row)
+  if out.len() > 0 { let _ = t.tabs[i].pty.write_bytes(out) }
+}
+
+/// A button as a terminal numbers it: 0 the primary, 1 the middle, 2 the secondary.
+let button_code = pure (b: PointerButton) -> i64 => match b {
+  Primary => 0,
+  Middle => 1,
+  Secondary => 2,
+  OtherButton(_) => 3,
+}
+
+/// The bytes a terminal sends for key `k` while a program runs: Ctrl and a letter its control
+/// character (Ctrl+Space NUL); Alt and a key, off a Mac, Escape and the key (a letter shifted
+/// with Shift), Alt+Backspace Escape and DEL; a named key its sequence (`session.key_sequence`).
+/// Keys that type nothing else send nothing here — their text does.
+let key_bytes = pure (t: Term, s: Session, k: KeyInput) -> []u8 => {
+  let mods = k.mods
+  if mods.control && !t.mac || (t.mac && mods.control) {
+    if let Character(c) = k.key { return control_bytes(c) }
+  }
+  if !t.mac && mods.alt {
+    if let Character(c) = k.key {
+      let typed = if mods.shift && i64(i32(c)) >= 97 && i64(i32(c)) <= 122 { rune(i64(i32(c)) - 32) } else { c }
+      return meta("${typed}").encode_utf8()
+    }
+    if k.key == Backspace { return "\e\x7f".encode_utf8() }
+  }
+  match key_sequence(k.key, mods.shift, s.shown.cursor_keys) {
+    Some(bytes) => bytes.encode_utf8(),
+    None => [],
+  }
+}
+
+/// Whether `mods` is the terminal's own chord: ⌘ on a Mac, Ctrl+Shift elsewhere.
+let edit_chord = pure (t: Term, mods: Modifiers) -> bool =>
+  if t.mac { mods.command } else { mods.control && mods.shift }
+
+/// What the command line asked for, carried out: the clipboard's part as commands, the rest by
+/// the tab.
+let outcome = (t: mut Term, o: Outcome) -> []Command<TermEvent> => match o {
+  Clip(text) => [CopyText(text)],
+  PasteWanted => [PasteText(ClipboardRead)],
+  other => {
+    if t.tabs[t.active].carry_out(other) { t.views[t.active].sticking = true }
+    []
+  },
+}
+
+/// A copy's text put on the clipboard, if it took any.
+let copied = pure (taken: Maybe<string>) -> []Command<TermEvent> => match taken {
+  Some(text) => [CopyText(text)],
+  None => [],
+}

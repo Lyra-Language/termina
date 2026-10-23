@@ -59,7 +59,7 @@ pub struct EscSequence {
 /// Where the parser is in the stream.
 data State =
   Ground
-  | Escape
+  | EscapeState
   | EscapeIntermediate
   | CsiEntry
   | CsiParam
@@ -161,7 +161,7 @@ impl Parser {
         } else {
           match self.state {
             Ground => self.ground_byte(b, out),
-            Escape => self.escape_byte(b, out),
+            EscapeState => self.escape_byte(b, out),
             EscapeIntermediate => self.escape_intermediate_byte(b, out),
             CsiEntry => self.csi_entry_byte(b, out),
             CsiParam => self.csi_param_byte(b, out),
@@ -212,7 +212,7 @@ impl Parser {
   }
 
   let enter_escape = (self: mut) -> void => {
-    self.state = Escape
+    self.state = EscapeState
     self.intermediates = ""
   }
 

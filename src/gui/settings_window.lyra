@@ -1,4 +1,4 @@
-module ui
+module gui
 //! The settings: the font — its family, size and line spacing — and the colors —
 //! a theme to start from, then the text, background, cursor, selection, the sections'
 //! (input and output), the tabs', the command line's and the 16 ANSI colors one by one,

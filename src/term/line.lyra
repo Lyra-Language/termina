@@ -1,4 +1,4 @@
-module ui
+module term
 //! The command line: the [Editor] drawn where the shell's prompt ends, and the keyboard and
 //! mouse turned into its edits. Shown only while the shell is at a prompt (its integration
 //! said so — `../shell/shell.lyra`); otherwise the keys are the running program's.
@@ -24,47 +24,22 @@ module ui
 //! triple-click selects the line.
 
 import bindings.sdl3.{ platform }
-import bindings.imgui.{
-  typed_text,
-  is_key_pressed,
-  is_mouse_clicked,
-  is_mouse_down,
-  get_mouse_clicked_count,
-  get_mouse_pos,
-  is_window_hovered,
-  set_mouse_cursor,
-  get_clipboard_text,
-  set_clipboard_text,
-  request_text_input,
-  Vec2,
-  DrawList,
-  MOUSE_CURSOR_TEXT_INPUT,
-  KEY_A,
-  KEY_C,
-  KEY_D,
-  KEY_E,
-  KEY_K,
-  KEY_L,
-  KEY_U,
-  KEY_V,
-  KEY_W,
-  KEY_X,
-  KEY_Z,
-  KEY_R,
-  KEY_S,
-  KEY_G,
-  KEY_LEFT_ARROW,
-  KEY_RIGHT_ARROW,
-  KEY_UP_ARROW,
-  KEY_DOWN_ARROW,
-  KEY_HOME,
-  KEY_END,
-  KEY_DELETE,
-  KEY_BACKSPACE,
-  KEY_ENTER,
-  KEY_KEYPAD_ENTER,
-  KEY_ESCAPE,
-  KEY_TAB,
+import ui.draw.{ Point }
+import ui.backend.{
+  Key,
+  Modifiers,
+  Character,
+  ArrowLeft,
+  ArrowRight,
+  ArrowUp,
+  ArrowDown,
+  Home,
+  End,
+  Delete,
+  Backspace,
+  Enter,
+  Escape,
+  Tab,
 }
 import editor.{
   editor,
@@ -72,17 +47,6 @@ import editor.{
   Wrap,
   position,
   row_count,
-  layout,
-  cells_of,
-  kinds,
-  Kind,
-  Plain,
-  Command,
-  Option,
-  Quoted,
-  Variable,
-  Operator,
-  Comment,
   index_at,
   rune_at,
   shell_word_at,
@@ -133,16 +97,16 @@ pub struct CommandLine {
 }
 
 /// Completions a menu shows at once; more scroll.
-const MENU_ROWS: i64 = 8
+pub const MENU_ROWS: i64 = 8
 
 /// The room inside the menu above its first row and below its last, in points.
-const MENU_PAD: f32 = 6.0
+pub const MENU_PAD: f32 = 6.0
 
 /// The widest a completion and its description are shown, in cells; longer is cut.
-const MENU_SHOWN: i64 = 40
-const MENU_DESCRIPTION: i64 = 60
+pub const MENU_SHOWN: i64 = 40
+pub const MENU_DESCRIPTION: i64 = 60
 
-/// What the command line asks of the terminal this frame.
+/// What the command line asks of the terminal for an input.
 pub data Outcome =
   Nothing
   /// Run this command.
@@ -151,6 +115,14 @@ pub data Outcome =
   | Send string
   /// Ask the shell for the completions of this text, the caret at this rune (Tab).
   | Complete(string, i64)
+  /// Put this text on the clipboard (a copy or cut by key).
+  | Clip string
+  /// Paste the clipboard: the front end reads it and hands it to [CommandLine.edit_action].
+  | PasteWanted
+
+/// An input for the command line ([CommandLine.input]): a key pressed with the modifiers held,
+/// or text typed with them — a frame's text before its keys.
+pub data LineInput = LineKey(Key, Modifiers) | LineText(string, Modifiers)
 
 /// An empty command line over `history` (oldest first).
 pub let command_line = pure (history: []string) -> CommandLine => CommandLine {
@@ -176,30 +148,12 @@ pub let command_line = pure (history: []string) -> CommandLine => CommandLine {
 /// What the Edit menu does — and ⌘Z, ⇧⌘Z, ⌘X, ⌘C, ⌘V, ⌘A without one.
 pub data EditAction = Undo | Redo | Cut | Copy | Paste | SelectAll
 
-/// How the command line looks.
-pub struct Style {
-  text: u32,
-  caret: u32,
-  selection: u32,
-  /// The completion menu: its background, the chosen row's, and descriptions' text (and
-  /// comments').
-  menu: u32,
-  menu_chosen: u32,
-  faint: u32,
-  /// The syntax's colors (`../editor/syntax.lyra`): commands, options, quoted text,
-  /// variables, operators and redirections.
-  command: u32,
-  option: u32,
-  quoted: u32,
-  variable: u32,
-  operator: u32,
-}
-
-/// Where the command line is: the screen position of column 0 of its first row, a cell's
-/// size, and the layout.
+/// Where the command line is: the position of column 0 of its first row (in the front end's
+/// coordinates), a cell's size, and the layout.
 pub struct Place {
-  origin: Vec2,
-  cell: Vec2,
+  origin: Point,
+  /// A cell's width (`x`) and height (`y`).
+  cell: Point,
   /// How far down its cell a line's text is drawn.
   text_dy: f32,
   wrap: Wrap,
@@ -336,7 +290,7 @@ impl CommandLine {
 
   // Where the menu is: its top left on the screen (below the command line's last row, or
   // above it by `lift`), its column (the word's, moved left to fit), and its width in cells.
-  let menu_layout = pure (self, at: Place) -> (Vec2, i64, i64) => {
+  pub let menu_layout = pure (self, at: Place) -> (Point, i64, i64) => {
     let wrap = at.wrap
     var shown_w = 0
     var desc_w = 0
@@ -355,18 +309,25 @@ impl CommandLine {
     // Its rows begin inside its padding: above the text by `lift` and the padding below its
     // last row, or below the text by the padding above its first.
     let top = if at.menu_above {
-      Vec2 {
+      Point {
         x: under.x,
         y: at.origin.y - at.lift - MENU_PAD - f32(self.menu_rows()) * at.cell.y,
       }
-    } else { Vec2 { x: under.x, y: under.y + MENU_PAD } }
+    } else { Point { x: under.x, y: under.y + MENU_PAD } }
     (top, left, width)
   }
 
   /// Undo, cut, paste and the rest: the same whether chosen from the Edit menu or pressed.
-  /// An edit narrows (or closes) an open completion menu, as typing does.
-  pub let edit_action = (self: mut, a: EditAction) -> void => {
+  /// An edit narrows (or closes) an open completion menu, as typing does. `clipboard` is
+  /// what a paste puts in; what a cut or copy takes is answered, for the front end to put on
+  /// the clipboard (`None` for nothing).
+  pub let edit_action = (
+    self: mut,
+    a: EditAction,
+    clipboard: string = ""
+  ) -> Maybe<string> => {
     let before = self.edit.content()
+    var taken: Maybe<string> = None
     match a {
       Undo => {
         let _ = self.edit.undo()
@@ -374,15 +335,15 @@ impl CommandLine {
       Redo => {
         let _ = self.edit.redo()
       },
-      Cut => if self.edit.has_selection() { set_clipboard_text(self.edit.cut()) },
-      Copy =>
-        if self.edit.has_selection() { set_clipboard_text(self.edit.selected_text()) },
-      Paste => self.edit.paste(get_clipboard_text()),
+      Cut => if self.edit.has_selection() { taken = Some(self.edit.cut()) },
+      Copy => if self.edit.has_selection() { taken = Some(self.edit.selected_text()) },
+      Paste => self.edit.paste(clipboard),
       SelectAll => self.edit.select_all(),
     }
     if self.menu.len() > 0 {
       if self.edit.content() != before { self.narrow() } else { self.close_menu() }
     }
+    taken
   }
 
   /// Whether `a` would do anything now: what the Edit menu greys out when not.
@@ -435,90 +396,86 @@ impl CommandLine {
     self.word_drag = None
   }
 
-  /// This frame's mouse and keys (when `focused`), then the command line drawn into `list`.
-  pub let update = (
-    self: mut,
-    at: Place,
-    list: DrawList,
-    style: Style,
-    focused: bool
-  ) -> Outcome => {
-    self.mouse(at)
-    var outcome = Nothing
-    if focused {
-      outcome = self.keys(at.wrap)
-      let (row, col) = position(self.edit.text, at.wrap, self.edit.cursor)
-      request_text_input(cell_pos(at, row, col), at.cell.y)
-    }
-    self.draw(at, list, style, focused)
-    outcome
-  }
-
   // ── Mouse ────────────────────────────────────────────────────────────────
 
-  let mouse = (self: mut, at: Place) -> void => {
-    let m = get_mouse_pos()
-    // ImGui's pointer is at -FLT_MAX when it is nowhere (outside the window, or no mouse
-    // yet), which no cell arithmetic survives — floor traps on it.
-    if m.x < -1.0e30 || m.y < -1.0e30 {
-      if !is_mouse_down(0) { self.dragging = false }
-      return
-    }
-    let row = ((m.y - at.origin.y) / at.cell.y).floor()
-    let fx = (m.x - at.origin.x) / at.cell.x
+  /// A press of the primary button at `p` (the front end's coordinates, as `at`'s), the clicks
+  /// in a row it makes, Shift held or not, and whether the pointer is over the command line's
+  /// window: an open menu's row chosen, or the menu closed by a press elsewhere; on the text, a
+  /// caret put (Shift: the selection extended), a word selected (two clicks, a drag after
+  /// extending by words) or the line (three). Whether the text or the menu took it.
+  pub let press = (
+    self: mut,
+    at: Place,
+    p: Point,
+    clicks: i64,
+    shift: bool,
+    over: bool
+  ) -> bool => {
+    let row = ((p.y - at.origin.y) / at.cell.y).floor()
+    let fx = (p.x - at.origin.x) / at.cell.x
     if self.menu.len() > 0 {
       let (menu_top, menu_col, width) = self.menu_layout(at)
-      let k = ((m.y - menu_top.y) / at.cell.y).floor()
+      let k = ((p.y - menu_top.y) / at.cell.y).floor()
       let inside = k >= 0 &&
         k < self.menu_rows() &&
         fx >= f32(menu_col) &&
         fx < f32(menu_col + width)
       if inside {
-        if is_mouse_clicked(0) {
-          if self.searching != None { return self.end_search(Some(self.menu_top + k)) }
-          return self.apply(self.menu[self.menu_top + k])
+        if self.searching != None { self.end_search(Some(self.menu_top + k)) } else {
+          self.apply(self.menu[self.menu_top + k])
         }
-        return
+        return true
       }
-      if is_mouse_clicked(0) {
-        if self.searching != None { self.end_search(None) } else { self.close_menu() }
-      }
+      if self.searching != None { self.end_search(None) } else { self.close_menu() }
     }
-    let over = is_window_hovered() && row >= 0
-    if over { set_mouse_cursor(MOUSE_CURSOR_TEXT_INPUT) }
+    if !over || row < 0 { return false }
     // A caret goes to the nearer edge of a rune; a word is the rune in the cell.
     let caret = index_at(self.edit.text, at.wrap, row, fx)
     let under = rune_at(self.edit.text, at.wrap, row, fx.floor())
-    if over && is_mouse_clicked(0) {
-      let clicks = get_mouse_clicked_count(0)
-      if clicks == 2 {
-        self.edit.select_word(under)
-        self.word_drag = Some(self.edit.selection())
-        self.dragging = true
-      } else if clicks >= 3 {
-        self.edit.select_line(caret)
-        self.word_drag = None
-        self.dragging = false
-      } else {
-        self.edit.click(caret, held().shift)
-        self.word_drag = None
-        self.dragging = true
-      }
-    } else if self.dragging && is_mouse_down(0) {
-      match self.word_drag {
-        Some((a, b)) => self.edit.select_words(a, b, under),
-        None => self.edit.click(caret, true),
-      }
-    } else if !is_mouse_down(0) {
+    if clicks == 2 {
+      self.edit.select_word(under)
+      self.word_drag = Some(self.edit.selection())
+      self.dragging = true
+    } else if clicks >= 3 {
+      self.edit.select_line(caret)
+      self.word_drag = None
       self.dragging = false
+    } else {
+      self.edit.click(caret, shift)
+      self.word_drag = None
+      self.dragging = true
+    }
+    true
+  }
+
+  /// The pointer at `p` with the primary button held: a drag begun on the text extends the
+  /// selection to it — by words after a double click.
+  pub let drag = (self: mut, at: Place, p: Point) -> void => {
+    if !self.dragging { return }
+    let row = ((p.y - at.origin.y) / at.cell.y).floor()
+    let fx = (p.x - at.origin.x) / at.cell.x
+    let caret = index_at(self.edit.text, at.wrap, row, fx)
+    let under = rune_at(self.edit.text, at.wrap, row, fx.floor())
+    match self.word_drag {
+      Some((a, b)) => self.edit.select_words(a, b, under),
+      None => self.edit.click(caret, true),
     }
   }
 
+  /// The primary button let go: a drag ends.
+  pub let release = (self: mut) -> void => { self.dragging = false }
+
   // ── Keys ─────────────────────────────────────────────────────────────────
 
-  let keys = (self: mut, wrap: Wrap) -> Outcome => {
-    // The keys as pressed, ImGui's macOS swap of Ctrl and ⌘ undone (`modifiers.lyra`).
-    let mods = held()
+  /// One key or typed text, as the front end hands them over (a frame's text before its keys,
+  /// as typing comes first): what the command line asks of the terminal for it. A key's
+  /// `Character` is its unshifted character; `mods` are the keys as pressed, never ImGui's
+  /// macOS swap of Ctrl and ⌘.
+  pub let input = (self: mut, wrap: Wrap, i: LineInput) -> Outcome => {
+    let mods = match i {
+      LineKey(_, m) => m,
+      LineText(_, m) => m,
+    }
     let mac = platform() == "macOS"
     let shift = mods.shift
     let ctrl = mods.control
@@ -528,24 +485,31 @@ impl CommandLine {
     let by_word = if mac { mods.alt } else { ctrl }
     if self.searching != None { return self.search_keys(
       wrap,
+      i,
       mac,
       shift,
       ctrl,
       command,
       by_word
     ) }
-    if ctrl && !shift && is_key_pressed(KEY_R) {
+    if ctrl && !shift && pressed(i, Character('r')) {
       self.start_search()
       return Nothing
     }
     if self.menu.len() > 0 {
-      if is_key_pressed(KEY_DOWN_ARROW) || (is_key_pressed(KEY_TAB) && !shift) { self.choose(1); return Nothing }
-      if is_key_pressed(KEY_UP_ARROW) || (is_key_pressed(KEY_TAB) && shift) { self.choose(-1); return Nothing }
-      if is_key_pressed(KEY_ENTER) || is_key_pressed(KEY_KEYPAD_ENTER) {
+      if pressed(
+        i,
+        ArrowDown
+      ) || (pressed(i, Tab) && !shift) { self.choose(1); return Nothing }
+      if pressed(
+        i,
+        ArrowUp
+      ) || (pressed(i, Tab) && shift) { self.choose(-1); return Nothing }
+      if pressed(i, Enter) {
         self.apply(self.menu[self.chosen])
         return Nothing
       }
-      if is_key_pressed(KEY_ESCAPE) {
+      if pressed(i, Escape) {
         self.close_menu()
         return Nothing
       }
@@ -553,7 +517,7 @@ impl CommandLine {
       // — the caret leaving the word — closes it.
       let text_before = self.edit.content()
       let cursor_before = self.edit.cursor
-      let outcome = self.edit_keys(wrap, mac, shift, ctrl, command, by_word)
+      let outcome = self.edit_keys(wrap, i, mac, shift, ctrl, command, by_word)
       if self.edit.content() != text_before {
         self.narrow()
         // And the shell asked again, for its own matching of the word as it now is.
@@ -569,85 +533,92 @@ impl CommandLine {
       } else if self.edit.cursor != cursor_before { self.close_menu() }
       return outcome
     }
-    if is_key_pressed(KEY_TAB) && !ctrl && !command {
+    if pressed(i, Tab) && !ctrl && !command {
       self.pending = Some((self.edit.content(), self.edit.cursor))
       return Complete(self.edit.content(), self.edit.cursor)
     }
-    self.edit_keys(wrap, mac, shift, ctrl, command, by_word)
+    self.edit_keys(wrap, i, mac, shift, ctrl, command, by_word)
   }
 
   let edit_keys = (
     self: mut,
     wrap: Wrap,
+    i: LineInput,
     mac: bool,
     shift: bool,
     ctrl: bool,
     command: bool,
     by_word: bool
   ) -> Outcome => {
-    let mods = held()
-    if !ctrl && !(mac && command) {
-      let typed = typed_text()
-      if typed != "" { self.type_text(typed) }
+    let mods = match i {
+      LineKey(_, m) => m,
+      LineText(_, m) => m,
     }
-    if is_key_pressed(KEY_ENTER) || is_key_pressed(KEY_KEYPAD_ENTER) {
+    if let LineText(typed, _) = i {
+      if !ctrl && !(mac && command) && typed != "" { self.type_text(typed) }
+      return Nothing
+    }
+    if pressed(i, Enter) {
       if shift || mods.alt { self.edit.newline() }
       else { return Submit(self.edit.content()) }
     }
     if command {
       // The Edit menu's own when there is one; read here they would act twice.
       if !self.menu_keys {
-        if is_key_pressed(KEY_A) { self.edit_action(SelectAll) }
-        if is_key_pressed(KEY_C) { self.edit_action(Copy) }
-        if is_key_pressed(KEY_X) { self.edit_action(Cut) }
-        if is_key_pressed(KEY_V) { self.edit_action(Paste) }
-        if is_key_pressed(KEY_Z) { self.edit_action(if shift { Redo } else { Undo }) }
+        if pressed(i, Character('a')) { let _ = self.edit_action(SelectAll) }
+        if pressed(i, Character('c')) { return clipped(self.edit_action(Copy)) }
+        if pressed(i, Character('x')) { return clipped(self.edit_action(Cut)) }
+        if pressed(i, Character('v')) { return PasteWanted }
+        if pressed(
+          i,
+          Character('z')
+        ) { let _ = self.edit_action(if shift { Redo } else { Undo }) }
       }
     } else if ctrl {
       // The shell's line-editing keys, as zsh's emacs mode has them.
-      if is_key_pressed(KEY_A) { self.edit.line_start(shift) }
-      if is_key_pressed(KEY_E) { self.edit.line_end(shift) }
-      if is_key_pressed(KEY_K) { self.edit.delete_to_line_end() }
-      if is_key_pressed(KEY_U) { self.edit.delete_to_line_start() }
-      if is_key_pressed(KEY_W) { self.edit.delete_word_back() }
-      if is_key_pressed(KEY_C) { self.edit.clear() }
-      if is_key_pressed(KEY_L) { return Send("\x0c") }
-      if is_key_pressed(KEY_D) {
+      if pressed(i, Character('a')) { self.edit.line_start(shift) }
+      if pressed(i, Character('e')) { self.edit.line_end(shift) }
+      if pressed(i, Character('k')) { self.edit.delete_to_line_end() }
+      if pressed(i, Character('u')) { self.edit.delete_to_line_start() }
+      if pressed(i, Character('w')) { self.edit.delete_word_back() }
+      if pressed(i, Character('c')) { self.edit.clear() }
+      if pressed(i, Character('l')) { return Send("\x0c") }
+      if pressed(i, Character('d')) {
         if self.edit.is_empty() { return Send("\x04") }
         self.edit.delete_forward()
       }
-      if !mac && is_key_pressed(KEY_Z) { let _ = self.edit.undo() }
+      if !mac && pressed(i, Character('z')) { let _ = self.edit.undo() }
     }
     let line_mod = mac && mods.command
-    if is_key_pressed(KEY_LEFT_ARROW) {
+    if pressed(i, ArrowLeft) {
       if line_mod { self.edit.line_start(shift) }
       else if by_word { self.edit.word_left(shift) }
       else { self.edit.left(shift) }
     }
-    if is_key_pressed(KEY_RIGHT_ARROW) {
+    if pressed(i, ArrowRight) {
       if line_mod { self.edit.line_end(shift) }
       else if by_word { self.edit.word_right(shift) }
       else { self.edit.right(shift) }
     }
-    if is_key_pressed(KEY_UP_ARROW) {
+    if pressed(i, ArrowUp) {
       if line_mod { self.edit.text_start(shift) }
       else if !self.edit.vertical(wrap, -1, shift) && !shift { self.older() }
     }
-    if is_key_pressed(KEY_DOWN_ARROW) {
+    if pressed(i, ArrowDown) {
       if line_mod { self.edit.text_end(shift) }
       else if !self.edit.vertical(wrap, 1, shift) && !shift { self.newer() }
     }
-    if is_key_pressed(KEY_HOME) { self.edit.line_start(shift) }
-    if is_key_pressed(KEY_END) { self.edit.line_end(shift) }
-    if is_key_pressed(KEY_BACKSPACE) {
+    if pressed(i, Home) { self.edit.line_start(shift) }
+    if pressed(i, End) { self.edit.line_end(shift) }
+    if pressed(i, Backspace) {
       if line_mod { self.edit.delete_to_line_start() }
       else if by_word { self.edit.delete_word_back() }
       else { self.edit.backspace() }
     }
-    if is_key_pressed(KEY_DELETE) {
+    if pressed(i, Delete) {
       if by_word { self.edit.delete_word_forward() } else { self.edit.delete_forward() }
     }
-    if is_key_pressed(KEY_ESCAPE) { self.edit.click(self.edit.cursor, false) }
+    if pressed(i, Escape) { self.edit.click(self.edit.cursor, false) }
     Nothing
   }
 
@@ -724,6 +695,7 @@ impl CommandLine {
   let search_keys = (
     self: mut,
     wrap: Wrap,
+    i: LineInput,
     mac: bool,
     shift: bool,
     ctrl: bool,
@@ -731,24 +703,24 @@ impl CommandLine {
     by_word: bool
   ) -> Outcome => {
     let has = self.menu.len() > 0
-    if is_key_pressed(KEY_UP_ARROW) || (ctrl && is_key_pressed(KEY_R)) {
+    if pressed(i, ArrowUp) || (ctrl && pressed(i, Character('r'))) {
       if has { self.choose(-1) }
       return Nothing
     }
-    if is_key_pressed(KEY_DOWN_ARROW) || (ctrl && is_key_pressed(KEY_S)) {
+    if pressed(i, ArrowDown) || (ctrl && pressed(i, Character('s'))) {
       if has { self.choose(1) }
       return Nothing
     }
-    if is_key_pressed(KEY_ENTER) || is_key_pressed(KEY_KEYPAD_ENTER) || is_key_pressed(KEY_TAB) {
+    if pressed(i, Enter) || pressed(i, Tab) {
       self.end_search(if has { Some(self.chosen) } else { None })
       return Nothing
     }
-    if is_key_pressed(KEY_ESCAPE) || (ctrl && is_key_pressed(KEY_G)) {
+    if pressed(i, Escape) || (ctrl && pressed(i, Character('g'))) {
       self.end_search(None)
       return Nothing
     }
     let before = self.edit.content()
-    let outcome = self.edit_keys(wrap, mac, shift, ctrl, command, by_word)
+    let outcome = self.edit_keys(wrap, i, mac, shift, ctrl, command, by_word)
     if self.edit.content() != before { self.search() }
     match outcome {
       Submit(_) => Nothing,
@@ -772,153 +744,24 @@ impl CommandLine {
       if self.browsing == self.history.len() { self.draft } else { self.history[self.browsing] }
     )
   }
-
-  // ── Drawing ──────────────────────────────────────────────────────────────
-
-  let draw = (self, at: Place, list: DrawList, style: Style, focused: bool) -> void => {
-    let text = self.edit.text
-    let (a, b) = self.edit.selection()
-    let places = layout(text, at.wrap)
-    let kind = kinds(text)
-    // Text in runs of one kind, of runes a cell wide on one row; a wide rune alone, across
-    // its two cells, as the grid draws one — a run's glyphs are spaced by the font, not the
-    // grid.
-    var run: []u8 = []
-    var run_row = 0
-    var run_col = 0
-    var run_end = 0
-    var run_color = style.text
-    for k in 0..<text.len() {
-      let (row, col) = places[k]
-      let r = text[k]
-      let w = cells_of(r)
-      if k >= a && k < b {
-        // A selected line break shows as a sliver, so the selection visibly spans it.
-        let width = if r == '\n' { at.cell.x * 0.5 } else { f32(w) * at.cell.x }
-        let p = cell_pos(at, row, col)
-        list.add_rect_filled(
-          p,
-          Vec2 { x: p.x + width, y: p.y + at.cell.y },
-          style.selection
-        )
-      }
-      let paint = color_of(style, kind[k])
-      let apart = r == '\n' ||
-        w == 2 ||
-        row != run_row ||
-        col != run_end ||
-        paint != run_color
-      if apart && run.len() > 0 {
-        flush(list, at, run_row, run_col, run, run_color)
-        run = []
-      }
-      if r != '\n' {
-        if run.len() == 0 {
-          run_row = row
-          run_col = col
-          run_color = paint
-        }
-        push_rune(run, i64(r))
-        run_end = col + w
-        if w == 2 {
-          flush(list, at, run_row, run_col, run, run_color)
-          run = []
-        }
-      }
-    }
-    flush(list, at, run_row, run_col, run, run_color)
-    if focused {
-      let (r, c) = position(text, at.wrap, self.edit.cursor)
-      let p = cell_pos(at, r, c)
-      list.add_rect_filled(p, Vec2 { x: p.x + 2.0, y: p.y + at.cell.y }, style.caret)
-    }
-    if self.menu_rows() > 0 { self.draw_menu(at, list, style) }
-  }
-
-  // The completion menu: a row each, the chosen one marked, descriptions fainter.
-  let draw_menu = (self, at: Place, list: DrawList, style: Style) -> void => {
-    let (top, _, width) = self.menu_layout(at)
-    let shown_rows = self.menu_rows()
-    let pad = at.cell.x * 0.5
-    list.add_rect_filled(
-      Vec2 { x: top.x - pad, y: top.y - MENU_PAD },
-      Vec2 {
-        x: top.x + f32(width) * at.cell.x + pad,
-        y: top.y + f32(shown_rows) * at.cell.y + MENU_PAD,
-      },
-      style.menu,
-      6.0
-    )
-    var shown_w = 0
-    for c in self.menu { shown_w = shown_w.max(c.shown.len().min(MENU_SHOWN)) }
-    if self.menu.len() == 0 {
-      list.add_text(
-        Vec2 { x: top.x + at.cell.x, y: top.y + at.text_dy },
-        style.faint,
-        "No command in the history has that in it"
-      )
-      return
-    }
-    // A history entry is shown as wide as the list allows; a completion to its limit.
-    let limit = if self.searching != None { width - 2 } else { MENU_SHOWN }
-    for k in 0..<shown_rows {
-      let c = self.menu[self.menu_top + k]
-      let y = top.y + f32(k) * at.cell.y
-      if self.menu_top + k == self.chosen {
-        list.add_rect_filled(
-          Vec2 { x: top.x - pad, y: y },
-          Vec2 { x: top.x + f32(width) * at.cell.x + pad, y: y + at.cell.y },
-          style.menu_chosen,
-          4.0
-        )
-      }
-      let shown = if c.shown.len() > limit { c.shown.slice(0, limit) } else { c.shown }
-      list.add_text(Vec2 { x: top.x + at.cell.x, y: y + at.text_dy }, style.text, shown)
-      if c.description != "" {
-        let room = width - shown_w - 4
-        if room > 0 {
-          let d = if c.description.len() > room { c.description.slice(
-            0,
-            room
-          ) } else { c.description }
-          list.add_text(
-            Vec2 { x: top.x + f32(shown_w + 3) * at.cell.x, y: y + at.text_dy },
-            style.faint,
-            d
-          )
-        }
-      }
-    }
-  }
 }
 
-/// The color a rune of `kind` is drawn in.
-let color_of = pure (style: Style, kind: Kind) -> u32 => match kind {
-  Plain => style.text,
-  Command => style.command,
-  Option => style.option,
-  Quoted => style.quoted,
-  Variable => style.variable,
-  Operator => style.operator,
-  Comment => style.faint,
+/// Whether `i` is a press of `k`.
+let pressed = pure (i: LineInput, k: Key) -> bool => match i {
+  LineKey(key, _) => key == k,
+  LineText(_, _) => false,
 }
 
-let cell_pos = pure (at: Place, row: i64, col: i64) -> Vec2 => Vec2 {
+/// A copy or cut's outcome: the text for the clipboard, or nothing when nothing was taken.
+let clipped = pure (taken: Maybe<string>) -> Outcome => match taken {
+  Some(text) => Clip(text),
+  None => Nothing,
+}
+
+/// Where column `col` of row `row` is.
+pub let cell_pos = pure (at: Place, row: i64, col: i64) -> Point => Point {
   x: at.origin.x + f32(col) * at.cell.x,
   y: at.origin.y + f32(row) * at.cell.y,
-}
-
-let flush = (
-  list: DrawList,
-  at: Place,
-  row: i64,
-  col: i64,
-  run: []u8,
-  color: u32
-) -> void => {
-  if run.len() == 0 { return }
-  let p = cell_pos(at, row, col)
-  list.add_text(Vec2 { x: p.x, y: p.y + at.text_dy }, color, run.decode_utf8())
 }
 
 /// The UTF-8 encoding of code point `c`, pushed onto `bytes`.

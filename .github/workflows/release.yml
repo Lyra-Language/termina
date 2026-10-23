@@ -124,6 +124,7 @@ jobs:
           build/vttest
           SDL_VIDEODRIVER=dummy build/uitest
           build/menutest
+          tools/termina-ui-check.sh
 
       # The Developer ID certificate into a keychain of the job's own, and the App Store
       # Connect key into a file, for package.sh to sign and notarize with. Without the

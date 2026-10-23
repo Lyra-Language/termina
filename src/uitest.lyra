@@ -58,17 +58,20 @@ import bindings.imgui.{
   MOD_CTRL,
   MOD_ALT,
 }
-import ui.{
+import term.{
   command_line,
   CommandLine,
   Place,
-  Style,
   Outcome,
   Nothing,
   Submit,
   Send,
-  Complete
+  Complete,
+  Clip,
+  PasteWanted,
 }
+import gui.{ Style, update_line }
+import ui.draw.{ Point }
 import editor.{ Wrap }
 import bindings.imgui.ui.{
   Node,
@@ -112,22 +115,17 @@ import settings_view.{
   ResetSettings,
   ChooseFontFile
 }
-import ui.{
+import term.{
   dark_theme,
   abgr,
   Theme,
   typed_lines,
-  tab_command,
   OpenSettings,
   FontBigger,
   FontSmaller,
   FontDefault,
-  settings_panel,
-  carry_out,
   theme_of,
-  tab_bar,
   order_by,
-  TabBar,
   TabLabel,
   EditAction,
   Undo,
@@ -140,7 +138,14 @@ import ui.{
   NoCommand,
   NewTab,
   CloseTab,
-  ShowTab
+  ShowTab,
+}
+import gui.{
+  tab_command,
+  settings_panel,
+  carry_out,
+  tab_bar,
+  TabBar,
 }
 import settings.{
   defaults,
@@ -213,8 +218,8 @@ let main = () -> u8 => {
 /// The command line as the checks lay it out: after a five-column prompt, forty columns
 /// wide, ten by twenty points a cell, from (100, 100).
 const PLACE: Place = Place {
-  origin: Vec2 { x: 100.0, y: 100.0 },
-  cell: Vec2 { x: 10.0, y: 20.0 },
+  origin: Point { x: 100.0, y: 100.0 },
+  cell: Point { x: 10.0, y: 20.0 },
   text_dy: 2.0,
   wrap: Wrap { first: 5, cols: 40 },
 }
@@ -624,21 +629,21 @@ let check_edit_actions = (host: Host) -> i64 => {
     "${line.can(Undo)} ${line.can(SelectAll)} ${line.can(Copy)}",
     "true true false"
   )
-  line.edit_action(SelectAll)
+  let _ = line.edit_action(SelectAll)
   failed += check("select all", line.edit.selected_text(), "echo hello")
   failed += check(
     "cut and copy once selected",
     "${line.can(Cut)} ${line.can(Copy)}",
     "true true"
   )
-  line.edit_action(Cut)
+  let _ = line.edit_action(Cut)
   failed += check("cut", line.edit.content(), "")
-  line.edit_action(Undo)
+  let _ = line.edit_action(Undo)
   failed += check("undo the cut", line.edit.content(), "echo hello")
   failed += check("redo once undone", "${line.can(Redo)}", "true")
-  line.edit_action(Redo)
+  let _ = line.edit_action(Redo)
   failed += check("redo the cut", line.edit.content(), "")
-  line.edit_action(Undo)
+  let _ = line.edit_action(Undo)
 
   // With the menu bar's Edit menu, ⌘Z is its: pressed, it does nothing here.
   if platform() == "macOS" {
@@ -1696,7 +1701,7 @@ let check_sessions = () -> i64 => {
     "${e.has_selection()} ${e.can(Copy)}",
     "false false"
   )
-  e.edit_action(SelectAll)
+  let _ = e.edit_action(SelectAll)
   failed += check("select all", e.selected_text().trim(), "first\nsecond")
   failed += check("copy then", "${e.can(Copy)} ${e.can(SelectAll)}", "true true")
   close_session(e)
@@ -1797,7 +1802,7 @@ let frame_at = (host: Host, line: mut CommandLine, at: Place) -> Outcome => {
     variable: 0xFFFF00FF,
     operator: 0xFFFF0000,
   }
-  let outcome = line.update(at, get_window_draw_list(), style, true)
+  let outcome = update_line(line, at, get_window_draw_list(), style, true)
   end()
   end_frame(host, 0.0, 0.0, 0.0)
   outcome
@@ -1822,7 +1827,7 @@ let frame = (host: Host, line: mut CommandLine) -> Outcome => {
     variable: 0xFFFF00FF,
     operator: 0xFFFF0000,
   }
-  let outcome = line.update(PLACE, get_window_draw_list(), style, true)
+  let outcome = update_line(line, PLACE, get_window_draw_list(), style, true)
   end()
   end_frame(host, 0.0, 0.0, 0.0)
   outcome
@@ -1919,6 +1924,8 @@ let describe = pure (o: Outcome) -> string => match o {
   Submit(c) => "submit ${c}",
   Send(b) => "send ${b}",
   Complete(t, c) => "complete ${t} at ${c}",
+  Clip(t) => "clip ${t}",
+  PasteWanted => "paste",
 }
 
 let check = (name: string, got: string, want: string) -> i64 => {

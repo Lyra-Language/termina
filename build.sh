@@ -34,6 +34,8 @@ mkdir -p "$ROOT/build"
 "$LYRAC" build -o "$ROOT/build/vttest" "$ROOT/src/vttest.lyra"
 "$LYRAC" build -o "$ROOT/build/uitest" "$ROOT/src/uitest.lyra"
 "$LYRAC" build -o "$ROOT/build/menutest" "$ROOT/src/menutest.lyra"
+# Termina on `ui` (`src/termina_ui.lyra`), beside the ImGui app until `ui` has the rest.
+"$LYRAC" build -o "$ROOT/build/termina-ui" "$ROOT/src/termina_ui.lyra"
 
 # **On macOS, also an app** — build/Termina.app, the same program in a bundle — so that it
 # opens from Finder and the Dock, and the system (and anything driving it, such as

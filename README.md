@@ -17,6 +17,8 @@ come next (`CLAUDE.md` § Plan).
 ../lyra/build.sh     # the compiler, with std/ and bindings/ beside it (SDL3 needed)
 ./build.sh           # build/termina (and build/Termina.app on macOS), and the tests
 build/termina
+build/termina-ui     # the same terminal on Lyra's own GUI framework instead of Dear ImGui,
+                     #   coming: tabs as buttons, no menus or Settings yet
 ```
 
 Releases (`git tag vX.Y.Z` and push it) carry Termina.app for Apple silicon, signed with a

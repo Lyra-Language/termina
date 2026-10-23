@@ -1,4 +1,4 @@
-module ui
+module term
 //! Keys typed ahead, as the shell found them waiting at a new line (`../shell/shell.lyra`):
 //! raw bytes, as a terminal sends keys, turned into what they typed. Text is text; Return
 //! ends a line (the terminal has already made it `\n`); Backspace, Ctrl+U and Ctrl+W edit

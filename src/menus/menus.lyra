@@ -52,7 +52,12 @@ import bindings.imgui.ui.{
 }
 import bindings.menubar
 import menus_view.{ MenuChoice, Tabs, PreviousTab, NextTab }
-import ui.{ TabCommand, NoCommand, NewTab, ShowTab }
+import term.{
+  TabCommand,
+  NoCommand,
+  NewTab,
+  ShowTab,
+}
 
 /// The menus installed in the Mac's menu bar; the choice each tag stands for, in tag order.
 /// `None` where there is no native bar — off macOS, or before SDL has an application.

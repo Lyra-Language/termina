@@ -38,7 +38,7 @@ struct Snapshot {
   anchor: i64,
 }
 
-data EditKind = Moved | Typed | DeletedRune | Deleted | Other
+data EditKind = Moved | Typed | DeletedRune | Deleted | OtherEdit
 
 /// How the text is laid out, for the motions and hit tests that depend on it: its first row
 /// begins `first` columns in (after the prompt), and a row is `cols` wide — a longer one
@@ -103,7 +103,7 @@ impl Editor {
     let clean = s.replace("\r\n", "\n").replace("\r", "\n")
     self.save()
     self.replace_selection(clean.to_runes())
-    self.last = Other
+    self.last = OtherEdit
   }
 
   /// A new line at the caret.
@@ -116,7 +116,7 @@ impl Editor {
     self.cursor = self.text.len()
     self.anchor = self.cursor
     self.goal = -1
-    self.last = Other
+    self.last = OtherEdit
   }
 
   /// Replace runes `start` up to `end` with `s`, the caret after it, as one edit — a
@@ -126,7 +126,7 @@ impl Editor {
     self.anchor = start.clamp(0, self.text.len())
     self.cursor = end.clamp(self.anchor, self.text.len())
     self.replace_selection(s.to_runes())
-    self.last = Other
+    self.last = OtherEdit
   }
 
   /// Delete the selection, or the rune before the caret.
@@ -363,7 +363,7 @@ impl Editor {
     self.cursor = s.cursor
     self.anchor = s.anchor
     self.goal = -1
-    self.last = Other
+    self.last = OtherEdit
   }
 }
 

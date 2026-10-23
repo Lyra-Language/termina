@@ -10,7 +10,7 @@ import bindings.sdl3.{ init, quit, platform, INIT_VIDEO }
 import bindings.menubar.{ describe }
 import menus.{ install_native, sync_native }
 import menus_view.{ menus_view, EDIT_ACTIONS }
-import ui.{ TabLabel }
+import term.{ TabLabel }
 
 let main = () -> u8 => {
   if platform() != "macOS" {

@@ -69,11 +69,9 @@ import bindings.imgui.{
 import session.{
   open_session,
   close_session,
-  draw_session,
   tab_title,
   directory,
   Session,
-  Look,
 }
 import menus.{
   install_native,
@@ -108,26 +106,31 @@ import settings.{
   FontFamily,
   FONT_SIZE_RANGE,
 }
-import ui.{
-  settings_panel,
-  SettingsAsk,
+import term.{
   theme_of,
   clear_color,
   OpenSettings,
   FontBigger,
   FontSmaller,
   FontDefault,
-  tab_command,
-  tab_bar,
-  TabBar,
   TabLabel,
-  Fonts,
   Theme,
   TabCommand,
   NoCommand,
   NewTab,
   CloseTab,
-  ShowTab
+  ShowTab,
+}
+import gui.{
+  draw_session,
+  Look,
+  edit_session,
+  settings_panel,
+  SettingsAsk,
+  tab_command,
+  tab_bar,
+  TabBar,
+  Fonts,
 }
 
 let main = () -> void => {
@@ -303,7 +306,7 @@ let frame_of = (win: mut App) -> bool => {
   for choice in chosen {
     match choice {
       // Edit's items act on the tab shown.
-      Edit(a) => win.sessions[win.active].edit_action(a),
+      Edit(a) => edit_session(win.sessions[win.active], a),
       QuitApp => request_quit(win.host),
       MinimizeWindow => minimize(win.host),
       ToggleMaximized => toggle_maximized(win.host),

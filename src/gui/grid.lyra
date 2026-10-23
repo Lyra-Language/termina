@@ -1,4 +1,4 @@
-module ui
+module gui
 //! A screen line drawn: its backgrounds, its text in runs of one style, and the lines an
 //! underline or a strike adds. A run is as long as the style stays the same, so a line of
 //! plain text is one `add_text`, as it was before color. **A wide rune is drawn alone**,

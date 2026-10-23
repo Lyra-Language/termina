@@ -1,0 +1,40 @@
+module term
+//! A window's tabs as data, whatever draws them: a tab's label, the commands its shortcuts and
+//! menus give, and the order a bar dragged its tabs into (`../gui/tabs.lyra` draws ImGui's).
+
+/// A tab on the bar: what it is called, and its identity, which no other tab of the window
+/// has and a changing name must not move.
+pub struct TabLabel {
+  name: string,
+  id: i64,
+}
+
+/// A window's shortcut pressed (or menu item chosen) this frame.
+pub data TabCommand =
+  NoCommand
+  | NewTab
+  | CloseTab
+  /// Show the tab at this index.
+  | ShowTab i64
+  /// Open the settings window (⌘, from the menu bar; Ctrl+, without one).
+  | OpenSettings
+  /// The font a point bigger or smaller, or back to the default size (View's items).
+  | FontBigger
+  | FontSmaller
+  | FontDefault
+
+/// The indices of `lefts` from the leftmost to the rightmost — an insertion sort, stable,
+/// for a bar's handful of tabs.
+pub let order_by = pure (lefts: []f32) -> []i64 => {
+  var order: []i64 = [k in 0..<lefts.len() | k]
+  for i in 1..<order.len() {
+    var j = i
+    while j > 0 && lefts[order[j - 1]] > lefts[order[j]] {
+      let t = order[j]
+      order[j] = order[j - 1]
+      order[j - 1] = t
+      j -= 1
+    }
+  }
+  order
+}

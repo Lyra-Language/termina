@@ -1,0 +1,689 @@
+module face
+//! A tab drawn for `ui` (`../gui/session_view.lyra` draws it for ImGui): the ops a painter
+//! answers, in its own coordinates, from the tab's state and where everything goes
+//! (`session.frame_layout`, which both front ends share) — the blocks' cards under the text,
+//! the grid's lines a cell at a time (`PaintCells`: a run of one color, each cell its own face),
+//! how each block ended over them, the selection, and at a prompt the command line's box with
+//! the prompt in it, or the cursor while a program runs.
+//!
+//! **The theme's colors are ImGui's** (`0xAABBGGRR`, `../term/theme.lyra`): [color] reads them
+//! as `ui`'s. **Underlines and the strikeout are where the font says** (`FontMetrics`), not at
+//! fractions of the size as ImGui's grid has them, and **bold is a face** — the family's, a
+//! variable font's instance or one made bold — never the text drawn twice.
+
+import ui.draw.{ Point, Rect, Radii, Color, Fill, Border, radius }
+import ui.text.{ FontSpec, FontMetrics, Cell as TextCell }
+import ui.layout.{ PaintArea, PaintOp, PaintDraw, PaintText, PaintCells, PaintWave }
+import vt.{
+  Cell,
+  BOLD,
+  ITALIC,
+  UNDERLINE,
+  DOUBLE_UNDERLINE,
+  CURLY_UNDERLINE,
+  STRIKE,
+  SPACER,
+  width_of,
+  marks_of,
+  selected_on,
+}
+import editor.{
+  layout,
+  position,
+  cells_of,
+  kinds,
+  Kind,
+  Plain,
+  Command,
+  Option,
+  Quoted,
+  Variable,
+  Operator,
+  Comment,
+  text_of,
+}
+import session.{
+  Session,
+  Block,
+  FrameLayout,
+  duration_text,
+  BLOCK_PAD,
+  BLOCK_ROUNDING,
+  FAILED_BAR,
+  BOX_MARGIN,
+  BOX_INSET,
+  BOX_PADDING,
+  BOX_GAP,
+  BOX_MENU_GAP,
+  BOX_ROUNDING,
+}
+import term.{ Theme, CommandLine, Place, cell_pos, MENU_PAD, MENU_SHOWN }
+
+/// What a grid is drawn with: its font, a cell's width and height, how far below a row's top
+/// its text's baseline is, and the font's measurements (underline, strikeout).
+pub struct Grid {
+  font: FontSpec,
+  cell_x: f32,
+  cell_y: f32,
+  baseline: f32,
+  metrics: FontMetrics,
+}
+
+/// The grid for a font's measurements: a cell as wide as its advance and as tall as its size
+/// times `spacing`, a whole number of points, its text centred in it as ImGui's is.
+pub let grid_of = pure (font: FontSpec, m: FontMetrics, spacing: f32) -> Grid => {
+  let cell_y = f32((font.size * spacing).round())
+  let text_height = m.ascent + m.descent
+  Grid {
+    font: font,
+    cell_x: m.advance.max(1.0),
+    cell_y: cell_y,
+    baseline: f32(((cell_y - text_height) / 2.0 + m.ascent).round()),
+    metrics: m,
+  }
+}
+
+/// The room between the painter's edges and the grid.
+pub const PAD: f32 = 10.0
+
+/// An ImGui color (`0xAABBGGRR`) as `ui`'s.
+pub let color = pure (abgr: u32) -> Color => Color {
+  r: u8(abgr & 0xFF),
+  g: u8((abgr >> 8) & 0xFF),
+  b: u8((abgr >> 16) & 0xFF),
+  a: u8((abgr >> 24) & 0xFF),
+}
+
+/// Tab `s` as a painter's ops, laid out as `f` — what a frame shows of it — focused or not,
+/// with the grid `g` in theme `theme`, `area` the painter's.
+pub let paint_tab = pure (
+  s: Session,
+  f: FrameLayout,
+  g: Grid,
+  theme: Theme,
+  focused: bool,
+  area: PaintArea
+) -> []PaintOp => {
+  var ops: []PaintOp = []
+  let rows = f.rows
+  let cols = s.shown.cols
+  // The commands' blocks under the text: the input's band, the output's below it.
+  if !s.shown.alt {
+    for b in s.blocks { card(ops, s, theme, g, f, b, false) }
+    if let Some(b) = s.running_block {
+      card(
+        ops,
+        s,
+        theme,
+        g,
+        f,
+        Block { b | end: f.grid_lines + s.shown.absolute(0) },
+        true
+      )
+    }
+  }
+  // The rows in view that are a block's input — its prompt and command — in the input's
+  // text color.
+  let input_theme = theme.for_input()
+  var input_rows: []bool = [false; (f.bottom - f.top).max(0)]
+  if !s.shown.alt {
+    let oldest = s.shown.absolute(0)
+    var spans: [](i64, i64) = [b in s.blocks | (b.prompt, b.output)]
+    if let Some(b) = s.running_block { spans.push((b.prompt, b.output)) }
+    for (p, o) in spans {
+      for i in (p - oldest).max(f.top)..<(o - oldest).min(f.bottom) { input_rows[i - f.top] = true }
+    }
+  }
+  for i in f.top..<f.bottom {
+    let upto = if f.input_line >= 0 && i == f.first && f.first_col > 0 { f.first_col } else { cols }
+    let row_theme = if input_rows[i - f.top] { input_theme } else { theme }
+    line(
+      ops,
+      row_theme,
+      g,
+      Point { x: PAD, y: rows.y_of(i) },
+      s.shown.line(i),
+      s.shown.combining,
+      upto
+    )
+  }
+  // Over the cards: how each ended, and how long it took.
+  if !s.shown.alt {
+    for b in s.blocks { note(ops, s, theme, g, f, b) }
+  }
+  // The selection, over the text.
+  if s.sel_a.line != s.sel_b.line || s.sel_a.col != s.sel_b.col {
+    for i in f.top..<f.bottom {
+      let (a, b) = selected_on(s.sel_a, s.sel_b, s.shown.absolute(i), cols)
+      if b > a {
+        ops.push(PaintDraw(Fill(
+          Rect { x: PAD + f32(a) * g.cell_x, y: rows.y_of(i), w: f32(b - a) * g.cell_x, h: g.cell_y },
+          radius(0.0),
+          color(theme.selection)
+        )))
+      }
+    }
+  }
+  match f.prompt {
+    Some((i, prompt_end)) =>
+      prompt_box(ops, s, f, g, theme, input_theme, i, prompt_end, focused),
+    None => {
+      if f.running_box {
+        // The command running, greyed, its first line, as wide as the box.
+        frame_box(ops, theme, g, cols, f.box_top, f.view_bottom)
+        let lines = s.running.split("\n")
+        let head = if lines.len() > 1 { "${lines[0]} ⏎ …" } else { lines[0] }
+        let runes = head.to_runes()
+        let fits = if runes.len() > f.wrap.cols { text_of(runes.slice(
+          0,
+          f.wrap.cols
+        )) } else { head }
+        ops.push(PaintText(
+          Point { x: PAD + BOX_INSET, y: f.box_top + BOX_PADDING + g.baseline },
+          fits,
+          g.font,
+          color(theme.palette[8])
+        ))
+      }
+      if s.shown.cursor_visible {
+        // The shape the program set (DECSCUSR): a block, an underline or a bar.
+        let x = PAD + f32(s.shown.x) * g.cell_x
+        let y = rows.y_of(s.shown.scrollback_len() + s.shown.y)
+        let shape = s.shown.cursor_shape
+        let at = if shape == 3 || shape == 4 {
+          Rect { x: x, y: y + g.cell_y - 2.0, w: g.cell_x, h: 2.0 }
+        } else if shape == 5 || shape == 6 {
+          Rect { x: x, y: y, w: 2.0, h: g.cell_y }
+        } else {
+          Rect { x: x, y: y, w: g.cell_x, h: g.cell_y }
+        }
+        // Hollow while the window does not have the keyboard.
+        let shade = color((theme.cursor & 0x00FFFFFF) | 0xB0000000)
+        if focused || shape >= 3 {
+          ops.push(PaintDraw(Fill(at, radius(0.0), shade)))
+        } else {
+          ops.push(PaintDraw(Border(at, radius(0.0), 1.0, shade)))
+        }
+      }
+    },
+  }
+  scrollbar(ops, f, theme, area)
+  ops
+}
+
+/// A screen line's first `upto` cells drawn from `at` (its first cell's top left): its
+/// background runs, then its text a run of one color at a time — each cell in its own face —
+/// and the lines an underline or a strike adds, where the font puts them.
+let line = (
+  ops: mut []PaintOp,
+  theme: Theme,
+  g: Grid,
+  at: Point,
+  cells: []Cell,
+  combining: []string,
+  upto: i64
+) -> void => {
+  let n = upto.min(cells.len())
+  if n <= 0 { return }
+  // Backgrounds: runs of one color; the theme's own is the window's, and is not drawn.
+  var start = 0
+  while start < n {
+    let (_, bg) = theme.colors(cells[start])
+    var stop = start + 1
+    while stop < n && theme.colors(cells[stop]).1 == bg { stop += 1 }
+    if let Some(c) = bg {
+      ops.push(PaintDraw(Fill(
+        Rect { x: at.x + f32(start) * g.cell_x, y: at.y, w: f32(stop - start) * g.cell_x, h: g.cell_y },
+        radius(0.0),
+        color(c)
+      )))
+    }
+    start = stop
+  }
+  // Text: runs of one color. Trailing blanks are not drawn.
+  var end = n
+  while end > 0 && cells[end - 1].ch == ' ' && cells[end - 1].attrs & (UNDERLINE_ANY | STRIKE) == 0 {
+    end -= 1
+  }
+  let baseline = at.y + g.baseline
+  var k = 0
+  while k < end {
+    let (fg, _) = theme.colors(cells[k])
+    var run: []TextCell = []
+    var stop = k
+    while stop < end && theme.colors(cells[stop]).0 == fg {
+      let c = cells[stop]
+      if c.ch != SPACER && c.ch != ' ' {
+        let marks = marks_of(c)
+        run.push(TextCell {
+          col: stop,
+          text: if marks != 0 { "${c.ch}${combining[marks]}" } else { "${c.ch}" },
+          width: width_of(c.ch).max(1),
+          bold: c.attrs & BOLD != 0,
+          italic: c.attrs & ITALIC != 0,
+        })
+      }
+      stop += 1
+    }
+    if run.len() > 0 { ops.push(PaintCells(
+      Point { x: at.x, y: baseline },
+      g.cell_x,
+      run,
+      g.font,
+      color(fg)
+    )) }
+    decorations(ops, g, cells, k, stop, baseline, at.x, color(fg))
+    k = stop
+  }
+}
+
+/// The underlines and strikeouts of cells `from` up to `to`, a run of one color, in runs of one
+/// decoration.
+let decorations = (
+  ops: mut []PaintOp,
+  g: Grid,
+  cells: []Cell,
+  from: i64,
+  to: i64,
+  baseline: f32,
+  x: f32,
+  c: Color
+) -> void => {
+  let m = g.metrics
+  let thick = m.underline_thickness.max(1.0)
+  var k = from
+  while k < to {
+    let attrs = cells[k].attrs & (UNDERLINE_ANY | STRIKE)
+    var stop = k + 1
+    while stop < to && cells[stop].attrs & (UNDERLINE_ANY | STRIKE) == attrs { stop += 1 }
+    let x0 = x + f32(k) * g.cell_x
+    let w = f32(stop - k) * g.cell_x
+    let under = baseline + m.underline_y
+    if attrs & UNDERLINE != 0 { ops.push(PaintDraw(Fill(
+      Rect { x: x0, y: under - thick / 2.0, w: w, h: thick },
+      radius(0.0),
+      c
+    ))) }
+    if attrs & DOUBLE_UNDERLINE != 0 {
+      ops.push(PaintDraw(Fill(
+        Rect { x: x0, y: under - thick, w: w, h: thick },
+        radius(0.0),
+        c
+      )))
+      ops.push(PaintDraw(Fill(
+        Rect { x: x0, y: under + thick, w: w, h: thick },
+        radius(0.0),
+        c
+      )))
+    }
+    if attrs & CURLY_UNDERLINE != 0 { ops.push(PaintWave(
+      Point { x: x0, y: under + thick },
+      w,
+      thick * 1.5,
+      thick,
+      c
+    )) }
+    if attrs & STRIKE != 0 {
+      let t = m.strike_thickness.max(1.0)
+      ops.push(PaintDraw(Fill(
+        Rect { x: x0, y: baseline - m.strike_y - t / 2.0, w: w, h: t },
+        radius(0.0),
+        c
+      )))
+    }
+    k = stop
+  }
+}
+
+/// Every underline's bit.
+const UNDERLINE_ANY: u32 = UNDERLINE | DOUBLE_UNDERLINE | CURLY_UNDERLINE
+
+/// Under a block's text, as a card: its input on the box's tint, rounded at the top, its output
+/// on a fainter one below, each with its padding; a red bar down the left of a failed one.
+/// `running`: it has no end yet, and its card reaches the grid's foot (`b.end`).
+let card = (
+  ops: mut []PaintOp,
+  s: Session,
+  theme: Theme,
+  g: Grid,
+  f: FrameLayout,
+  b: Block,
+  running: bool
+) -> void => {
+  let first = s.shown.absolute(0)
+  // A prompt gone from the scrollback: the card from the first line kept.
+  let kept = b.prompt - first >= f.base
+  let p = (b.prompt - first).max(f.base)
+  let o = b.output - first
+  let e = b.end - first
+  if e < f.top || p > f.bottom { return }
+  let r = f.rows
+  let top = if kept { r.y_of(p) - BLOCK_PAD } else { r.y_of(p) }
+  let input_foot = r.y_above(o) + BLOCK_PAD
+  let foot = if running { r.y_of(e) } else { r.y_above(e) + BLOCK_PAD }
+  let x0 = PAD - BOX_MARGIN
+  let w = f32(s.shown.cols) * g.cell_x + 2.0 * BOX_MARGIN
+  if foot > input_foot + 0.5 {
+    ops.push(PaintDraw(Fill(
+      Rect { x: x0, y: top, w: w, h: foot - top },
+      radius(BLOCK_ROUNDING),
+      color(theme.output)
+    )))
+    let corners = Radii { top_left: BLOCK_ROUNDING, top_right: BLOCK_ROUNDING }
+    ops.push(PaintDraw(Fill(
+      Rect { x: x0, y: top, w: w, h: input_foot - top },
+      corners,
+      color(theme.input)
+    )))
+  } else {
+    ops.push(PaintDraw(Fill(
+      Rect { x: x0, y: top, w: w, h: input_foot - top },
+      radius(BLOCK_ROUNDING),
+      color(theme.input)
+    )))
+  }
+  if b.status > 0 {
+    let bar_foot = foot.max(input_foot) - 4.0
+    ops.push(PaintDraw(Fill(
+      Rect { x: x0 + 3.0, y: top + 4.0, w: FAILED_BAR, h: bar_foot - top - 4.0 },
+      radius(FAILED_BAR / 2.0),
+      color(theme.palette[1])
+    )))
+  }
+}
+
+/// Over a finished block's first row, at its right end: how long it took, faint, and when it
+/// failed its status, red — where the row's own text leaves room.
+let note = (
+  ops: mut []PaintOp,
+  s: Session,
+  theme: Theme,
+  g: Grid,
+  f: FrameLayout,
+  b: Block
+) -> void => {
+  let Some(i) = s.shown.line_at(b.prompt) else { return }
+  if i < f.top || i >= f.bottom { return }
+  let took = duration_text(b.ended - b.started)
+  let text = if b.status > 0 { "exit ${b.status}  ${took}" } else { took }
+  let width = text.to_runes().len()
+  let cells = s.shown.line(i)
+  var used = cells.len()
+  while used > 0 && cells[used - 1].ch == ' ' { used -= 1 }
+  let cols = s.shown.cols
+  if used + 2 + width > cols { return }
+  let x = PAD + f32(cols - width) * g.cell_x
+  let y = f.rows.y_of(i) + g.baseline
+  if b.status > 0 {
+    let status = "exit ${b.status}"
+    ops.push(PaintText(Point { x: x, y: y }, status, g.font, color(theme.palette[1])))
+    ops.push(PaintText(
+      Point { x: x + f32(status.to_runes().len() + 2) * g.cell_x, y: y },
+      took,
+      g.font,
+      color(theme.palette[8])
+    ))
+  } else {
+    ops.push(PaintText(Point { x: x, y: y }, took, g.font, color(theme.palette[8])))
+  }
+}
+
+/// The box's frame from `box_top` to the view's foot: opaque, so the scrolled-back grid never
+/// shows through it, tinted, a rule along its top.
+let frame_box = (
+  ops: mut []PaintOp,
+  theme: Theme,
+  g: Grid,
+  cols: i64,
+  box_top: f32,
+  view_bottom: f32
+) -> void => {
+  let at = Rect {
+    x: PAD - BOX_MARGIN,
+    y: box_top,
+    w: f32(cols) * g.cell_x + 2.0 * BOX_MARGIN,
+    h: view_bottom + BOX_MARGIN - box_top,
+  }
+  ops.push(PaintDraw(Fill(at, radius(0.0), color(theme.bg))))
+  ops.push(PaintDraw(Fill(at, radius(BOX_ROUNDING), color(theme.input))))
+  ops.push(PaintDraw(Fill(Rect { at | h: 1.0 }, radius(0.0), color(theme.rule))))
+}
+
+/// At a prompt: the box, the prompt's rows in it — each line's cells from where the prompt
+/// began on it to the input's column on the last — a right prompt, and the command line.
+let prompt_box = (
+  ops: mut []PaintOp,
+  s: Session,
+  f: FrameLayout,
+  g: Grid,
+  theme: Theme,
+  input_theme: Theme,
+  i: i64,
+  prompt_end: i64,
+  focused: bool
+) -> void => {
+  let cols = s.shown.cols
+  frame_box(ops, theme, g, cols, f.box_top, f.view_bottom)
+  let row_y = (r: i64) -> f32 => f.box_top + BOX_PADDING + f32(r) * g.cell_y
+  for r in 0..<f.prompt_rows {
+    let l = f.first + r
+    let cells = s.shown.line(l)
+    let from = if r == 0 { f.first_col } else { 0 }
+    let to = (if l == i { prompt_end } else { cols }).min(cells.len())
+    if to > from {
+      line(
+        ops,
+        input_theme,
+        g,
+        Point { x: PAD + BOX_INSET, y: row_y(r) },
+        cells.slice(from, to),
+        s.shown.combining,
+        to - from
+      )
+    }
+  }
+  // A right prompt (zsh's RPROMPT): what the shell drew after the input column, right-aligned
+  // in the prompt's last row, where it does not meet the prompt.
+  let cells = s.shown.line(i)
+  var from = prompt_end
+  while from < cells.len() && cells[from].ch == ' ' { from += 1 }
+  var to = cells.len()
+  while to > from && cells[to - 1].ch == ' ' { to -= 1 }
+  let width = to - from
+  let prompt_cols = if i == f.first { prompt_end - f.first_col } else { prompt_end }
+  if width > 0 && f.wrap.cols - width > prompt_cols {
+    line(
+      ops,
+      input_theme,
+      g,
+      Point { x: PAD + BOX_INSET + f32(f.wrap.cols - width) * g.cell_x, y: row_y(f.prompt_rows - 1) },
+      cells.slice(from, to),
+      s.shown.combining,
+      width
+    )
+  }
+  command_line(ops, s.line, place_of(f, g), g, theme, focused)
+}
+
+/// Where the command line is in the box: below the prompt's rows, its menu opening upward to
+/// rest just above the box.
+pub let place_of = pure (f: FrameLayout, g: Grid) -> Place => Place {
+  origin: Point {
+    x: PAD + BOX_INSET,
+    y: f.box_top + BOX_PADDING + f32(f.prompt_rows) * g.cell_y + BOX_GAP,
+  },
+  cell: Point { x: g.cell_x, y: g.cell_y },
+  text_dy: g.baseline,
+  wrap: f.wrap,
+  menu_above: true,
+  lift: f32(f.prompt_rows) * g.cell_y + BOX_PADDING + BOX_GAP + BOX_MENU_GAP,
+}
+
+/// The command line: its selection, its text in its syntax's colors — the theme's own ANSI
+/// green, cyan, yellow, magenta and blue — the caret when focused, and the completion menu.
+let command_line = (
+  ops: mut []PaintOp,
+  line: CommandLine,
+  at: Place,
+  g: Grid,
+  theme: Theme,
+  focused: bool
+) -> void => {
+  let text = line.edit.text
+  let (a, b) = line.edit.selection()
+  let places = layout(text, at.wrap)
+  let kind = kinds(text)
+  for k in 0..<text.len() {
+    if k >= a && k < b {
+      let (at_row, col) = places[k]
+      let r = text[k]
+      // A selected line break shows as a sliver, so the selection visibly spans it.
+      let width = if r == '\n' { at.cell.x * 0.5 } else { f32(cells_of(r)) * at.cell.x }
+      let p = cell_pos(at, at_row, col)
+      ops.push(PaintDraw(Fill(
+        Rect { x: p.x, y: p.y, w: width, h: at.cell.y },
+        radius(0.0),
+        color(theme.selection)
+      )))
+    }
+  }
+  // A at_row's runes in runs of one color, each on its cells.
+  var k = 0
+  while k < text.len() {
+    let (at_row, _) = places[k]
+    let paint = kind_color(theme, kind[k])
+    var run: []TextCell = []
+    var stop = k
+    while stop < text.len() && places[stop].0 == at_row && kind_color(
+      theme,
+      kind[stop]
+    ) == paint {
+      let r = text[stop]
+      if r != '\n' && r != ' ' {
+        run.push(TextCell {
+          col: places[stop].1,
+          text: "${r}",
+          width: cells_of(r).max(1)
+        })
+      }
+      stop += 1
+    }
+    if stop == k { stop = k + 1 }
+    if run.len() > 0 {
+      ops.push(PaintCells(
+        Point { x: at.origin.x, y: at.origin.y + f32(at_row) * at.cell.y + at.text_dy },
+        at.cell.x,
+        run,
+        g.font,
+        color(paint)
+      ))
+    }
+    k = stop
+  }
+  if focused {
+    let (r, c) = position(text, at.wrap, line.edit.cursor)
+    let p = cell_pos(at, r, c)
+    ops.push(PaintDraw(Fill(
+      Rect { x: p.x, y: p.y, w: 2.0, h: at.cell.y },
+      radius(0.0),
+      color(theme.cursor)
+    )))
+  }
+  if line.menu_rows() > 0 { menu(ops, line, at, g, theme) }
+}
+
+/// The color a rune of `kind` is drawn in.
+let kind_color = pure (theme: Theme, kind: Kind) -> u32 => match kind {
+  Plain => theme.editor_text,
+  Command => theme.palette[2],
+  Option => theme.palette[6],
+  Quoted => theme.palette[3],
+  Variable => theme.palette[5],
+  Operator => theme.palette[4],
+  Comment => theme.palette[8],
+}
+
+/// The completion menu (or the history search's matches): a row each, the chosen one marked,
+/// descriptions fainter.
+let menu = (
+  ops: mut []PaintOp,
+  line: CommandLine,
+  at: Place,
+  g: Grid,
+  theme: Theme
+) -> void => {
+  let (top, _, width) = line.menu_layout(at)
+  let shown_rows = line.menu_rows()
+  let pad = at.cell.x * 0.5
+  let w = f32(width) * at.cell.x + 2.0 * pad
+  ops.push(PaintDraw(Fill(
+    Rect { x: top.x - pad, y: top.y - MENU_PAD, w: w, h: f32(shown_rows) * at.cell.y + 2.0 * MENU_PAD },
+    radius(6.0),
+    color(theme.menu)
+  )))
+  var shown_w = 0
+  for c in line.menu { shown_w = shown_w.max(c.shown.len().min(MENU_SHOWN)) }
+  if line.menu.len() == 0 {
+    ops.push(PaintText(
+      Point { x: top.x + at.cell.x, y: top.y + at.text_dy },
+      "No command in the history has that in it",
+      g.font,
+      color(theme.palette[8])
+    ))
+    return
+  }
+  // A history entry is shown as wide as the list allows; a completion to its limit.
+  let limit = if line.is_searching() { width - 2 } else { MENU_SHOWN }
+  for k in 0..<shown_rows {
+    let c = line.menu[line.menu_top + k]
+    let y = top.y + f32(k) * at.cell.y
+    if line.menu_top + k == line.chosen {
+      ops.push(PaintDraw(Fill(
+        Rect { x: top.x - pad, y: y, w: w, h: at.cell.y },
+        radius(4.0),
+        color(theme.menu_chosen)
+      )))
+    }
+    let shown = if c.shown.len() > limit { c.shown.slice(0, limit) } else { c.shown }
+    ops.push(PaintText(
+      Point { x: top.x + at.cell.x, y: y + at.text_dy },
+      shown,
+      g.font,
+      color(theme.editor_text)
+    ))
+    if c.description != "" {
+      let room = width - shown_w - 4
+      if room > 0 {
+        let d = if c.description.len() > room { c.description.slice(
+          0,
+          room
+        ) } else { c.description }
+        ops.push(PaintText(
+          Point { x: top.x + f32(shown_w + 3) * at.cell.x, y: y + at.text_dy },
+          d,
+          g.font,
+          color(theme.palette[8])
+        ))
+      }
+    }
+  }
+}
+
+/// A thumb down the right edge while the page is taller than the view: where the view is in it.
+let scrollbar = (
+  ops: mut []PaintOp,
+  f: FrameLayout,
+  theme: Theme,
+  area: PaintArea
+) -> void => {
+  let view_h = area.size.h - 2.0 * PAD
+  if f.page <= view_h + 0.5 || view_h <= 0.0 { return }
+  let scroll = f.rows.origin_y.max(-1.0e9) * -1.0 + PAD
+  let h = (view_h * view_h / f.page).max(20.0)
+  let y = PAD + (view_h - h) * (scroll / (f.page - view_h)).clamp(0.0, 1.0)
+  ops.push(PaintDraw(Fill(
+    Rect { x: area.size.w - 7.0, y: y, w: 4.0, h: h },
+    radius(2.0),
+    color((theme.fg & 0x00FFFFFF) | 0x40000000)
+  )))
+}

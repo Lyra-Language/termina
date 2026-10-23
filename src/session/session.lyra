@@ -1,53 +1,30 @@
 module session
 //! One tab: a program on a pseudo-terminal (the user's shell, usually), what it has drawn,
-//! where its shell is, and its command line — read every frame whether it is shown or not,
-//! drawn and given the keys when it is the tab shown (`../termina.lyra` keeps the tabs).
+//! where its shell is, and its command line — read every frame whether it is shown or not.
+//! What it looks like and how input reaches it are each front end's: ImGui's
+//! (`../gui/session_view.lyra`) and `ui`'s; [frame_layout] is where everything goes, which they
+//! share. `../termina.lyra` keeps the tabs.
 
 import std.env.{ lookup }
 import std.io.{ remove_file }
 import bindings.pty.{ spawn, close, Pty }
-import bindings.sdl3.{ platform }
-import bindings.imgui.{
-  DrawList,
-  DRAW_FLAGS_ROUND_CORNERS_TOP,
-  is_mouse_released,
-  get_io,
-  set_clipboard_text,
-  is_mouse_clicked,
-  is_mouse_down,
-  get_mouse_clicked_count,
-  get_mouse_pos,
-  is_window_hovered,
-  KEY_C,
-  get_content_region_avail,
-  get_cursor_screen_pos,
-  get_window_draw_list,
-  request_text_input,
-  typed_text,
-  is_key_pressed,
-  get_clipboard_text,
-  dummy,
-  get_scroll_y,
-  get_scroll_max_y,
-  set_scroll_y,
-  Vec2,
-  KEY_A,
-  KEY_V,
-  KEY_TAB,
-  KEY_LEFT_ARROW,
-  KEY_RIGHT_ARROW,
-  KEY_UP_ARROW,
-  KEY_DOWN_ARROW,
-  KEY_PAGE_UP,
-  KEY_PAGE_DOWN,
-  KEY_HOME,
-  KEY_END,
-  KEY_INSERT,
-  KEY_DELETE,
-  KEY_BACKSPACE,
-  KEY_SPACE,
-  KEY_ENTER,
-  KEY_ESCAPE,
+import ui.backend.{
+  Key,
+  Enter,
+  Backspace,
+  Tab,
+  Escape,
+  ArrowUp,
+  ArrowDown,
+  ArrowRight,
+  ArrowLeft,
+  Home,
+  End,
+  Insert,
+  Delete,
+  PageUp,
+  PageDown,
+  FunctionKey,
 }
 import vt.{
   parser,
@@ -56,29 +33,23 @@ import vt.{
   Screen,
   InputStart,
   Spot,
-  selected_on,
   selection_text,
   word_span,
 }
 import shell.{ integration, load_history, submission, completion_request, Integration }
-import ui.{
+import term.{
   EditAction,
+  Copy,
+  SelectAll,
   Paste,
-  held,
-  Complete,
   command_line,
   CommandLine,
-  Place,
-  Style,
+  Outcome,
   Submit,
   Send,
-  draw_line,
-  report_of,
-  Theme,
-  Fonts,
-  LineAt,
+  Complete,
 }
-import editor.{ Wrap, text_of }
+import editor.{ Wrap }
 
 /// A tab's program and everything Termina keeps for it.
 pub struct Session {
@@ -233,26 +204,41 @@ impl Session {
   /// prompt — Copy there taking the grid's selection when the command line has none; while a
   /// program runs, Paste is the program's (a bracketed paste when it asked for one), Copy
   /// the grid's selection, and Select All the whole screen and its scrollback.
-  pub let edit_action = (self: mut, a: EditAction) -> void => {
+  ///
+  /// `clipboard` is what a paste puts in; what a copy or cut takes is answered, for the front
+  /// end to put on the clipboard (`None` for nothing).
+  pub let edit_action = (
+    self: mut,
+    a: EditAction,
+    clipboard: string = ""
+  ) -> Maybe<string> => {
     let at_prompt = match self.mode {
       AtPrompt(_, _) => true,
       Raw => false,
     }
     match a {
-      Copy => {
-        if at_prompt && self.line.can(Copy) { self.line.edit_action(Copy) }
-        else if self.has_selection() { set_clipboard_text(self.selected_text()) }
+      Copy => if at_prompt && self.line.can(Copy) { self.line.edit_action(Copy) } else if self.has_selection() {
+        Some(self.selected_text())
+      } else {
+        None
       },
       SelectAll => {
-        if at_prompt { self.line.edit_action(SelectAll) } else { self.select_everything() }
+        if at_prompt {
+          let _ = self.line.edit_action(SelectAll)
+        } else {
+          self.select_everything()
+        }
+        None
       },
       Paste => {
-        if at_prompt { self.line.edit_action(Paste) }
-        else {
-          let _ = self.pty.write(pasted(get_clipboard_text(), self.shown.bracketed_paste))
+        if at_prompt {
+          let _ = self.line.edit_action(Paste, clipboard)
+        } else {
+          let _ = self.pty.write(pasted(clipboard, self.shown.bracketed_paste))
         }
+        None
       },
-      _ => if at_prompt { self.line.edit_action(a) },
+      _ => if at_prompt { self.line.edit_action(a) } else { None },
     }
   }
 
@@ -291,7 +277,7 @@ impl Session {
 
   /// Run `command` at the prompt: sent to the shell as a paste and a Return, kept in the
   /// history, and the prompt it was sent from noted ([Session.sent_from]).
-  let send_command = (self: mut, command: string) -> void => {
+  pub let send_command = (self: mut, command: string) -> void => {
     let _ = self.pty.write(submission(command, self.shown.bracketed_paste))
     self.line.submitted(command)
     self.running = command
@@ -395,47 +381,133 @@ impl Session {
       Raw => {},
     }
   }
-}
 
-/// How the grid is drawn: a cell's size, how far down its cell text sits, a display pixel
-/// (what a drawn bold is offset by), the faces and the theme.
-pub struct Look {
-  cell: Vec2,
-  text_dy: f32,
-  pixel: f32,
-  fonts: Fonts,
-  theme: Theme,
-}
-
-/// Draw a tab into the current window — its grid filling it, the scrollback above, and the
-/// cursor, or at a prompt the command line's editor where input begins — and, when
-/// `focused`, give it the keys: the editor's at a prompt, the program's otherwise.
-/// `menus` says whether a menu bar's Edit menu has ⌘Z, ⌘X, ⌘C, ⌘V and ⌘A, which then come as
-/// [Session.edit_action]s rather than keys.
-pub let draw_session = (
-  s: mut Session,
-  look: Look,
-  focused: bool,
-  menus: bool
-) -> void => {
-  s.line.menu_keys = menus
-  // What a program asking (vim) is told the colors are: the theme's.
-  s.shown.fg_report = report_of(look.theme.fg)
-  s.shown.bg_report = report_of(look.theme.bg)
-  let cell = look.cell
-  let text_dy = look.text_dy
-  let pixel = look.pixel
-  let fonts = look.fonts
-  let theme = look.theme
-  // The grid is as many whole cells as the window holds.
-  let avail = get_content_region_avail()
-  let cols = (avail.x / cell.x).floor().max(2)
-  let rows = (avail.y / cell.y).floor().max(1)
-  if cols != s.shown.cols || rows != s.shown.rows {
-    s.shown.resize(cols, rows)
-    let _ = s.pty.resize(cols, rows)
+  /// The tab's screen and its program's terminal `cols` × `rows` cells, if they are not already
+  /// (at least 2 × 1): what a front end asks when it knows the room it has.
+  pub let fit = (self: mut, cols: i64, rows: i64) -> void => {
+    let c = cols.max(2)
+    let r = rows.max(1)
+    if c != self.shown.cols || r != self.shown.rows {
+      self.shown.resize(c, r)
+      let _ = self.pty.resize(c, r)
+    }
   }
 
+  /// The window gaining or losing the keyboard, told to a program that asked (`?1004`).
+  pub let focus_report = (self: mut, focused: bool) -> void => {
+    if self.shown.focus_events && focused != self.had_focus {
+      let _ = self.pty.write(if focused { "\e[I" } else { "\e[O" })
+    }
+    self.had_focus = focused
+  }
+
+  /// A press on the grid at absolute line `line` — cell `under`, the column boundary `edge`
+  /// nearest the pointer — with `clicks` in a row: where a selection starts (a click), the word
+  /// selected (two) or the line (three), a drag after it extending by the same.
+  pub let select_press = (
+    self: mut,
+    line: i64,
+    under: i64,
+    edge: i64,
+    clicks: i64
+  ) -> void => {
+    self.sel_unit = clicks.clamp(1, 3)
+    self.sel_origin = unit_span(self.shown, self.sel_unit, line, under, edge)
+    self.sel_a = self.sel_origin.0
+    self.sel_b = self.sel_origin.1
+    self.sel_dragging = true
+  }
+
+  /// The pointer at line `line`, cell `under`, boundary `edge` with the button held: a
+  /// selection begun on the grid extended to it — by whole words or lines after a double or
+  /// triple click.
+  pub let select_drag = (self: mut, line: i64, under: i64, edge: i64) -> void => {
+    if !self.sel_dragging { return }
+    let (here_a, here_b) = unit_span(self.shown, self.sel_unit, line, under, edge)
+    let (o_a, o_b) = self.sel_origin
+    let before = here_a.line < o_a.line || (here_a.line == o_a.line && here_a.col < o_a.col)
+    if before {
+      self.sel_a = o_b
+      self.sel_b = here_a
+    } else {
+      self.sel_a = o_a
+      self.sel_b = here_b
+    }
+  }
+
+  /// The button let go: a selection's drag ends.
+  pub let select_release = (self: mut) -> void => { self.sel_dragging = false }
+
+  /// What the command line asked for, carried out: a command run, bytes sent, the shell asked
+  /// for completions. Whether the view should follow to the bottom (a command was run).
+  pub let carry_out = (self: mut, outcome: Outcome) -> bool => match outcome {
+    Submit(command) => {
+      self.send_command(command)
+      true
+    },
+    Send(bytes) => {
+      let _ = self.pty.write(bytes)
+      false
+    },
+    Complete(text, cursor) => {
+      if let Some(i) = self.integrated {
+        if let Some(key) = completion_request(i, text, cursor) {
+          let _ = self.pty.write(key)
+        }
+      }
+      false
+    },
+    _ => false,
+  }
+}
+
+/// Where the shell is, as far as Termina can tell.
+pub data Mode =
+  /// A program is running, the shell is drawing its prompt, or it has no integration: the
+  /// keys go to it as typed.
+  Raw
+  /// At a prompt whose input begins at this absolute line and column: the command line
+  /// there is Termina's editor.
+  | AtPrompt(i64, i64)
+
+/// Where everything of a tab goes in a frame, worked out from its state and the view — the
+/// same for every front end: the prompt the box shows (its line and the input's column), the
+/// command line's layout (`wrap`), the prompt's first line and column and its rows, whether a
+/// running command's box shows, the box's rows and height, the first line drawn (`base`), the
+/// grid's lines and where each goes (`rows`), the page's height, the lines in view (`top` to
+/// `bottom`), and the box's top and the view's foot — in the front end's coordinates, the grid
+/// starting at `origin_y` and scrolled `scroll_y` down a view `view_h` high, a cell `cell_x` by
+/// `cell_y`.
+pub struct FrameLayout {
+  prompt: Maybe<(i64, i64)>,
+  input_line: i64,
+  wrap: Wrap,
+  first: i64,
+  first_col: i64,
+  prompt_rows: i64,
+  running_box: bool,
+  box_rows: i64,
+  box_height: f32,
+  base: i64,
+  grid_lines: i64,
+  rows: Rows,
+  page: f32,
+  top: i64,
+  bottom: i64,
+  box_top: f32,
+  view_bottom: f32,
+}
+
+pub let frame_layout = pure (
+  s: Session,
+  cell_x: f32,
+  cell_y: f32,
+  origin_y: f32,
+  scroll_y: f32,
+  view_h: f32
+) -> FrameLayout => {
+  let cols = s.shown.cols
+  let rows = s.shown.rows
   // At a prompt still on the screen or in the scrollback: its line, and the column its
   // input begins at — the end of the prompt.
   let prompt = match s.mode {
@@ -452,7 +524,7 @@ pub let draw_session = (
   // At a prompt the command line is a box pinned to the window's foot, as Warp has it: the
   // prompt's row, then the command's rows from the first column, inset from the box's sides
   // and so a little narrower than the grid.
-  let inset_cols = (2.0 * BOX_INSET / cell.x).ceil()
+  let inset_cols = i64((2.0 * BOX_INSET / cell_x).ceil())
   let wrap = Wrap { first: 0, cols: (cols - inset_cols).max(1) }
   // The prompt's first line and the column it begins at: its `A` mark's, when that is the
   // input's line or a few above it; else the input's line from its start.
@@ -475,12 +547,8 @@ pub let draw_session = (
   else if running_box { 1 }
   else { 0 }
   let box_height = if box_rows > 0 {
-    f32(box_rows) * cell.y + 2.0 * BOX_PADDING + BOX_GAP
+    f32(box_rows) * cell_y + 2.0 * BOX_PADDING + BOX_GAP
   } else { 0.0 }
-
-  // Following the output: the view was at the bottom before this frame's scroll.
-  let at_bottom = get_scroll_y() >= get_scroll_max_y() - 1.0
-  let origin = get_cursor_screen_pos()
   // The first line drawn: on the alternate screen a full-screen program has the window, and
   // the scrollback above its screen is not shown.
   let base = if s.shown.alt { s.shown.scrollback_len() } else { 0 }
@@ -496,380 +564,45 @@ pub let draw_session = (
   let grid_lines = if input_line < 0 { line_count } else if first_col > 0 { first + 1 } else { first }
   // Where each line goes: a line's height a row, and the room the blocks put between them.
   let layout = if s.shown.alt { Rows {
-    origin_y: origin.y,
+    origin_y: origin_y,
     base: base,
-    cell_y: cell.y,
+    cell_y: cell_y,
     at: [],
     through: []
   } }
-  else { block_rows_layout(s, origin.y, base, cell.y, grid_lines) }
+  else { block_rows_layout(s, origin_y, base, cell_y, grid_lines) }
   // The page: the grid's lines, and room under them for the box and a margin above it, so
   // that the last line rests that far above the box when the view is at the bottom.
   let above_box = if box_height > 0.0 { BLOCK_MARGIN } else { 0.0 }
-  let page = layout.y_of(grid_lines) - origin.y + above_box + box_height
-  let top = layout.line_at_y(origin.y + get_scroll_y(), grid_lines)
+  let page = layout.y_of(grid_lines) - origin_y + above_box + box_height
+  let top = layout.line_at_y(origin_y + scroll_y, grid_lines)
   let bottom = (top + rows + 1).min(grid_lines)
-  // The box's top on the screen: the view's foot, wherever it is scrolled to.
-  let view_bottom = origin.y + get_scroll_y() + avail.y
-  let box_top = view_bottom - box_height
-  let list = get_window_draw_list()
-  // The commands' blocks under the text: the input's band, the rule above each.
-  let grid = Grid {
-    origin: origin,
-    cell: cell,
-    cols: cols,
+  // The box's top: the view's foot, wherever it is scrolled to.
+  let view_bottom = origin_y + scroll_y + view_h
+  FrameLayout {
+    prompt: prompt,
+    input_line: input_line,
+    wrap: wrap,
+    first: first,
+    first_col: first_col,
+    prompt_rows: prompt_rows,
+    running_box: running_box,
+    box_rows: box_rows,
+    box_height: box_height,
     base: base,
+    grid_lines: grid_lines,
+    rows: layout,
+    page: page,
     top: top,
     bottom: bottom,
-    rows: layout,
-  }
-  if !s.shown.alt {
-    for b in s.blocks { draw_block_under(s, list, theme, grid, b, false) }
-    match s.running_block {
-      Some(b) => draw_block_under(
-        s,
-        list,
-        theme,
-        grid,
-        Block { b | end: grid_lines + s.shown.absolute(0) },
-        true
-      ),
-      None => {},
-    }
-  }
-  // The rows in view that are a block's input — its prompt and command — drawn with the
-  // input's text color.
-  let input_theme = theme.for_input()
-  var input_rows: []bool = [false; (bottom - top).max(0)]
-  if !s.shown.alt {
-    let oldest = s.shown.absolute(0)
-    var spans: [](i64, i64) = [b in s.blocks | (b.prompt, b.output)]
-    match s.running_block {
-      Some(b) => spans.push((b.prompt, b.output)),
-      None => {},
-    }
-    for (p, o) in spans {
-      for i in (p - oldest).max(top)..<(o - oldest).min(bottom) { input_rows[i - top] = true }
-    }
-  }
-  for i in top..<bottom {
-    let upto = if input_line >= 0 && i == first && first_col > 0 { first_col } else { s.shown.cols }
-    let at = LineAt {
-      origin: Vec2 { x: origin.x, y: layout.y_of(i) },
-      cell: cell,
-      text_dy: text_dy,
-      pixel: pixel,
-    }
-    let row_theme = if input_rows[i - top] { input_theme } else { theme }
-    draw_line(list, row_theme, fonts, at, s.shown.line(i), s.shown.combining, upto)
-  }
-  // And over it: how each ended, and how long it took.
-  if !s.shown.alt {
-    for b in s.blocks { draw_block_over(s, list, theme, grid, b, text_dy) }
-  }
-  let cursor = Vec2 {
-    x: origin.x + f32(s.shown.x) * cell.x,
-    y: layout.y_of(s.shown.scrollback_len() + s.shown.y),
-  }
-  // The grid's selection, over the text.
-  if s.has_selection() {
-    for i in top..<bottom {
-      let (a, b) = selected_on(s.sel_a, s.sel_b, s.shown.absolute(i), cols)
-      if b > a {
-        let y = layout.y_of(i)
-        list.add_rect_filled(
-          Vec2 { x: origin.x + f32(a) * cell.x, y: y },
-          Vec2 { x: origin.x + f32(b) * cell.x, y: y + cell.y },
-          theme.selection
-        )
-      }
-    }
-  }
-  // The mouse selects on the grid — above the command line at a prompt (which has its own
-  // mouse), and with Shift held when a program has asked for the mouse; otherwise the
-  // program is told of it. A program on the alternate screen that has not asked is sent
-  // the wheel as arrow keys, so that less and man scroll.
-  let raw = input_line < 0
-  if raw && s.shown.mouse_mode != 0 && !held().shift {
-    report_mouse(s, origin, cell, base)
-  } else {
-    // The box's own clicks are the command line's; the grid takes those above it.
-    grid_mouse(
-      s,
-      origin,
-      cell,
-      layout,
-      grid_lines,
-      if raw && !running_box { 1.0e30 } else { box_top }
-    )
-    if raw && s.shown.alt && s.shown.alternate_scroll && s.shown.mouse_mode == 0 && is_window_hovered() {
-      let notches = wheel_notches(s, get_io().mouse_wheel())
-      if notches != 0 {
-        let _ = s.pty.write(wheel_keys(notches, s.shown.cursor_keys))
-      }
-    }
-  }
-  // Focus reports (`?1004`): the window gaining or losing the keyboard.
-  if s.shown.focus_events && focused != s.had_focus {
-    let _ = s.pty.write(if focused { "\e[I" } else { "\e[O" })
-  }
-  s.had_focus = focused
-  dummy(Vec2 { x: f32(cols) * cell.x, y: page })
-
-  var follow = s.got_output && at_bottom
-  match prompt {
-    Some((i, prompt_end)) => {
-      let before = "${s.line.edit.cursor}:${s.line.edit.anchor}:${s.line.edit.content()}"
-      draw_box(list, theme, origin.x, cols, cell, box_top, view_bottom)
-      // The prompt's rows, each line's cells from where the prompt began on it to the input
-      // column on the last.
-      for r in 0..<prompt_rows {
-        let l = first + r
-        let cells = s.shown.line(l)
-        let from = if r == 0 { first_col } else { 0 }
-        let to = (if l == i { prompt_end } else { cols }).min(cells.len())
-        if to > from {
-          let row_at = LineAt {
-            origin: Vec2 { x: origin.x + BOX_INSET, y: box_top + BOX_PADDING + f32(r) * cell.y },
-            cell: cell,
-            text_dy: text_dy,
-            pixel: pixel,
-          }
-          draw_line(
-            list,
-            input_theme,
-            fonts,
-            row_at,
-            cells.slice(from, to),
-            s.shown.combining,
-            to - from
-          )
-        }
-      }
-      draw_right_prompt(s, list, input_theme, fonts, i, prompt_end, LineAt {
-        origin: Vec2 {
-          x: origin.x + BOX_INSET,
-          y: box_top + BOX_PADDING + f32(prompt_rows - 1) * cell.y,
-        },
-        cell: cell,
-        text_dy: text_dy,
-        pixel: pixel,
-      }, wrap.cols, (if i == first { prompt_end - first_col } else { prompt_end }))
-      let place = Place {
-        origin: Vec2 {
-          x: origin.x + BOX_INSET,
-          y: box_top + BOX_PADDING + f32(prompt_rows) * cell.y + BOX_GAP,
-        },
-        cell: cell,
-        text_dy: text_dy,
-        wrap: wrap,
-        menu_above: true,
-        // The menu rests just above the box.
-        lift: f32(prompt_rows) * cell.y + BOX_PADDING + BOX_GAP + BOX_MENU_GAP,
-      }
-      let style = Style {
-        text: theme.editor_text,
-        caret: theme.cursor,
-        selection: theme.selection,
-        menu: theme.menu,
-        menu_chosen: theme.menu_chosen,
-        faint: theme.palette[8],
-        // The syntax in the theme's own ANSI colors: green, cyan, yellow, magenta, blue.
-        command: theme.palette[2],
-        option: theme.palette[6],
-        quoted: theme.palette[3],
-        variable: theme.palette[5],
-        operator: theme.palette[4],
-      }
-      match s.line.update(place, list, style, focused) {
-        Submit(command) => {
-          s.send_command(command)
-          follow = true
-        },
-        Send(bytes) => {
-          let _ = s.pty.write(bytes)
-        },
-        Complete(text, cursor) => {
-          match s.integrated {
-            Some(i) => match completion_request(i, text, cursor) {
-              Some(key) => {
-                let _ = s.pty.write(key)
-              },
-              None => {},
-            },
-            None => {},
-          }
-        },
-        _ => {},
-      }
-      let after = "${s.line.edit.cursor}:${s.line.edit.anchor}:${s.line.edit.content()}"
-      if before != after { follow = true }
-    },
-    None => {
-      if running_box {
-        // The command running, greyed, its first line, as wide as the box.
-        draw_box(list, theme, origin.x, cols, cell, box_top, view_bottom)
-        let lines = s.running.split("\n")
-        let head = if lines.len() > 1 { "${lines[0]} ⏎ …" } else { lines[0] }
-        let runes = head.to_runes()
-        let fits = if runes.len() > wrap.cols { text_of(runes.slice(
-          0,
-          wrap.cols
-        )) } else { head }
-        list.add_text(
-          Vec2 { x: origin.x + BOX_INSET, y: box_top + BOX_PADDING + text_dy },
-          theme.palette[8],
-          fits
-        )
-      }
-      if s.shown.cursor_visible {
-        // The shape the program set (DECSCUSR): a block, an underline or a bar.
-        let shape = s.shown.cursor_shape
-        let (lo, hi) = if shape == 3 || shape == 4 {
-          (
-            Vec2 { x: cursor.x, y: cursor.y + cell.y - 2.0 },
-            Vec2 { x: cursor.x + cell.x, y: cursor.y + cell.y }
-          )
-        } else if shape == 5 || shape == 6 {
-          (cursor, Vec2 { x: cursor.x + 2.0, y: cursor.y + cell.y })
-        } else {
-          (cursor, Vec2 { x: cursor.x + cell.x, y: cursor.y + cell.y })
-        }
-        list.add_rect_filled(lo, hi, (theme.cursor & 0x00FFFFFF) | 0xB0000000)
-      }
-      if focused {
-        // Copy without a menu bar (Ctrl+Shift+C off macOS): the grid's selection.
-        let mods = held()
-        if !menus && mods.control && mods.shift && is_key_pressed(KEY_C) && s.has_selection() {
-          set_clipboard_text(s.selected_text())
-        }
-        request_text_input(cursor, cell.y)
-        if send_keys(
-          s.pty,
-          menus,
-          s.shown.bracketed_paste,
-          s.shown.cursor_keys
-        ) { follow = true }
-      }
-    },
-  }
-  if follow { set_scroll_y(page) }
-}
-
-/// Where the shell is, as far as Termina can tell.
-data Mode =
-  /// A program is running, the shell is drawing its prompt, or it has no integration: the
-  /// keys go to it as typed.
-  Raw
-  /// At a prompt whose input begins at this absolute line and column: the command line
-  /// there is Termina's editor.
-  | AtPrompt(i64, i64)
-
-/// The mouse on the grid: a click sets where a selection starts (and drops one), a drag
-/// selects, a double-click selects a word and a triple-click a line, a drag after either
-/// extending by words or lines. Only lines before `grid_rows` (an index of everything's
-/// lines) take it, and only above `below` on the screen (the command line's box).
-let grid_mouse = (
-  s: mut Session,
-  origin: Vec2,
-  cell: Vec2,
-  layout: Rows,
-  grid_rows: i64,
-  below: f32
-) -> void => {
-  let m = get_mouse_pos()
-  // -FLT_MAX when the pointer is nowhere; no cell arithmetic survives it.
-  if m.x < -1.0e30 || m.y < -1.0e30 {
-    if !is_mouse_down(0) { s.sel_dragging = false }
-    return
-  }
-  let i = layout.line_at_y(m.y, grid_rows).clamp(0, (grid_rows - 1).max(0))
-  let line = s.shown.absolute(i)
-  let fx = (m.x - origin.x) / cell.x
-  let edge = (fx + 0.5).floor().clamp(0, s.shown.cols)
-  let under = fx.floor().clamp(0, s.shown.cols - 1)
-  let inside = is_window_hovered() &&
-    m.y >= origin.y &&
-    m.y < below &&
-    m.y < layout.y_of(grid_rows)
-  if inside && is_mouse_clicked(0) {
-    s.sel_unit = i64(get_mouse_clicked_count(0)).clamp(1, 3)
-    s.sel_origin = unit_span(s.shown, s.sel_unit, line, under, edge)
-    s.sel_a = s.sel_origin.0
-    s.sel_b = s.sel_origin.1
-    s.sel_dragging = true
-  } else if s.sel_dragging && is_mouse_down(0) {
-    // Extended to the pointer — by whole words or lines after a double or triple click.
-    let (here_a, here_b) = unit_span(s.shown, s.sel_unit, line, under, edge)
-    let (o_a, o_b) = s.sel_origin
-    let before = here_a.line < o_a.line || (here_a.line == o_a.line && here_a.col < o_a.col)
-    if before {
-      s.sel_a = o_b
-      s.sel_b = here_a
-    } else {
-      s.sel_a = o_a
-      s.sel_b = here_b
-    }
-  } else if !is_mouse_down(0) {
-    s.sel_dragging = false
-  }
-}
-
-/// The mouse told to a program that asked (`?1000`, `?1002`, `?1003`): presses and releases
-/// of each button, motion a cell at a time — with a button held for 1002, always for 1003 —
-/// and the wheel, with Shift, Alt and Ctrl, in SGR's encoding or X10's.
-let report_mouse = (s: mut Session, origin: Vec2, cell: Vec2, base: i64) -> void => {
-  let m = get_mouse_pos()
-  if m.x < -1.0e30 || m.y < -1.0e30 || !is_window_hovered() { return }
-  let col = ((m.x - origin.x) / cell.x).floor().clamp(0, s.shown.cols - 1)
-  let row = (base + ((m.y - origin.y) / cell.y).floor() - s.shown.scrollback_len()).clamp(
-    0,
-    s.shown.rows - 1
-  )
-  let mods = held()
-  let extra = (if mods.shift { 4 } else { 0 }) + (if mods.alt { 8 } else { 0 }) + (if mods.control { 16 } else { 0 })
-  let sgr = s.shown.mouse_sgr
-  var out: []u8 = []
-  // ImGui's buttons are left, right, middle; a terminal's 0 left, 1 middle, 2 right.
-  let codes = [0, 2, 1]
-  var held_button = -1
-  for k in 0..<3 {
-    let b = codes[k]
-    if is_mouse_clicked(i32(k)) { out = [
-      ...out,
-      ...mouse_report(b + extra, col, row, true, sgr)
-    ] }
-    if is_mouse_released(i32(k)) { out = [
-      ...out,
-      ...mouse_report(b + extra, col, row, false, sgr)
-    ] }
-    if is_mouse_down(i32(k)) && held_button < 0 { held_button = b }
-  }
-  // Motion, when the pointer reaches another cell.
-  let moved = s.mouse_cell.0 != col || s.mouse_cell.1 != row
-  if moved && s.mouse_cell.0 >= 0 {
-    if held_button >= 0 && s.shown.mouse_mode >= 1002 {
-      out = [...out, ...mouse_report(held_button + 32 + extra, col, row, true, sgr)]
-    } else if held_button < 0 && s.shown.mouse_mode == 1003 {
-      out = [...out, ...mouse_report(3 + 32 + extra, col, row, true, sgr)]
-    }
-  }
-  s.mouse_cell = (col, row)
-  // The wheel: 64 up, 65 down, a report a notch.
-  let notches = wheel_notches(s, get_io().mouse_wheel())
-  let wheel = if notches > 0 { 64 } else { 65 }
-  for _ in 0..<notches.abs() { out = [
-    ...out,
-    ...mouse_report(wheel + extra, col, row, true, sgr)
-  ] }
-  if out.len() > 0 {
-    let _ = s.pty.write_bytes(out)
+    box_top: view_bottom - box_height,
+    view_bottom: view_bottom,
   }
 }
 
 /// Whole wheel notches from this frame's travel and what was left from before, the rest
 /// kept: up positive. A trackpad's travel comes in fractions.
-let wheel_notches = (s: mut Session, travel: f32) -> i64 => {
+pub let wheel_notches = (s: mut Session, travel: f32) -> i64 => {
   s.wheel_left += travel
   let whole = if s.wheel_left >= 0.0 { s.wheel_left.floor() } else { s.wheel_left.ceil() }
   s.wheel_left -= f32(whole)
@@ -926,19 +659,6 @@ let unit_span = pure (
   let from = Spot { line: line, col: a }
   let to = Spot { line: line, col: b }
   (from, to)
-}
-
-/// Where the grid is drawn this frame: its first cell on the screen, a cell's size, its
-/// width, the first line of everything drawn (`base`) and the lines in view, `top` to
-/// `bottom`, as indices for [Screen.line].
-struct Grid {
-  origin: Vec2,
-  cell: Vec2,
-  cols: i64,
-  base: i64,
-  top: i64,
-  bottom: i64,
-  rows: Rows,
 }
 
 /// Where the grid's lines go on the screen: a line's height each, and gaps the blocks put
@@ -1047,98 +767,8 @@ let sorted_gaps = pure (gaps: [](i64, f32)) -> [](i64, f32) => {
   out
 }
 
-/// Under a block's text, as a card: its input on the box's tint, rounded at the top, its
-/// output on a fainter one below, each with its padding; a red bar down the left of a
-/// failed one. `running`: it has no end yet, and its card reaches the grid's foot (`b.end`).
-let draw_block_under = (
-  s: Session,
-  list: DrawList,
-  theme: Theme,
-  g: Grid,
-  b: Block,
-  running: bool
-) -> void => {
-  let first = s.shown.absolute(0)
-  // A prompt gone from the scrollback: the card from the first line kept.
-  let kept = b.prompt - first >= g.base
-  let p = (b.prompt - first).max(g.base)
-  let o = b.output - first
-  let e = b.end - first
-  if e < g.top || p > g.bottom { return }
-  let r = g.rows
-  let top = if kept { r.y_of(p) - BLOCK_PAD } else { r.y_of(p) }
-  let input_foot = r.y_above(o) + BLOCK_PAD
-  let foot = if running { r.y_of(e) } else { r.y_above(e) + BLOCK_PAD }
-  let x0 = g.origin.x - BOX_MARGIN
-  let x1 = g.origin.x + f32(g.cols) * g.cell.x + BOX_MARGIN
-  if foot > input_foot + 0.5 {
-    list.add_rect_filled(
-      Vec2 { x: x0, y: top },
-      Vec2 { x: x1, y: foot },
-      theme.output,
-      BLOCK_ROUNDING
-    )
-    list.add_rect_filled(
-      Vec2 { x: x0, y: top },
-      Vec2 { x: x1, y: input_foot },
-      theme.input,
-      BLOCK_ROUNDING,
-      DRAW_FLAGS_ROUND_CORNERS_TOP
-    )
-  } else {
-    list.add_rect_filled(
-      Vec2 { x: x0, y: top },
-      Vec2 { x: x1, y: input_foot },
-      theme.input,
-      BLOCK_ROUNDING
-    )
-  }
-  if b.status > 0 {
-    list.add_rect_filled(
-      Vec2 { x: x0 + 3.0, y: top + 4.0 },
-      Vec2 { x: x0 + 3.0 + FAILED_BAR, y: foot.max(input_foot) - 4.0 },
-      theme.palette[1],
-      FAILED_BAR / 2.0
-    )
-  }
-}
-
-/// Over a finished block's first row, at its right end: how long it took, faint, and when
-/// it failed its status, red — where the row's own text leaves room.
-let draw_block_over = (
-  s: Session,
-  list: DrawList,
-  theme: Theme,
-  g: Grid,
-  b: Block,
-  text_dy: f32
-) -> void => {
-  let Some(i) = s.shown.line_at(b.prompt) else { return }
-  if i < g.top || i >= g.bottom { return }
-  let took = duration_text(b.ended - b.started)
-  let note = if b.status > 0 { "exit ${b.status}  ${took}" } else { took }
-  let width = note.to_runes().len()
-  let cells = s.shown.line(i)
-  var used = cells.len()
-  while used > 0 && cells[used - 1].ch == ' ' { used -= 1 }
-  if used + 2 + width > g.cols { return }
-  let x = g.origin.x + f32(g.cols - width) * g.cell.x
-  let y = g.rows.y_of(i) + text_dy
-  if b.status > 0 {
-    let status = "exit ${b.status}"
-    list.add_text(Vec2 { x: x, y: y }, theme.palette[1], status)
-    list.add_text(
-      Vec2 { x: x + f32(status.to_runes().len() + 2) * g.cell.x, y: y },
-      theme.palette[8],
-      took
-    )
-  } else {
-    list.add_text(Vec2 { x: x, y: y }, theme.palette[8], took)
-  }
-}
-
 /// A duration in nanoseconds as a block shows it: `0.42s`, `4.2s`, `1m 05s`.
-let duration_text = pure (nanos: i64) -> string => {
+pub let duration_text = pure (nanos: i64) -> string => {
   let ms = (nanos / 1000000).max(0)
   if ms < 10000 {
     let hundredths = ms / 10
@@ -1152,89 +782,31 @@ let duration_text = pure (nanos: i64) -> string => {
 }
 
 /// The bar down a failed block's left edge, in points.
-const FAILED_BAR: f32 = 3.0
+pub const FAILED_BAR: f32 = 3.0
 
 /// A block's card: the room between cards, the padding inside each around its input and
 /// its output, and its corners' rounding. Its colors are the theme's sections'.
-const BLOCK_MARGIN: f32 = 10.0
-const BLOCK_PAD: f32 = 6.0
-const BLOCK_ROUNDING: f32 = 8.0
-
-/// The box's frame from `box_top` to the view's foot, around a grid `cols` wide from `x`:
-/// opaque, so the scrolled-back grid never shows through it, tinted, a rule along its top.
-let draw_box = (
-  list: DrawList,
-  theme: Theme,
-  x: f32,
-  cols: i64,
-  cell: Vec2,
-  box_top: f32,
-  view_bottom: f32
-) -> void => {
-  let x0 = x - BOX_MARGIN
-  let x1 = x + f32(cols) * cell.x + BOX_MARGIN
-  list.add_rect_filled(
-    Vec2 { x: x0, y: box_top },
-    Vec2 { x: x1, y: view_bottom + BOX_MARGIN },
-    theme.bg
-  )
-  list.add_rect_filled(
-    Vec2 { x: x0, y: box_top },
-    Vec2 { x: x1, y: view_bottom + BOX_MARGIN },
-    theme.input,
-    BOX_ROUNDING
-  )
-  list.add_line_h(x0, x1, box_top, theme.rule, 1.0)
-}
-
-/// A right prompt (zsh's `RPROMPT`) in the box: what the shell drew on input line `i` after
-/// input column `prompt_end` — the shell's input itself is empty, the command line being
-/// Termina's — right-aligned in the row `at` begins, `cols` wide; left out where it would
-/// meet the prompt, `prompt_cols` wide on that row.
-let draw_right_prompt = (
-  s: Session,
-  list: DrawList,
-  theme: Theme,
-  fonts: Fonts,
-  i: i64,
-  prompt_end: i64,
-  at: LineAt,
-  cols: i64,
-  prompt_cols: i64
-) -> void => {
-  let cells = s.shown.line(i)
-  var from = prompt_end
-  while from < cells.len() && cells[from].ch == ' ' { from += 1 }
-  var to = cells.len()
-  while to > from && cells[to - 1].ch == ' ' { to -= 1 }
-  let width = to - from
-  if width <= 0 || cols - width <= prompt_cols { return }
-  let right_at = LineAt {
-    origin: Vec2 { x: at.origin.x + f32(cols - width) * at.cell.x, y: at.origin.y },
-    cell: at.cell,
-    text_dy: at.text_dy,
-    pixel: at.pixel,
-  }
-  draw_line(list, theme, fonts, right_at, cells.slice(from, to), s.shown.combining, width)
-}
+pub const BLOCK_MARGIN: f32 = 10.0
+pub const BLOCK_PAD: f32 = 6.0
+pub const BLOCK_ROUNDING: f32 = 8.0
 
 /// The most blocks a tab keeps; older ones go, as their lines will from the scrollback.
-const BLOCKS: i64 = 2000
+pub const BLOCKS: i64 = 2000
 
 /// The most rows of a prompt the box shows; a prompt's `A` mark further above its input is
 /// taken for a stray, and the box shows the input's line alone.
-const PROMPT_ROWS: i64 = 4
+pub const PROMPT_ROWS: i64 = 4
 
 /// The command line's box: how far it reaches past the grid on each side, how far its text
 /// is set in from the grid's sides, the space inside it above and below its rows, between
 /// the prompt's row and the command's, and between it and a completion menu above it, and
 /// its corners' rounding. Its colors are the theme's: the input section's, and its rule.
-const BOX_MARGIN: f32 = 12.0
-const BOX_INSET: f32 = 2.0
-const BOX_PADDING: f32 = 12.0
-const BOX_GAP: f32 = 4.0
-const BOX_MENU_GAP: f32 = 4.0
-const BOX_ROUNDING: f32 = 8.0
+pub const BOX_MARGIN: f32 = 12.0
+pub const BOX_INSET: f32 = 2.0
+pub const BOX_PADDING: f32 = 12.0
+pub const BOX_GAP: f32 = 4.0
+pub const BOX_MENU_GAP: f32 = 4.0
+pub const BOX_ROUNDING: f32 = 8.0
 
 /// Reads per frame at most — a megabyte — so that a program writing without end (`yes`)
 /// cannot stop the window drawing.
@@ -1257,71 +829,60 @@ let drain = (pty: Pty, parse: mut Parser, shown: mut Screen) -> (bool, bool) => 
   (true, got)
 }
 
-/// This frame's keys and typed text, sent to the shell as a terminal sends them. Whether
-/// anything was sent. With `menus`, ⌘V is the Edit menu's Paste and is not read here;
-/// `bracketed` and `cursor_keys` are the program's modes for pastes and arrows.
-let send_keys = (pty: Pty, menus: bool, bracketed: bool, cursor_keys: bool) -> bool => {
-  // The keys as pressed: ImGui swaps Ctrl and ⌘ on macOS, and `held` undoes it.
-  let keys = held()
-  let mac = platform() == "macOS"
-  let ctrl = keys.control
-  // A shortcut of the terminal's own: ⌘ on a Mac, Ctrl+Shift elsewhere.
-  let command = if mac { keys.command } else { ctrl && keys.shift }
-  var out = ""
-  if command {
-    if !menus && is_key_pressed(KEY_V) { out = pasted(get_clipboard_text(), bracketed) }
-  } else if ctrl {
-    // Ctrl+A … Ctrl+Z are the control characters 1 … 26; Ctrl+Space is NUL.
-    for k in 0..<26 {
-      if is_key_pressed(KEY_A + i32(k)) { out = "${out}${rune(k + 1)}" }
-    }
-    if is_key_pressed(KEY_SPACE) { let _ = pty.write_bytes([0]) }
-  } else if !mac && keys.alt {
-    // Alt as Meta, off a Mac: Escape and then the key, as shells and Emacs read it — Alt+B
-    // a word back, Alt+F forward. (On a Mac Option types its own characters, as Terminal
-    // does unless told otherwise.)
-    let typed = typed_text()
-    if typed != "" { out = meta(typed) }
-    else {
-      for k in 0..<26 {
-        if is_key_pressed(KEY_A + i32(k)) {
-          let letter = rune(i64(if keys.shift { 'A' } else { 'a' }) + k)
-          out = "${out}\e${letter}"
-        }
-      }
-    }
-    if is_key_pressed(KEY_BACKSPACE) { out = "${out}\e\x7f" }
-  } else {
-    out = typed_text()
-  }
+/// The bytes a terminal sends for a named key — Return, Backspace, Tab (Shift+Tab backwards),
+/// Escape, the arrows, Home and End (as application cursor keys, `\eO…`, when the program asked
+/// for them with `?1`), Insert, Delete, Page Up and Down, F1–F12 — or `None` for a key that is
+/// none of them.
+pub let key_sequence = pure (
+  key: Key,
+  shift: bool,
+  cursor_keys: bool
+) -> Maybe<string> => {
   let arrow = if cursor_keys { "\eO" } else { "\e[" }
-  let named = [
-    (KEY_ENTER, "\r"),
-    (KEY_BACKSPACE, "\x7f"),
-    (KEY_TAB, if keys.shift { "\e[Z" } else { "\t" }),
-    (KEY_ESCAPE, "\e"),
-    // Application cursor keys (`?1`), which full-screen programs turn on, are `\eO…`.
-    (KEY_UP_ARROW, "${arrow}A"),
-    (KEY_DOWN_ARROW, "${arrow}B"),
-    (KEY_RIGHT_ARROW, "${arrow}C"),
-    (KEY_LEFT_ARROW, "${arrow}D"),
-    (KEY_HOME, "${arrow}H"),
-    (KEY_END, "${arrow}F"),
-    (KEY_INSERT, "\e[2~"),
-    (KEY_DELETE, "\e[3~"),
-    (KEY_PAGE_UP, "\e[5~"),
-    (KEY_PAGE_DOWN, "\e[6~"),
-  ]
-  // Alt+Backspace was sent above, as Meta's.
-  let meta_held = !mac && keys.alt && !ctrl && !command
-  if !command {
-    for (key, bytes) in named {
-      if is_key_pressed(key) && !(meta_held && key == KEY_BACKSPACE) { out = "${out}${bytes}" }
-    }
+  match key {
+    Enter => Some("\r"),
+    Backspace => Some("\x7f"),
+    Tab => Some(if shift { "\e[Z" } else { "\t" }),
+    Escape => Some("\e"),
+    ArrowUp => Some("${arrow}A"),
+    ArrowDown => Some("${arrow}B"),
+    ArrowRight => Some("${arrow}C"),
+    ArrowLeft => Some("${arrow}D"),
+    Home => Some("${arrow}H"),
+    End => Some("${arrow}F"),
+    Insert => Some("\e[2~"),
+    Delete => Some("\e[3~"),
+    PageUp => Some("\e[5~"),
+    PageDown => Some("\e[6~"),
+    FunctionKey(n) => function_key(n),
+    _ => None,
   }
-  if out == "" { return false }
-  let _ = pty.write(out)
-  true
+}
+
+/// F1–F12 as xterm sends them; `None` past F12.
+let function_key = pure (n: i64) -> Maybe<string> => match n {
+  1 => Some("\eOP"),
+  2 => Some("\eOQ"),
+  3 => Some("\eOR"),
+  4 => Some("\eOS"),
+  5 => Some("\e[15~"),
+  6 => Some("\e[17~"),
+  7 => Some("\e[18~"),
+  8 => Some("\e[19~"),
+  9 => Some("\e[20~"),
+  10 => Some("\e[21~"),
+  11 => Some("\e[23~"),
+  12 => Some("\e[24~"),
+  _ => None,
+}
+
+/// What Ctrl and `c` send: Ctrl+A … Ctrl+Z the control characters 1 … 26, Ctrl+Space NUL;
+/// nothing for any other key.
+pub let control_bytes = pure (c: rune) -> []u8 => {
+  let n = i64(i32(c))
+  if n >= 97 && n <= 122 { return [u8(n - 96)] }
+  if n == 32 { return [0] }
+  []
 }
 
 /// `text` typed with Alt as Meta: each rune after an Escape.
@@ -1334,7 +895,7 @@ pub let pasted = pure (text: string, bracketed: bool) -> string =>
   if bracketed { "\e[200~${text.replace("\e[201~", "")}\e[201~" } else { text }
 
 /// The last part of a path.
-let base_name = pure (path: string) -> string => {
+pub let base_name = pure (path: string) -> string => {
   var k = path.len()
   while k > 0 && path.slice(k - 1, k) == "/" { k -= 1 }
   let parts = path.slice(0, k).split("/")
@@ -1342,4 +903,4 @@ let base_name = pure (path: string) -> string => {
 }
 
 /// A command's first line, for a tab's name.
-let first_line = pure (command: string) -> string => command.split("\n")[0]
+pub let first_line = pure (command: string) -> string => command.split("\n")[0]

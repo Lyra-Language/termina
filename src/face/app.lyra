@@ -1,0 +1,389 @@
+module face
+//! Termina on `ui` (`../termina_ui.lyra` opens it): a window of tabs, each a painted element
+//! (`paint.lyra`) taking input raw — every key, the text typed and the pointer, handed to the
+//! tab's command line at a prompt or to its program otherwise (`input.lyra`) — and each tab's
+//! terminal read when it has written (`Readable`), so an idle window draws nothing.
+//!
+//! **The terminal scrolls itself** rather than sitting in a `ui` scroller: its columns and
+//! rows are the view's, which a scroller's content never learns, and the box at the view's
+//! foot is drawn where the view is. A tab's view sticks to the bottom ([View.sticking]) until
+//! scrolled up, and a command run or typed at the prompt takes it back there.
+
+import bindings.sdl3.{ platform }
+import ui.app.{
+  Command,
+  QuitApp,
+  MeasureFont,
+  FocusKeyed,
+  Subscription,
+  Readable,
+  OnFocus,
+  Shortcut,
+}
+import ui.draw.{ Size, Rect }
+import ui.backend.{ Modifiers, Character, PageUp, PageDown }
+import ui.text.{ FontSpec, FontMetrics }
+import ui.style.{ Style, insets }
+import ui.layout.{
+  Node,
+  PaintArea,
+  PaintOp,
+  RawInput,
+  KeyInput,
+  TextInput,
+  PointerInput,
+  MainStart,
+  CrossStretch,
+  column,
+  row,
+  button,
+  expanded,
+  painted,
+}
+import session.{
+  Session,
+  FrameLayout,
+  open_session,
+  close_session,
+  tab_title,
+  directory,
+  frame_layout,
+}
+import term.{
+  Theme,
+  report_of,
+  TabCommand,
+  NewTab,
+  CloseTab,
+  ShowTab,
+  FontBigger,
+  FontSmaller,
+  FontDefault,
+  OpenSettings,
+  NoCommand,
+  Paste,
+}
+import editor.{ position }
+
+/// The window: its tabs and each one's view, the one shown, the next tab's identity, the home
+/// directory (a tab's name for it), the theme and the grid's font, the painter's size, the
+/// modifiers as the last key left them (typed text carries none), whether the window has the
+/// keyboard, and what a press on the painter took hold of.
+pub struct Term {
+  tabs: []Session,
+  views: []View,
+  active: i64 = 0,
+  next_id: i64 = 1,
+  home: string = "",
+  theme: Theme,
+  grid: Grid,
+  default_size: f32 = 14.0,
+  spacing: f32 = 1.2,
+  size: Size = Size {},
+  mods: Modifiers = Modifiers {},
+  focused: bool = true,
+  mac: bool = false,
+  /// What a press holds until it is let go: nothing (0), the grid's selection (1), the command
+  /// line (2), or a program's mouse report (3, `button` the button held).
+  holding: i64 = 0,
+  button: i64 = -1,
+  /// The last tab's screen as its program ended — what `termina-ui --print` prints.
+  closed_screen: []string = [],
+}
+
+/// A tab's view: how far it is scrolled down, and whether it sticks to the bottom as output
+/// comes.
+pub struct View {
+  scroll: f32 = 0.0,
+  sticking: bool = true,
+}
+
+/// What happens to the window.
+pub data TermEvent =
+  /// Tab `i`'s terminal has something to read.
+  PtyReadable(i64)
+  /// The painter was laid out at this size.
+  | ViewSized(Size)
+  | KeyHeard(KeyInput)
+  | TextHeard(TextInput)
+  | PointerHeard(PointerInput)
+  /// The clipboard's text, for a paste asked for.
+  | ClipboardRead(string)
+  /// The window gained or lost the keyboard.
+  | WindowFocus(bool)
+  /// A shortcut, or a tab's button.
+  | TabAsked(TabCommand)
+  /// The font measured again, at a new size.
+  | FontMeasured(FontMetrics)
+
+/// A window over `tabs` (one, usually: the login shell) in `theme`, drawn with `grid`.
+pub let term_of = (
+  tabs: []Session,
+  theme: Theme,
+  grid: Grid,
+  spacing: f32,
+  home: string
+) -> Term => {
+  var told: []Session = []
+  for given in tabs {
+    var s = given
+    told_colors(s, theme)
+    told.push(s)
+  }
+  Term {
+    tabs: told,
+    views: [s in tabs | View {}],
+    next_id: tabs.len(),
+    home: home,
+    theme: theme,
+    grid: grid,
+    default_size: grid.font.size,
+    spacing: spacing,
+    mac: platform() == "macOS",
+  }
+}
+
+/// Where everything of the shown tab goes in a painter `size` large, as it is scrolled.
+pub let layout_at = pure (t: Term, size: Size) -> FrameLayout => {
+  let scroll = t.views[t.active].scroll
+  frame_layout(
+    t.tabs[t.active],
+    t.grid.cell_x,
+    t.grid.cell_y,
+    PAD - scroll,
+    scroll,
+    size.h - 2.0 * PAD
+  )
+}
+
+// ── The view ─────────────────────────────────────────────────────────────────
+
+/// The window: the tabs' strip — a button a tab, the shown one marked, and `+` — over the
+/// shown tab, painted and taking input raw.
+pub let view = pure (t: Term) -> Node<TermEvent> => {
+  if t.tabs.len() == 0 { return column::<TermEvent>([]) }
+  var strip: []Node<TermEvent> = []
+  for i, s in t.tabs {
+    let shown = i == t.active
+    strip.push(button(tab_title(s, t.home), TabAsked(ShowTab(i))).with_style(Style {
+      background: Some(color(if shown { t.theme.tab_selected } else { t.theme.tab })),
+      color: Some(color(t.theme.fg)),
+      padding: Some(insets(6.0)),
+    }))
+  }
+  strip.push(button("+", TabAsked(NewTab)).with_style(Style {
+    background: Some(color(t.theme.tab)),
+    color: Some(color(t.theme.fg)),
+    padding: Some(insets(6.0)),
+  }))
+  let raw = RawInput {
+    on_key: (k: KeyInput) -> Maybe<TermEvent> => Some(KeyHeard(k)),
+    on_text: (x: TextInput) -> Maybe<TermEvent> => Some(TextHeard(x)),
+    on_pointer: (p: PointerInput) -> Maybe<TermEvent> => Some(PointerHeard(p)),
+    caret: Some(caret_of(t)),
+  }
+  column([
+    row(strip).with_style(Style { gap: Some(4.0), padding: Some(insets(6.0)) }),
+    expanded(painted(
+      (area: PaintArea) -> []PaintOp =>
+        paint_tab(t.tabs[t.active], layout_at(t, area.size), t.grid, t.theme, t.focused, area),
+      Some(ViewSized)
+    ).takes_input(raw).keyed("term")),
+  ]).aligned(MainStart, CrossStretch)
+}
+
+/// Where typed text goes — the command line's caret at a prompt, the cursor otherwise — for the
+/// input method's window.
+let caret_of = pure (t: Term) -> Rect => {
+  let s = t.tabs[t.active]
+  let f = layout_at(t, t.size)
+  let g = t.grid
+  match f.prompt {
+    Some(_) => {
+      let at = place_of(f, g)
+      let (r, c) = position(s.line.edit.text, at.wrap, s.line.edit.cursor)
+      Rect {
+        x: at.origin.x + f32(c) * g.cell_x,
+        y: at.origin.y + f32(r) * g.cell_y,
+        w: 1.0,
+        h: g.cell_y
+      }
+    },
+    None => Rect {
+      x: PAD + f32(s.shown.x) * g.cell_x,
+      y: f.rows.y_of(s.shown.scrollback_len() + s.shown.y),
+      w: 1.0,
+      h: g.cell_y,
+    },
+  }
+}
+
+/// What the window hears of besides its input: each tab's terminal when it has written, and
+/// the window's focus.
+pub let subscriptions = pure (t: Term) -> []Subscription<TermEvent> => [
+  ...[i in 0..<t.tabs.len() | Readable(t.tabs[i].pty.fd, PtyReadable(i))],
+  OnFocus(WindowFocus),
+]
+
+/// The window's shortcuts, taken before the tab hears the key: on a Mac ⌘T, ⌘W, ⌘1–⌘9,
+/// ⌘⇧[ ⌘⇧], ⌘= ⌘- ⌘0; elsewhere Ctrl+Shift+T and W, Alt+1–9, Ctrl+PageUp/PageDown and
+/// Ctrl+Shift+= - 0, Ctrl alone being the shell's.
+pub let shortcuts = pure (t: Term) -> []Shortcut<TermEvent> => {
+  let n = t.tabs.len().max(1)
+  let previous = ShowTab((t.active - 1) %% n)
+  let next = ShowTab((t.active + 1) %% n)
+  let chord = if t.mac { Modifiers { primary: true } } else { Modifiers {
+    primary: true,
+    shift: true
+  } }
+  let shifted = Modifiers { chord | shift: true }
+  var out: []Shortcut<TermEvent> = [
+    Shortcut { key: Character('t'), mods: chord, event: TabAsked(NewTab) },
+    Shortcut { key: Character('w'), mods: chord, event: TabAsked(CloseTab) },
+    Shortcut { key: Character('='), mods: chord, event: TabAsked(FontBigger) },
+    Shortcut { key: Character('-'), mods: chord, event: TabAsked(FontSmaller) },
+    Shortcut { key: Character('0'), mods: chord, event: TabAsked(FontDefault) },
+  ]
+  if t.mac {
+    out.push(Shortcut { key: Character('['), mods: shifted, event: TabAsked(previous) })
+    out.push(Shortcut { key: Character(']'), mods: shifted, event: TabAsked(next) })
+  } else {
+    out.push(Shortcut {
+      key: PageUp,
+      mods: Modifiers { primary: true },
+      event: TabAsked(previous)
+    })
+    out.push(Shortcut {
+      key: PageDown,
+      mods: Modifiers { primary: true },
+      event: TabAsked(next)
+    })
+  }
+  // The tabs by number: ⌘1–⌘9 on a Mac, Alt+1–9 elsewhere.
+  let by_number = if t.mac { Modifiers { primary: true } } else { Modifiers { alt: true } }
+  for k in 0..<9 {
+    out.push(Shortcut {
+      key: Character(rune(i64('1') + k)),
+      mods: by_number,
+      event: TabAsked(ShowTab(k))
+    })
+  }
+  out
+}
+
+// ── Update ───────────────────────────────────────────────────────────────────
+
+/// The window after `e`, and the work it asks for.
+pub let update = (t: Term, e: TermEvent) -> (Term, []Command<TermEvent>) => {
+  var n = t
+  var commands: []Command<TermEvent> = []
+  match e {
+    PtyReadable(i) => {
+      if i < n.tabs.len() {
+        n.tabs[i].step(i == n.active)
+        if !n.tabs[i].alive { commands = close_tab(n, i) }
+      }
+    },
+    ViewSized(size) => {
+      // Laid out the first time: the terminal takes the keyboard, as a window opening on it.
+      if n.size == Size {} { commands = [FocusKeyed("term")] }
+      n.size = size
+    },
+    KeyHeard(k) => { commands = key_heard(n, k) },
+    TextHeard(x) => text_heard(n, x),
+    PointerHeard(p) => pointer_heard(n, p),
+    ClipboardRead(text) => {
+      if n.tabs.len() > 0 {
+        let _ = n.tabs[n.active].edit_action(Paste, text)
+        n.views[n.active].sticking = true
+      }
+    },
+    WindowFocus(on) => {
+      n.focused = on
+      if n.tabs.len() > 0 { n.tabs[n.active].focus_report(on) }
+    },
+    TabAsked(c) => { commands = tab_asked(n, c) },
+    FontMeasured(m) => { n.grid = grid_of(n.grid.font, m, n.spacing) },
+  }
+  settle(n)
+  (n, commands)
+}
+
+/// The shown tab fitted to the painter — as many whole cells as it holds — and its view kept to
+/// the page: at the bottom while it sticks there, never past either end.
+let settle = (t: mut Term) -> void => {
+  if t.tabs.len() == 0 || t.size.w <= 0.0 { return }
+  let i = t.active
+  let cols = i64(((t.size.w - 2.0 * PAD) / t.grid.cell_x).floor())
+  let rows = i64(((t.size.h - 2.0 * PAD) / t.grid.cell_y).floor())
+  t.tabs[i].fit(cols, rows)
+  let f = layout_at(t, t.size)
+  let most = (f.page - (t.size.h - 2.0 * PAD)).max(0.0)
+  if t.views[i].sticking { t.views[i].scroll = most }
+  t.views[i].scroll = t.views[i].scroll.clamp(0.0, most)
+}
+
+/// A shortcut, a tab's button or a menu's choice carried out.
+let tab_asked = (t: mut Term, c: TabCommand) -> []Command<TermEvent> => match c {
+  NewTab => {
+    let dir = if t.tabs.len() > 0 { directory(t.tabs[t.active]) } else { None }
+    if let Some(opened) = open_session([], dir, t.next_id) {
+      var s = opened
+      told_colors(s, t.theme)
+      t.tabs.push(s)
+      t.views.push(View {})
+      t.next_id += 1
+      t.active = t.tabs.len() - 1
+    }
+    [FocusKeyed("term")]
+  },
+  CloseTab => if t.tabs.len() > 0 { close_tab(t, t.active) } else { [] },
+  ShowTab(i) => {
+    if i >= 0 && i < t.tabs.len() { t.active = i }
+    [FocusKeyed("term")]
+  },
+  FontBigger => resized(t, t.grid.font.size + 1.0),
+  FontSmaller => resized(t, t.grid.font.size - 1.0),
+  FontDefault => resized(t, t.default_size),
+  OpenSettings => [],
+  NoCommand => [],
+}
+
+/// Tab `i` closed, its program hung up on; the window with the last.
+let close_tab = (t: mut Term, i: i64) -> []Command<TermEvent> => {
+  if t.tabs.len() == 1 { t.closed_screen = screen_text(t.tabs[i]) }
+  close_session(t.tabs[i])
+  t.tabs = [k in 0..<t.tabs.len() | k != i | t.tabs[k]]
+  t.views = [k in 0..<t.views.len() | k != i | t.views[k]]
+  if t.tabs.len() == 0 { return [QuitApp] }
+  t.active = t.active.min(t.tabs.len() - 1)
+  [FocusKeyed("term")]
+}
+
+/// The font at `size` points (between 6 and 72), measured again.
+let resized = (t: mut Term, size: f32) -> []Command<TermEvent> => {
+  let font = FontSpec { t.grid.font | size: size.clamp(6.0, 72.0) }
+  t.grid = Grid { t.grid | font: font }
+  [MeasureFont(font, FontMeasured)]
+}
+
+/// A tab's lines — its scrollback and the screen's rows in use — as text, trailing blanks
+/// dropped.
+pub let screen_text = pure (s: Session) -> []string => {
+  var out: []string = []
+  for i in 0..<(s.shown.scrollback_len() + s.shown.used_rows()) {
+    var runes: []rune = []
+    for c in s.shown.line(i) { if c.ch != '\x00' { runes.push(c.ch) } }
+    out.push(runes.join().trim_end())
+  }
+  // The cursor's row is in use, and after a last newline it is empty.
+  var n = out.len()
+  while n > 0 && out[n - 1] == "" { n -= 1 }
+  out.slice(0, n)
+}
+
+/// What a program asking (vim) is told the colors are: the theme's.
+let told_colors = (s: mut Session, theme: Theme) -> void => {
+  s.shown.fg_report = report_of(theme.fg)
+  s.shown.bg_report = report_of(theme.bg)
+}

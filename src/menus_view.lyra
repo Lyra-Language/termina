@@ -4,7 +4,7 @@ import bindings.imgui.ui.{ Node, MainMenuBar, Menu, MenuItem, Separator, Compone
 
 // menus_view.lui:8
 import bindings.imgui.ui.{ Shortcut }
-import ui.{
+import term.{
   TabLabel,
   TabCommand,
   NewTab,

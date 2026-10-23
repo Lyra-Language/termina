@@ -1,4 +1,4 @@
-module ui
+module gui
 //! The tabs' bar and shortcuts: the bar drawn and what was done to it, and which shortcut,
 //! if any, was pressed this frame. The tabs themselves are `../termina.lyra`'s.
 //!
@@ -13,6 +13,19 @@ module ui
 //! keys.
 
 import bindings.sdl3.{ platform }
+import term.{
+  TabLabel,
+  order_by,
+  TabCommand,
+  NoCommand,
+  NewTab,
+  CloseTab,
+  ShowTab,
+  OpenSettings,
+  FontBigger,
+  FontSmaller,
+  FontDefault,
+}
 import bindings.imgui.{
   begin_tab_bar,
   end_tab_bar,
@@ -56,13 +69,6 @@ import bindings.imgui.{
   KEY_0,
   KEY_KEYPAD_ADD,
   KEY_KEYPAD_SUBTRACT,
-}
-
-/// A tab on the bar: what it is called, and its identity, which no other tab of the window
-/// has and a changing name must not move.
-pub struct TabLabel {
-  name: string,
-  id: i64,
 }
 
 /// What the tab bar answers for a frame, every index into the tabs as they were given.
@@ -177,41 +183,11 @@ pub let tab_bar = (
   }
 }
 
-/// The indices of `lefts` from the leftmost to the rightmost — an insertion sort, stable,
-/// for a bar's handful of tabs.
-pub let order_by = pure (lefts: []f32) -> []i64 => {
-  var order: []i64 = [k in 0..<lefts.len() | k]
-  for i in 1..<order.len() {
-    var j = i
-    while j > 0 && lefts[order[j - 1]] > lefts[order[j]] {
-      let t = order[j]
-      order[j] = order[j - 1]
-      order[j - 1] = t
-      j -= 1
-    }
-  }
-  order
-}
-
 /// Points between a tab's edge and its name, across and up and down.
 const TAB_PADDING: Vec2 = Vec2 { x: 14.0, y: 7.0 }
 
 /// Points between tabs, between a name and its close button, and under the bar.
 const TAB_SPACING: Vec2 = Vec2 { x: 6.0, y: 8.0 }
-
-/// A window's shortcut pressed (or menu item chosen) this frame.
-pub data TabCommand =
-  NoCommand
-  | NewTab
-  | CloseTab
-  /// Show the tab at this index.
-  | ShowTab i64
-  /// Open the settings window (⌘, from the menu bar; Ctrl+, without one).
-  | OpenSettings
-  /// The font a point bigger or smaller, or back to the default size (View's items).
-  | FontBigger
-  | FontSmaller
-  | FontDefault
 
 /// The window's shortcut pressed this frame, if any, with `active` shown of `count`: ⌘T,
 /// ⌘W, ⌘1–⌘9, ⌘⇧[ and ⌘⇧], ⌘= ⌘- ⌘0 on a Mac; Ctrl+Shift+T and W, Alt+1–9,
