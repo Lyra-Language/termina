@@ -14,6 +14,7 @@ module face
 //! program's).
 
 import ui.style.{
+  Insets,
   Theme as UiTheme,
   Palette,
   Sheet,
@@ -22,7 +23,7 @@ import ui.style.{
   insets_xy,
   theme_of as ui_theme_of
 }
-import ui.draw.{ Color }
+import ui.draw.{ Color, Radii }
 import ui.backend.{ Chord, Modifiers, Character, PageUp, PageDown }
 import ui.layout.{
   Menu,
@@ -78,21 +79,36 @@ pub let chrome_theme = pure (theme: Theme) -> UiTheme => ui_theme_of(Palette {
   focus: faded_by(color(theme.menu_chosen), 0.6),
 })
 
-/// The chrome's own rules: the tabs in the theme's three tab colours, a chosen menu item in
-/// the text's colour on the chosen row's (a light theme's chosen row is light), and the header
-/// bar's quiet buttons.
+/// The chrome's own rules: the tabs in the theme's three tab colours, a button, a chosen menu
+/// item and option in the text's colour on the chosen row's (a light theme's chosen row is
+/// light), and the header bar's quiet buttons.
 pub let chrome_sheet = pure (theme: Theme) -> Sheet => {
   let fg = color(theme.fg)
   let clear = Color { r: 0, g: 0, b: 0, a: 0 }
   Sheet {
     rules: [
-      Rule { selector: "TabBar", style: Style { gap: Some(2.0), padding: Some(insets_xy(4.0, 3.0)) } },
-      Rule { selector: "Tab", style: Style { background: Some(color(theme.tab)), color: Some(fg) } },
+      // The tabs stand on the terminal below them, rounded only above, and set in from the
+      // window's sides as the sections are ([PAD]).
+      Rule {
+        selector: "TabBar",
+        style: Style { gap: Some(2.0), padding: Some(Insets { top: 4.0, left: PAD, right: PAD }) },
+      },
+      Rule {
+        selector: "Tab",
+        style: Style {
+          background: Some(color(theme.tab)),
+          color: Some(fg),
+          corners: Some(Radii { top_left: 6.0, top_right: 6.0 }),
+        },
+      },
       Rule { selector: "Tab:hover", style: Style { background: Some(color(theme.tab_hovered)) } },
       Rule {
         selector: "Tab:checked",
         style: Style { background: Some(color(theme.tab_selected)), color: Some(fg), border_width: Some(0.0) },
       },
+      // Text on the chosen row's colour is the text's colour: a light theme's chosen row is
+      // light, and ui's white on it unreadable.
+      Rule { selector: "Button, Select::option:hover", style: Style { color: Some(fg) } },
       Rule {
         selector: "MenuItem:hover, MenuItem:focus-visible, MenuItem:open",
         style: Style { background: Some(color(theme.menu_chosen)), color: Some(fg) },
@@ -119,20 +135,30 @@ let faded_by = pure (c: Color, opacity: f32) -> Color =>
 // ── The bars ─────────────────────────────────────────────────────────────────
 
 /// The tab bar: a tab a session, labelled with its title, closed by its ×, dragged into a new
-/// order; and on a Mac `+` after them, the header bar holding it elsewhere.
-pub let tab_strip = pure (t: Term) -> Node<TermEvent> => tab_bar(TabsSpec {
-  tabs: [s in t.tabs | TabSpec { label: tab_title(s, t.home), key: "tab ${s.id}" }],
-  selected: t.active,
-  on_select: (i: i64) -> TermEvent => TabAsked(ShowTab(i)),
-  on_close: TabClosed,
-  on_move: TabMoved,
-  after: if t.mac { [button("+", TabAsked(NewTab)).with_class("chrome").keyed("new")] } else { [] },
-})
+/// order; the Settings tab at its end while it is open, out of the order; and on a Mac `+`
+/// after them, the header bar holding it elsewhere.
+pub let tab_strip = pure (t: Term) -> Node<TermEvent> => {
+  let n = t.tabs.len()
+  let settings_tab = if t.settings_open { [TabSpec {
+    label: "Settings",
+    key: "settings",
+    movable: false
+  }] } else { [] }
+  tab_bar(TabsSpec {
+    tabs: [...[s in t.tabs | TabSpec { label: tab_title(s, t.home), key: "tab ${s.id}" }], ...settings_tab],
+    selected: if t.on_settings { n } else { t.active },
+    on_select: (i: i64) -> TermEvent =>
+      if i == n { ShowSettings } else { TabAsked(ShowTab(i)) },
+    on_close: (i: i64) -> TermEvent => if i == n { CloseSettings } else { TabClosed(i) },
+    on_move: TabMoved,
+    after: if t.mac { [button("+", TabAsked(NewTab)).with_class("chrome").keyed("new")] } else { [] },
+  })
+}
 
 /// The header bar, off a Mac: `+`, the shown tab's title in the middle, ☰ and the window's
 /// buttons; its empty stretch moves the window.
 pub let header_bar = pure (t: Term) -> Node<TermEvent> => {
-  let title = if t.tabs.len() > 0 { tab_title(
+  let title = if t.on_settings { "Settings" } else if t.tabs.len() > 0 { tab_title(
     t.tabs[t.active],
     t.home
   ) } else { "Termina" }

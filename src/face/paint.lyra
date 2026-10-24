@@ -83,8 +83,13 @@ pub let grid_of = pure (font: FontSpec, m: FontMetrics, spacing: f32) -> Grid =>
   }
 }
 
-/// The room between the painter's edges and the grid.
+/// The room between the painter's edges and the sections: above the grid, below the box, and
+/// beside the cards and the box ([INSET] is the text's, across).
 pub const PAD: f32 = 10.0
+
+/// How far the text is set in from the painter's sides: the sections — a block's card, the
+/// box — stand `BOX_MARGIN` out from it, and [PAD] in from the window's edges.
+pub const INSET: f32 = PAD + BOX_MARGIN
 
 /// An ImGui color (`0xAABBGGRR`) as `ui`'s.
 pub let color = pure (abgr: u32) -> Color => Color {
@@ -141,7 +146,7 @@ pub let paint_tab = pure (
       ops,
       row_theme,
       g,
-      Point { x: PAD, y: rows.y_of(i) },
+      Point { x: INSET, y: rows.y_of(i) },
       s.shown.line(i),
       s.shown.combining,
       upto
@@ -157,7 +162,7 @@ pub let paint_tab = pure (
       let (a, b) = selected_on(s.sel_a, s.sel_b, s.shown.absolute(i), cols)
       if b > a {
         ops.push(PaintDraw(Fill(
-          Rect { x: PAD + f32(a) * g.cell_x, y: rows.y_of(i), w: f32(b - a) * g.cell_x, h: g.cell_y },
+          Rect { x: INSET + f32(a) * g.cell_x, y: rows.y_of(i), w: f32(b - a) * g.cell_x, h: g.cell_y },
           radius(0.0),
           color(theme.selection)
         )))
@@ -179,7 +184,7 @@ pub let paint_tab = pure (
           f.wrap.cols
         )) } else { head }
         ops.push(PaintText(
-          Point { x: PAD + BOX_INSET, y: f.box_top + BOX_PADDING + g.baseline },
+          Point { x: INSET + BOX_INSET, y: f.box_top + BOX_PADDING + g.baseline },
           fits,
           g.font,
           color(theme.palette[8])
@@ -187,7 +192,7 @@ pub let paint_tab = pure (
       }
       if s.shown.cursor_visible {
         // The shape the program set (DECSCUSR): a block, an underline or a bar.
-        let x = PAD + f32(s.shown.x) * g.cell_x
+        let x = INSET + f32(s.shown.x) * g.cell_x
         let y = rows.y_of(s.shown.scrollback_len() + s.shown.y)
         let shape = s.shown.cursor_shape
         let at = if shape == 3 || shape == 4 {
@@ -361,7 +366,7 @@ let card = (
   let top = if kept { r.y_of(p) - BLOCK_PAD } else { r.y_of(p) }
   let input_foot = r.y_above(o) + BLOCK_PAD
   let foot = if running { r.y_of(e) } else { r.y_above(e) + BLOCK_PAD }
-  let x0 = PAD - BOX_MARGIN
+  let x0 = INSET - BOX_MARGIN
   let w = f32(s.shown.cols) * g.cell_x + 2.0 * BOX_MARGIN
   if foot > input_foot + 0.5 {
     ops.push(PaintDraw(Fill(
@@ -412,7 +417,7 @@ let note = (
   while used > 0 && cells[used - 1].ch == ' ' { used -= 1 }
   let cols = s.shown.cols
   if used + 2 + width > cols { return }
-  let x = PAD + f32(cols - width) * g.cell_x
+  let x = INSET + f32(cols - width) * g.cell_x
   let y = f.rows.y_of(i) + g.baseline
   if b.status > 0 {
     let status = "exit ${b.status}"
@@ -439,12 +444,17 @@ let frame_box = (
   view_bottom: f32
 ) -> void => {
   let at = Rect {
-    x: PAD - BOX_MARGIN,
+    x: INSET - BOX_MARGIN,
     y: box_top,
     w: f32(cols) * g.cell_x + 2.0 * BOX_MARGIN,
-    h: view_bottom + BOX_MARGIN - box_top,
+    h: view_bottom - box_top,
   }
-  ops.push(PaintDraw(Fill(at, radius(0.0), color(theme.bg))))
+  // The window's background under it and down to the edge, past its margin.
+  ops.push(PaintDraw(Fill(
+    Rect { at | h: view_bottom + PAD - box_top },
+    radius(0.0),
+    color(theme.bg)
+  )))
   ops.push(PaintDraw(Fill(at, radius(BOX_ROUNDING), color(theme.input))))
   ops.push(PaintDraw(Fill(Rect { at | h: 1.0 }, radius(0.0), color(theme.rule))))
 }
@@ -475,7 +485,7 @@ let prompt_box = (
         ops,
         input_theme,
         g,
-        Point { x: PAD + BOX_INSET, y: row_y(r) },
+        Point { x: INSET + BOX_INSET, y: row_y(r) },
         cells.slice(from, to),
         s.shown.combining,
         to - from
@@ -496,7 +506,7 @@ let prompt_box = (
       ops,
       input_theme,
       g,
-      Point { x: PAD + BOX_INSET + f32(f.wrap.cols - width) * g.cell_x, y: row_y(f.prompt_rows - 1) },
+      Point { x: INSET + BOX_INSET + f32(f.wrap.cols - width) * g.cell_x, y: row_y(f.prompt_rows - 1) },
       cells.slice(from, to),
       s.shown.combining,
       width
@@ -509,7 +519,7 @@ let prompt_box = (
 /// rest just above the box.
 pub let place_of = pure (f: FrameLayout, g: Grid) -> Place => Place {
   origin: Point {
-    x: PAD + BOX_INSET,
+    x: INSET + BOX_INSET,
     y: f.box_top + BOX_PADDING + f32(f.prompt_rows) * g.cell_y + BOX_GAP,
   },
   cell: Point { x: g.cell_x, y: g.cell_y },

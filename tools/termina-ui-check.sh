@@ -2,8 +2,10 @@
 # termina-ui played headless (SDL's dummy driver, `--script`), its screens checked: a program's
 # output, keys sent raw (a line to `cat`, Ctrl+D, Ctrl+C), the window's size reaching the
 # program, the tabs — a new one, the first chosen by its tab and by Alt+1, the shown one closed
-# from the header bar's ☰ — and, where zsh is installed, a command run from the command line at
-# its prompt, the frame written as a PNG. Exit 1 on a failure. After ./build.sh:
+# from the header bar's ☰ — the Settings tab — a theme chosen from the keys and the font made
+# bigger, both kept in the file, and the tab closed by its key — and, where zsh is installed, a
+# command run from the command line at its prompt, the frame written as a PNG. Exit 1 on a
+# failure. After ./build.sh:
 #
 #     tools/termina-ui-check.sh
 #
@@ -59,6 +61,20 @@ check "a new tab, then the first chosen by its tab" "$(tabs 'click:20,57')" "$ca
 check "a new tab, then the first chosen by Alt+1" "$(tabs 'Alt+1')" "$cat_screen"
 check "the shown tab closed by ☰ ▸ Shell ▸ Close Tab" \
   "$(tabs 'click:819,20 move:830,114 move:600,118 click:600,215')" "$cat_screen"
+
+# The Settings tab, by its keys alone (its controls' places are the font's): Settings…, Tab to
+# the Theme list and Down to the next theme, the font a point bigger; then the file.
+run --header --script "wait:300 Primary+, wait:200 Tab Tab Tab Tab Tab Tab Tab Tab Tab Down Primary+Shift+= wait:100" cat >/dev/null
+file="$TMP/.config/termina/settings.json"
+check "Settings: the next theme, chosen from the keys, kept" "$(grep -o '"theme": "[^"]*"' "$file")" '"theme": "Termina Light"'
+check "Settings: the font a point bigger, kept" "$(grep -o '"font_size": [0-9]*' "$file")" '"font_size": 15'
+rm -rf "$TMP/.config"
+check "Settings closed by its key: typing reaches the terminal again" \
+  "$(run --header --print --script "wait:300 'one' Enter Primary+, wait:200 Primary+Shift+w wait:200 'two' Enter wait:200" cat)" "termina-ui: 4 lines
+one
+one
+two
+two"
 
 cols="$(run --print sh -c 'tput cols' | tail -1)"
 if [ "$cols" -gt 40 ] 2>/dev/null; then

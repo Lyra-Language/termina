@@ -1,0 +1,182 @@
+module face
+//! The Settings tab on `ui`: the page is markup (`../settings_page.lui`), its events carried
+//! out here on the window's settings. **A change takes at once** — the theme rebuilt and told to
+//! every tab, the font measured again at its size and spacing, a family not loaded yet added to
+//! the window's fonts (`LoadFonts`) under a name of its own — **and is kept a moment after the
+//! last** ([SAVE_DELAY_MS]), so a slider's drag writes the file once, not at every step.
+
+import ui.app.{ Command, ChooseFile, LoadFonts, After }
+import ui.backend.{ FileDialog }
+import ui.text.{ FontFile, FontSpec }
+import settings.{
+  defaults,
+  theme_colors,
+  save_theme,
+  delete_theme,
+  saved_colors,
+  with_color,
+  with_ansi,
+  family_for,
+  save_settings,
+  settings_to_json,
+  FONT_SIZE_RANGE,
+}
+import settings_page.{
+  SettingsEvent,
+  UseFamily,
+  ChooseFontFile,
+  SetFontSize,
+  SetLineSpacing,
+  SetColor,
+  SetAnsi,
+  UseTheme,
+  UseSavedTheme,
+  NameTheme,
+  SaveThemeAs,
+  DeleteSavedTheme,
+  ToggleBoldBright,
+  ResetSettings,
+  OpenSwatch,
+  CloseSwatch,
+  KeepSetting,
+}
+import term.{ theme_of }
+
+/// How long after the last change the settings are written.
+const SAVE_DELAY_MS: i64 = 500
+
+/// One of the Settings tab's events carried out; the work it asks for.
+pub let settings_asked = (t: mut Term, e: SettingsEvent) -> []Command<TermEvent> => {
+  let faces_were = faces_of(t)
+  match e {
+    // Picking a family goes back to families from a chosen file.
+    UseFamily(name) => {
+      t.settings.font_family = name
+      t.settings.font_file = ""
+    },
+    ChooseFontFile => {
+      return [ChooseFile(
+        FileDialog { filters: [("Fonts", "ttf;otf;ttc")] },
+        FontFileChosen
+      )]
+    },
+    // Whole points: a fractional size blurs every glyph.
+    SetFontSize(size) => { t.settings.font_size = f32(size.round()) },
+    SetLineSpacing(spacing) => { t.settings.line_spacing = spacing },
+    // A color changed by hand makes the theme the user's own.
+    SetColor(field, rgb) => {
+      t.settings.colors = with_color(t.settings.colors, field, rgb)
+      t.settings.theme_name = "Custom"
+    },
+    SetAnsi(k, rgb) => {
+      t.settings.colors = with_ansi(t.settings.colors, k, rgb)
+      t.settings.theme_name = "Custom"
+    },
+    UseTheme(name) => {
+      t.settings.theme_name = name
+      t.settings.colors = theme_colors(name)
+    },
+    UseSavedTheme(name) => {
+      let Some(saved) = saved_colors(t.settings.themes, name) else { return [] }
+      t.settings.theme_name = name
+      t.settings.colors = saved
+    },
+    NameTheme(text) => {
+      t.typed = text
+      return []
+    },
+    // The colors as they are, under a name of the user's — one of theirs replaced, Termina's
+    // own not.
+    SaveThemeAs => {
+      save_theme(t.settings, t.typed)
+      t.typed = ""
+    },
+    DeleteSavedTheme => delete_theme(t.settings, t.settings.theme_name),
+    ToggleBoldBright => { t.settings.bold_is_bright = !t.settings.bold_is_bright },
+    ResetSettings => { t.settings = defaults() },
+    OpenSwatch(key) => {
+      t.swatch = key
+      return []
+    },
+    CloseSwatch => {
+      t.swatch = ""
+      return []
+    },
+    KeepSetting => { return [] },
+  }
+  applied(t, faces_were)
+}
+
+/// The font a point bigger or smaller (`by`), within the settings' range, or (`by` 0) back to
+/// the default size — View's items, kept as any setting is.
+pub let font_stepped = (t: mut Term, by: f32) -> []Command<TermEvent> => {
+  let faces_were = faces_of(t)
+  let size = if by.abs() < 0.5 { defaults().font_size } else { t.settings.font_size + by }
+  t.settings.font_size = size.clamp(FONT_SIZE_RANGE.0, FONT_SIZE_RANGE.1)
+  applied(t, faces_were)
+}
+
+/// A font file chosen in the system's dialog: the font, from now on.
+pub let font_file_chosen = (t: mut Term, path: Maybe<string>) -> []Command<TermEvent> => {
+  let Some(chosen) = path else { return [] }
+  let faces_were = faces_of(t)
+  t.settings.font_file = chosen
+  applied(t, faces_were)
+}
+
+/// The settings written, if save `n` is the last asked for and they changed since last written.
+pub let save_due = (t: mut Term, n: i64) -> void => {
+  if n == t.saves { save_now(t) }
+}
+
+/// The settings written now if they changed since last written — as the window closes, a save
+/// still due.
+pub let save_now = (t: mut Term) -> void => {
+  if t.settings_file == "" { return }
+  let text = settings_to_json(t.settings)
+  if text != t.saved && save_settings(t.settings_file, t.settings) { t.saved = text }
+}
+
+/// The settings as they now are, taken: the theme told to every tab, the font's family —
+/// loaded first if it is not yet — measured at its size and spacing, and a save asked for.
+let applied = (t: mut Term, faces_were: string) -> []Command<TermEvent> => {
+  t.theme = theme_of(t.settings)
+  for i in 0..<t.tabs.len() { told_colors(t.tabs[i], t.theme) }
+  t.spacing = t.settings.line_spacing
+  var out: []Command<TermEvent> = []
+  let faces = faces_of(t)
+  if faces != faces_were {
+    if !t.loaded.contains(faces) {
+      out.push(LoadFonts(
+        family_files(t, faces),
+        (_: bool) -> TermEvent => FontsLoaded(faces)
+      ))
+      t.loaded.push(faces)
+    }
+    t.grid = Grid { t.grid | font: FontSpec { t.grid.font | family: faces } }
+  }
+  t.saves += 1
+  [...out, ...resized(t, t.settings.font_size), After(SAVE_DELAY_MS, SaveDue(t.saves))]
+}
+
+/// The name the settings' faces are loaded as: the family's, or the file's.
+let faces_of = pure (t: Term) -> string => match family_for(t.settings, t.families) {
+  Some(f) => "family ${f.name} ${f.regular}",
+  None => t.grid.font.family,
+}
+
+/// The settings' family's faces as files to load as `name`: its regular, bold, italic and
+/// bold italic where it has them.
+let family_files = pure (t: Term, name: string) -> []FontFile => {
+  let Some(f) = family_for(t.settings, t.families) else { return [] }
+  [
+    face in [
+      (f.regular, 400, false),
+      (f.bold, 700, false),
+      (f.italic, 400, true),
+      (f.bold_italic, 700, true)
+    ] |
+      face.0 != "" |
+      FontFile { family: name, path: face.0, weight: face.1, italic: face.2 }
+  ]
+}

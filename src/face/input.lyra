@@ -188,7 +188,7 @@ let grid_spot = pure (
   at: Point
 ) -> (i64, i64, i64) => {
   let i = f.rows.line_at_y(at.y, f.grid_lines).clamp(0, (f.grid_lines - 1).max(0))
-  let fx = (at.x - PAD) / g.cell_x
+  let fx = (at.x - INSET) / g.cell_x
   (
     s.shown.absolute(i),
     i64(fx.floor()).clamp(0, s.shown.cols - 1),
@@ -204,7 +204,7 @@ let report = (t: mut Term, f: FrameLayout, p: PointerInput) -> void => {
   let i = t.active
   let s = t.tabs[i]
   let g = t.grid
-  let col = i64(((p.at.x - PAD) / g.cell_x).floor()).clamp(0, s.shown.cols - 1)
+  let col = i64(((p.at.x - INSET) / g.cell_x).floor()).clamp(0, s.shown.cols - 1)
   let cell_row = (f.base + i64(((p.at.y - f.rows.origin_y) / g.cell_y).floor()) - s.shown.scrollback_len()).clamp(
     0,
     s.shown.rows - 1

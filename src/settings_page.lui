@@ -1,0 +1,257 @@
+<!--
+  Termina's settings on lyra's `ui`, as markup: `../lyra/build/lui src/settings_page.lui`
+  writes settings_page.lyra beside it. termina-ui's Settings tab draws it (`face/app.lyra`)
+  and carries out its events (`face/settings.lyra`). (`settings_view.lui` is the ImGui app's.)
+-->
+
+<script target="ui">
+  import ui.draw.{ Color, rgb }
+  import settings.{
+    Settings,
+    FontFamily,
+    file_family,
+    can_save_as,
+    saved_colors,
+    color_named,
+    THEME_NAMES,
+    FONT_SIZE_RANGE,
+    LINE_SPACING_RANGE,
+  }
+
+  /// What the settings can be asked to do; the Settings tab carries it out.
+  pub data SettingsEvent =
+    UseFamily(string)
+    | ChooseFontFile
+    /// The font's size or the line spacing, as the slider is dragged.
+    | SetFontSize(f32)
+    | SetLineSpacing(f32)
+    /// A color, by its field's name (`fg`, `tab_hovered`, …), as it is picked.
+    | SetColor(string, u32)
+    /// ANSI color `k`, 0 to 15.
+    | SetAnsi(i64, u32)
+    | UseTheme(string)
+    | UseSavedTheme(string)
+    | NameTheme(string)
+    | SaveThemeAs
+    | DeleteSavedTheme
+    | ToggleBoldBright
+    | ResetSettings
+    /// A swatch's picker opened, by its color's field (`ansi 3` for an ANSI color), or closed.
+    | OpenSwatch(string)
+    | CloseSwatch
+    /// An option that is no change: the font file's own name, or the theme as it is.
+    | KeepSetting
+
+  /// The Family list: a chosen file's own name first, set off by a rule, then the families.
+  let family_options = pure (s: Settings, families: []FontFamily) -> []string => [
+    ...(if s.font_file != "" { [file_family(s.font_file).name] } else { [] }),
+    ...[f in families | f.name],
+  ]
+
+  /// Where the list shows the font in use: the file's own name, else its family.
+  let family_shown = pure (s: Settings, families: []FontFamily) -> i64 => {
+    if s.font_file != "" { return 0 }
+    for k, f in families { if f.name == s.font_family { return k } }
+    -1
+  }
+
+  /// The family at `k` of the list, the file's own name (first) being no change.
+  let family_picked = pure (s: Settings, families: []FontFamily, k: i64) -> SettingsEvent => {
+    let first = if s.font_file != "" { 1 } else { 0 }
+    if k < first || k - first >= families.len() { KeepSetting } else { UseFamily(families[k - first].name) }
+  }
+
+  /// The Theme list: Termina's themes, then the user's after a rule — and a theme that is
+  /// neither (`Custom`) first, set off by a rule of its own.
+  let theme_options = pure (s: Settings) -> []string => [
+    ...(if theme_listed(s) { [] } else { [s.theme_name] }),
+    ...THEME_NAMES,
+    ...[t in s.themes | t.name],
+  ]
+
+  /// Whether the theme in use is one of the list's.
+  let theme_listed = pure (s: Settings) -> bool =>
+    THEME_NAMES.contains(s.theme_name) || is_saved(s)
+
+  /// Where the list shows the theme in use.
+  let theme_shown = pure (s: Settings) -> i64 => {
+    let options = theme_options(s)
+    for k, name in options { if name == s.theme_name { return k } }
+    -1
+  }
+
+  /// The rules of the Theme list: after an unlisted theme, and before the user's themes.
+  let theme_rules = pure (s: Settings) -> []i64 => {
+    let first = if theme_listed(s) { 0 } else { 1 }
+    [
+      ...(if first == 1 { [1] } else { [] }),
+      ...(if s.themes.len() > 0 { [first + THEME_NAMES.len()] } else { [] }),
+    ]
+  }
+
+  /// The theme at `k` of the list.
+  let theme_picked = pure (s: Settings, k: i64) -> SettingsEvent => {
+    let first = if theme_listed(s) { 0 } else { 1 }
+    let at = k - first
+    if at < 0 { KeepSetting } else if at < THEME_NAMES.len() { UseTheme(THEME_NAMES[at]) } else if at - THEME_NAMES.len() < s.themes.len() {
+      UseSavedTheme(s.themes[at - THEME_NAMES.len()].name)
+    } else { KeepSetting }
+  }
+
+  /// Whether the theme in use is one the user saved.
+  let is_saved = pure (s: Settings) -> bool => saved_colors(s.themes, s.theme_name) != None
+
+  /// A color as the settings keep it, `0xRRGGBB`, from a swatch's.
+  let rgb_of_color = pure (c: Color) -> u32 => (u32(c.r) << 16) | (u32(c.g) << 8) | u32(c.b)
+
+  /// The size, in whole points; the spacing to two places.
+  let points = pure (size: f32) -> string => "${i64(size.round())} pt"
+  let spacing_text = pure (x: f32) -> string => {
+    let hundredths = i64((x * 100.0).round())
+    "${hundredths / 100}.${if hundredths % 100 < 10 { "0" } else { "" }}${hundredths % 100}"
+  }
+
+  /// The colors the settings edit, by label and field (`settings.color_named`), in their
+  /// groups: the grid's own, the sections', the tabs', the command line's.
+  struct ColorGroup {
+    heading: string,
+    colors: [](string, string),
+  }
+
+  const COLOR_GROUPS = [
+    ColorGroup { heading: "Terminal", colors: [("Text", "fg"), ("Background", "bg"), ("Cursor", "cursor"), ("Selection", "selection")] },
+    ColorGroup { heading: "Sections", colors: [("Input", "input"), ("Output", "output"), ("Input text", "input_text")] },
+    ColorGroup { heading: "Tabs", colors: [("Tab", "tab"), ("Under the pointer", "tab_hovered"), ("Shown", "tab_selected")] },
+    ColorGroup { heading: "Command line", colors: [("Text", "editor_text"), ("Completion menu", "menu"), ("Chosen completion", "menu_chosen")] },
+  ]
+</script>
+
+<!-- The whole of the Settings tab, for the settings as they are, the families on offer, the
+     name typed to save a theme as, and the swatch whose picker is open (`""` for none). -->
+<component name="settings_page" props={{ s: Settings, families: []FontFamily, typed: string, open: string }} event={SettingsEvent}>
+  <style>
+    .page { gap: 22; padding: 24; overflow-y: auto }
+    .section { gap: 12 }
+    Text.heading { font-size: 15; color: $colors.muted }
+    .form { grid-template-columns: auto 1fr; column-gap: 16; row-gap: 12; align-items: center }
+    .field { gap: 8 }
+    Slider { width: 240 }
+    TextInput { width: 220 }
+    .groups { gap: 32; row-gap: 20 }
+    .group { gap: 10 }
+    .ansi { gap: 6 }
+  </style>
+
+  <Column class="page" cross="stretch">
+    <Column class="section">
+      <Text class="heading">Font</Text>
+      <Grid class="form">
+        <Text>Family</Text>
+        <Row class="field">
+          <Select
+            options={family_options(s, families)}
+            selected={family_shown(s, families)}
+            separators={if s.font_file != "" { [1] } else { [] }}
+            on_change={(k: i64) -> SettingsEvent => family_picked(s, families, k)}
+          />
+          <Button on_click={ChooseFontFile} key="other font">Other Font File…</Button>
+        </Row>
+        <Text>Size</Text>
+        <Row class="field">
+          <Slider value={s.font_size} min={FONT_SIZE_RANGE.0} max={FONT_SIZE_RANGE.1} step="1" on_change={SetFontSize} key="size"/>
+          <Text>{points(s.font_size)}</Text>
+        </Row>
+        <Text>Line spacing</Text>
+        <Row class="field">
+          <Slider value={s.line_spacing} min={LINE_SPACING_RANGE.0} max={LINE_SPACING_RANGE.1} step="0.05" on_change={SetLineSpacing} key="spacing"/>
+          <Text>{spacing_text(s.line_spacing)}</Text>
+        </Row>
+      </Grid>
+    </Column>
+
+    <Column class="section">
+      <Text class="heading">Colors</Text>
+      <Grid class="form">
+        <Text>Theme</Text>
+        <Row class="field">
+          <Select
+            options={theme_options(s)}
+            selected={theme_shown(s)}
+            separators={theme_rules(s)}
+            on_change={(k: i64) -> SettingsEvent => theme_picked(s, k)}
+          />
+        </Row>
+        <Text>Theme name</Text>
+        <Row class="field">
+          <TextInput value={typed} placeholder="Theme name" on_edit={NameTheme} key="theme name"/>
+          <Button on_click={SaveThemeAs} disabled={!can_save_as(typed)} key="save theme">Save Theme As…</Button>
+          <if test={is_saved(s)}>
+            <Button on_click={DeleteSavedTheme} key="delete theme">Delete</Button>
+          </if>
+        </Row>
+      </Grid>
+
+      <!-- The colors in their groups, side by side as the window's width allows, wrapping to a
+           new line when it does not: each its heading over its swatches, labelled on their
+           right. -->
+      <Flex class="groups" wrap="wrap">
+        <for each={g in COLOR_GROUPS}>
+          <Column class="group">
+            <Text class="heading">{g.heading}</Text>
+            <for each={c in g.colors}>
+              <color_field s={s} label={c.0} field={c.1} open={open}/>
+            </for>
+          </Column>
+        </for>
+        <Column class="group">
+          <Text class="heading">ANSI colors</Text>
+          <Row class="ansi">
+            <for each={k in 0..<8}>
+              <ansi_field s={s} k={k} open={open}/>
+            </for>
+          </Row>
+          <Row class="ansi">
+            <for each={k in 8..<16}>
+              <ansi_field s={s} k={k} open={open}/>
+            </for>
+          </Row>
+          <Checkbox checked={s.bold_is_bright} on_toggle={ToggleBoldBright}>Draw bold text in bright colors</Checkbox>
+        </Column>
+      </Flex>
+    </Column>
+
+    <Row>
+      <Button on_click={ResetSettings} key="reset">Reset to Defaults</Button>
+    </Row>
+  </Column>
+</component>
+
+<!-- A color's swatch, its label to its right. -->
+<component name="color_field" props={{ s: Settings, label: string, field: string, open: string }} event={SettingsEvent}>
+  <style>
+    .swatch-row { gap: 8 }
+  </style>
+
+  <Row class="swatch-row" key={field}>
+    <Swatch
+      color={rgb(color_named(s.colors, field))}
+      open={open == field}
+      on_open={OpenSwatch(field)}
+      on_change={(c: Color) -> SettingsEvent => SetColor(field, rgb_of_color(c))}
+      on_dismiss={CloseSwatch}
+    />
+    <Text>{label}</Text>
+  </Row>
+</component>
+
+<!-- ANSI color `k`'s swatch, unlabelled. -->
+<component name="ansi_field" props={{ s: Settings, k: i64, open: string }} event={SettingsEvent}>
+  <Swatch
+    color={rgb(s.colors.ansi[k])}
+    open={open == "ansi ${k}"}
+    on_open={OpenSwatch("ansi ${k}")}
+    on_change={(c: Color) -> SettingsEvent => SetAnsi(k, rgb_of_color(c))}
+    on_dismiss={CloseSwatch}
+    key="ansi {k}"
+  />
+</component>

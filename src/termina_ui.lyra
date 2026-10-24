@@ -45,6 +45,7 @@ import std.png.{ write_png }
 import settings.{
   load_settings,
   settings_path,
+  settings_to_json,
   font_families,
   family_for,
   fallback_fonts,
@@ -63,6 +64,7 @@ import face.{
   subscriptions,
   shortcuts,
   menus_of,
+  save_now,
   grid_of,
   color
 }
@@ -153,7 +155,8 @@ let windowed = (
     fonts.close()
     return (1, empty_term(theme, settings))
   }
-  let last = run(app, start, platform_, renderer, fonts)
+  var last = run(app, start, platform_, renderer, fonts)
+  save_now(last)
   gpu.close(platform_, renderer)
   for s in last.tabs { close_session(s) }
   fonts.close()
@@ -216,7 +219,8 @@ let scripted = (
       status = 1
     }
   }
-  let last = played.host.state
+  var last = played.host.state
+  save_now(last)
   for s in last.tabs { close_session(s) }
   sdl3.close(window.platform, played.renderer)
   played.fonts.close()
@@ -262,13 +266,15 @@ let started = (
     println("termina-ui: the shell could not start")
     return None
   }
-  Some(Term { term_of(
-    [s],
-    theme,
-    grid,
-    settings.line_spacing,
-    lookup("HOME") ?? ""
-  ) | mac: mac })
+  // The settings, which the Settings tab edits and keeps in their file.
+  Some(Term {
+    term_of([s], theme, grid, settings.line_spacing, lookup("HOME") ?? "") |
+    mac: mac,
+    settings: settings,
+    settings_file: settings_path(),
+    saved: settings_to_json(settings),
+    families: font_families(),
+  })
 }
 
 /// A window of no tabs, for a status returned before any opened: nothing is drawn in it, so

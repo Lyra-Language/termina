@@ -69,6 +69,9 @@ import term.{
   Paste,
 }
 import editor.{ position }
+import settings.{ Settings, FontFamily, defaults }
+import settings_page.{ SettingsEvent, settings_page }
+import ui.style.{ Style }
 
 /// The window: its tabs and each one's view, the one shown, the next tab's identity, the home
 /// directory (a tab's name for it), the theme and the grid's font, the painter's size, the
@@ -96,6 +99,22 @@ pub struct Term {
   button: i64 = -1,
   /// The last tab's screen as its program ended — what `termina-ui --print` prints.
   closed_screen: []string = [],
+  /// The user's settings, the file they are kept in (`""` for none: nothing is written) and
+  /// their text as last written, the font families on offer, and what is typed to save a
+  /// theme as.
+  settings: Settings = defaults(),
+  settings_file: string = "",
+  saved: string = "",
+  families: []FontFamily = [],
+  typed: string = "",
+  /// The Settings tab: open, shown, and the swatch whose picker is open (`""` for none).
+  settings_open: bool = false,
+  on_settings: bool = false,
+  swatch: string = "",
+  /// Saves asked for; only the last is carried out (`settings.lyra`).
+  saves: i64 = 0,
+  /// The families loaded into the window's fonts, by the name each was loaded as.
+  loaded: []string = [],
 }
 
 /// A tab's view: how far it is scrolled down, and whether it sticks to the bottom as output
@@ -132,6 +151,16 @@ pub data TermEvent =
   | ToggleMaximize
   /// What the window went through.
   | WindowChanged(WindowState)
+  /// The Settings tab's events; it shown, or closed.
+  | SettingsAsked(SettingsEvent)
+  | ShowSettings
+  | CloseSettings
+  /// A font file chosen in the system's dialog, or none.
+  | FontFileChosen(Maybe<string>)
+  /// A family's faces loaded under this name.
+  | FontsLoaded(string)
+  /// Save `n` due ([SettingsEvent]s ask one each).
+  | SaveDue(i64)
   /// The font measured again, at a new size.
   | FontMeasured(FontMetrics)
 
@@ -193,8 +222,19 @@ pub let view = pure (t: Term) -> Node<TermEvent> => {
     Some(ViewSized)
   ).takes_input(raw).keyed("term"))
   let bars = if t.mac { [tab_strip(t)] } else { [header_bar(t), tab_strip(t)] }
+  // The Settings tab in place of the terminal while it is shown; the terminals go on being
+  // read behind it.
+  let body = if t.on_settings {
+    expanded(settings_page(
+      t.settings,
+      t.families,
+      t.typed,
+      t.swatch
+    ).map(SettingsAsked).keyed("settings"))
+  } else { terminal }
+  // The window cleared to the theme's background, which `App.background` keeps as it opened.
   themed(chrome_theme(t.theme), chrome_sheet(t.theme), [
-    column([...bars, terminal]).aligned(MainStart, CrossStretch),
+    column([...bars, body]).aligned(MainStart, CrossStretch).with_style(Style { background: Some(color(t.theme.bg)) }),
   ])
 }
 
@@ -216,7 +256,7 @@ let caret_of = pure (t: Term) -> Rect => {
       }
     },
     None => Rect {
-      x: PAD + f32(s.shown.x) * g.cell_x,
+      x: INSET + f32(s.shown.x) * g.cell_x,
       y: f.rows.y_of(s.shown.scrollback_len() + s.shown.y),
       w: 1.0,
       h: g.cell_y,
@@ -317,6 +357,15 @@ pub let update = (t: Term, e: TermEvent) -> (Term, []Command<TermEvent>) => {
     Minimize => { commands = [WindowMinimize] },
     ToggleMaximize => { commands = [if n.maximized { WindowRestore } else { WindowMaximize }] },
     WindowChanged(w) => { n.maximized = w.maximized },
+    SettingsAsked(s) => { commands = settings_asked(n, s) },
+    ShowSettings => {
+      n.settings_open = true
+      n.on_settings = true
+    },
+    CloseSettings => { commands = settings_closed(n) },
+    FontFileChosen(path) => { commands = font_file_chosen(n, path) },
+    FontsLoaded(_) => {},
+    SaveDue(k) => save_due(n, k),
     FontMeasured(m) => { n.grid = grid_of(n.grid.font, m, n.spacing) },
   }
   settle(n)
@@ -328,7 +377,7 @@ pub let update = (t: Term, e: TermEvent) -> (Term, []Command<TermEvent>) => {
 let settle = (t: mut Term) -> void => {
   if t.tabs.len() == 0 || t.size.w <= 0.0 { return }
   let i = t.active
-  let cols = i64(((t.size.w - 2.0 * PAD) / t.grid.cell_x).floor())
+  let cols = i64(((t.size.w - 2.0 * INSET) / t.grid.cell_x).floor())
   let rows = i64(((t.size.h - 2.0 * PAD) / t.grid.cell_y).floor())
   t.tabs[i].fit(cols, rows)
   let f = layout_at(t, t.size)
@@ -351,15 +400,23 @@ let tab_asked = (t: mut Term, c: TabCommand) -> []Command<TermEvent> => match c 
     }
     [FocusKeyed("term")]
   },
-  CloseTab => if t.tabs.len() > 0 { close_tab(t, t.active) } else { [] },
+  // ⌘W on the Settings tab closes it, not the terminal behind it.
+  CloseTab => if t.on_settings { settings_closed(t) } else if t.tabs.len() > 0 { close_tab(t, t.active) } else { [] },
   ShowTab(i) => {
-    if i >= 0 && i < t.tabs.len() { t.active = i }
+    if i >= 0 && i < t.tabs.len() {
+      t.active = i
+      t.on_settings = false
+    }
     [FocusKeyed("term")]
   },
-  FontBigger => resized(t, t.grid.font.size + 1.0),
-  FontSmaller => resized(t, t.grid.font.size - 1.0),
-  FontDefault => resized(t, t.default_size),
-  OpenSettings => [],
+  FontBigger => font_stepped(t, 1.0),
+  FontSmaller => font_stepped(t, -1.0),
+  FontDefault => font_stepped(t, 0.0),
+  OpenSettings => {
+    t.settings_open = true
+    t.on_settings = true
+    []
+  },
   NoCommand => [],
 }
 
@@ -395,6 +452,14 @@ let edit_asked = (t: mut Term, a: EditAction) -> []Command<TermEvent> => {
       []
     },
   }
+}
+
+/// The Settings tab closed, the terminal shown again.
+let settings_closed = (t: mut Term) -> []Command<TermEvent> => {
+  t.settings_open = false
+  t.on_settings = false
+  t.swatch = ""
+  [FocusKeyed("term")]
 }
 
 /// Tab `i` closed, its program hung up on; the window with the last.

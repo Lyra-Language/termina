@@ -23,7 +23,7 @@ open build/Termina.app      # the same, as a Mac app
                             #    kept in ~/.config/termina/settings.json ($XDG_CONFIG_HOME)
 build/termina-ui            # Termina on lyra's `ui` instead of ImGui, beside it (below): the tab
                             #    bar, the menus (the Mac's own bar; elsewhere a header bar's ☰),
-                            #    no Settings yet; the same CMD [ARG…]
+                            #    the Settings tab; the same CMD [ARG…]
 build/termina-ui --header … # drawn as off a Mac on a Mac too — the header bar — for checks
 build/termina-ui --print CMD …   # and, when it ends, its screen printed
 build/termina-ui --script STEPS [--png FILE] [CMD …]   # played headless (with
@@ -131,6 +131,8 @@ of the program's.
 | `src/gui/modifiers.lyra` | the modifier keys as pressed — ImGui's macOS Ctrl/⌘ swap undone |
 | `src/gui/settings_window.lyra` | the Settings tab drawn: the markup rendered and its events carried out (`carry_out`) |
 | `src/face/app.lyra` | the window on `ui` (`Term`, `TermEvent`): the bars over the shown tab's painter taking raw input, each tab's PTY a `Readable`, the shortcuts, update |
+| `src/face/settings.lyra` | the Settings tab on `ui`: its events carried out on the window's settings — the theme, the font (a family loaded through `LoadFonts`), the file written a moment after the last change |
+| `src/settings_page.lui` | the Settings tab as `ui`-target markup; `settings_page.lyra` is generated from it (`settings_view.lui` is the ImGui app's) |
 | `src/face/window.lyra` | the chrome on `ui`: the tab bar, the header bar off a Mac, the menus as data (`menus_of` for the Mac's bar, `header_entries` for ☰), all in `ui`'s theme made from Termina's |
 | `src/face/paint.lyra` | a tab painted (`paint_tab`): the grid as `PaintCells`, the cards, the box, the command line and its menu, the scrollbar — from `session.frame_layout`, as `gui` draws it |
 | `src/face/input.lyra` | keys, typed text and the pointer as the painter hears them: to the command line at a prompt, else encoded for the program; the mouse selecting, editing or reported |
@@ -160,6 +162,20 @@ of the program's.
   the drawn menus' keys. Off a Mac, Edit's Undo and Redo show no key: Ctrl+Z is a running
   program's. The chrome is `themed` in a `ui` theme made from Termina's (`chrome_theme`,
   `chrome_sheet`): the tab colours, the completion menu's for a menu.
+- **termina-ui's Settings tab** is the last of the tab bar's, out of the tabs' order, shown in
+  place of the terminal (which goes on being read); ⌘W while it is shown closes it. A change
+  takes at once: the theme is rebuilt and told to every tab — the window's root takes its
+  background, `App.background` being fixed at the start — and the font is measured again; a
+  family not loaded yet is added under its own name (`family <name> <regular file>`) by
+  `LoadFonts` and the grid's `FontSpec` switched to it. The file is written
+  `SAVE_DELAY_MS` after the last change (a save a change, only the last carried out) and as
+  the window closes (`save_now`). Buttons and the chosen option take the text's colour
+  (`chrome_sheet`): a light theme's chosen row is light.
+- **termina-ui's sections stand `PAD` in from the window's edges**, the tab bar too: the
+  text is set `INSET` (`PAD + BOX_MARGIN`) in across, the cards and the box reaching
+  `BOX_MARGIN` out from it, and the box ends `PAD` above the window's foot. Every place a
+  column turns into an x, or back (the pointer, the caret), goes through `INSET`. The tabs
+  are rounded above only (`Style.corners`) and stand on the terminal.
 - **termina-ui takes the keyboard when its painter is first laid out** (`ViewSized` asks
   `FocusKeyed("term")`): `ui` focuses nothing by itself. **Text typed at a prompt is handed over
   without the modifiers**: SDL types nothing for a Ctrl or ⌘ chord, and the last key's may be
