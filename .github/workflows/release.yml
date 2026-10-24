@@ -120,6 +120,18 @@ jobs:
         working-directory: termina
         run: ./build.sh
 
+      # Ubuntu's global zshrc runs compinit, which stops before the first prompt to ask about
+      # a directory on fpath that others may write or another user owns — as the image's are —
+      # and the zsh checks see no prompt. The directories made root's and closed, as a
+      # machine's own are.
+      - name: Secure zsh's function directories (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          zsh -fc 'autoload -U compaudit; compaudit' 2>/dev/null | while IFS= read -r dir; do
+            sudo chown root:root "$dir" && sudo chmod go-w "$dir"
+          done
+          zsh -fc 'autoload -U compaudit; compaudit'
+
       - name: Check Termina
         working-directory: termina
         run: |
