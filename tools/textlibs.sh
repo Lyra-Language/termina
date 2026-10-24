@@ -81,11 +81,17 @@ fetch "https://github.com/harfbuzz/harfbuzz/releases/download/$HARFBUZZ_VERSION/
   "$WORK/harfbuzz-$HARFBUZZ_VERSION.tar.xz" "$HARFBUZZ_SHA256"
 tar -xJf "$WORK/harfbuzz-$HARFBUZZ_VERSION.tar.xz" -C "$WORK"
 readonly HB="$WORK/harfbuzz-$HARFBUZZ_VERSION/src"
-# FreeType's functions HarfBuzz's hb-ft asks for by feature macro: all in this FreeType.
+# FreeType's functions HarfBuzz's hb-ft asks for by feature macro: all in this FreeType. And
+# HAVE_PTHREAD, which only a Mac implies: without it HarfBuzz's lock is std::mutex, whose
+# libstdc++ `lock` throws — the one thing that needed the C++ runtime on Linux.
 "$CXX" -O2 -fPIC -std=c++11 -fno-exceptions -fno-rtti -fno-threadsafe-statics \
-  -DHAVE_FREETYPE=1 -DHAVE_FT_GET_VAR_BLEND_COORDINATES=1 -DHAVE_FT_SET_VAR_BLEND_COORDINATES=1 \
+  -DHAVE_PTHREAD=1 -DHAVE_FREETYPE=1 -DHAVE_FT_GET_VAR_BLEND_COORDINATES=1 -DHAVE_FT_SET_VAR_BLEND_COORDINATES=1 \
   -DHAVE_FT_DONE_MM_VAR=1 -DHAVE_FT_GET_TRANSFORM=1 \
   -I"$PREFIX/include/freetype2" -c "$HB/harfbuzz.cc" -o "$WORK/harfbuzz.o"
+# Refused here rather than at the program's link: a C program links no C++ runtime.
+if nm -u "$WORK/harfbuzz.o" | grep -E '_ZNSt|_ZSt|__cxa|__gxx|_Znw|_Zna|_ZdlPv|_ZdaPv' >&2; then
+  die "HarfBuzz needs the C++ runtime for the symbols above"
+fi
 rm -f "$PREFIX/lib/libharfbuzz.a"
 ar rcs "$PREFIX/lib/libharfbuzz.a" "$WORK/harfbuzz.o"
 cp "$HB"/hb.h "$HB"/hb-*.h "$PREFIX/include/harfbuzz/"
