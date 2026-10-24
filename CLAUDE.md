@@ -341,8 +341,9 @@ each tab a painter taking input raw, under `ui`'s tab bar, menus and Settings ta
   sees only whole lines), and arrives just before `B`.
 - **Return sends the command as a bracketed paste, then `\r`**, so the shell's line editor
   takes several lines as one command and echoes it into the transcript where the editor
-  was. The shell turns the mode on just *after* the `B` mark — a check that answers `B` at
-  once must wait for it (`check_shell`).
+  was. The shell turns the mode on just *after* the `B` mark, once zsh's `zle-line-init` has
+  read what was typed ahead — a check that answers `B` at once must wait for it
+  (`check_shell`, `check_completion`), or its key is read as typed ahead.
 - **The `A` mark is the start of `PS1` and `B` its end**, re-added at each prompt by a
   precmd hook that moves itself last (bash: the last of `PROMPT_COMMAND`), so a theme's own
   hook has built `PS1` first. `A` in `PS1`, not printed by the hook, falls where the prompt

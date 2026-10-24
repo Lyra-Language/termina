@@ -925,7 +925,10 @@ let check_completion = (shell: string) -> i64 => {
   var at_prompt = false
   var deadline = wall_clock_nanos() + 20000000000
   while answers.len() < asks.len() && wall_clock_nanos() < deadline {
-    if at_prompt && asked == answers.len() {
+    // After bracketed paste, as `check_shell` waits: zsh turns it on once its zle-line-init
+    // has read what was typed ahead, and a key sent at `B` alone, before that, would be read
+    // as typed ahead rather than run (as CI's x86_64 runner did).
+    if at_prompt && s.bracketed_paste && asked == answers.len() {
       let ask = asks[asked]
       match completion_request(i, ask, ask.len()) {
         Some(key) => {
