@@ -529,7 +529,7 @@ impl Screen {
       self.replies.push("\e[>1;1;0c")
     } else if seq.marker == ">" && plain && f == 'q' {
       // XTVERSION — its name and version.
-      self.replies.push("\eP>|Termina 0.1\e\\")
+      self.replies.push("\eP>|Termina 0.3.0\e\\")
     } else if seq.marker == "" && plain && f == 'n' && seq.param_or(0, 0) == 5 {
       // DSR — all is well.
       self.replies.push("\e[0n")

@@ -29,12 +29,12 @@ build/vttest                # parser, screen, editor, PTY, zsh and bash checks, 
                             #    window's logic; exit 1 on a failure
 ../lyra/build/lui src/settings_page.lui  # regenerate the Settings markup's module after
                             #    editing it (or `lui --watch src/*.lui`); build.sh refuses a stale one
-./package.sh 0.2.0          # after build.sh: build/release/Termina-0.2.0-macos-arm64.zip, or
-                            #    termina-0.2.0-linux-<arch>.tar.gz, SDL3 inside; with
-                            #    TERMINA_APPIMAGE=1 on Linux, Termina-0.2.0-linux-<arch>.AppImage
+./package.sh 0.3.0          # after build.sh: build/release/Termina-0.3.0-macos-arm64.zip, or
+                            #    termina-0.3.0-linux-<arch>.tar.gz, SDL3 inside; with
+                            #    TERMINA_APPIMAGE=1 on Linux, Termina-0.3.0-linux-<arch>.AppImage
 tools/textlibs.sh build/deps/text   # static FreeType and HarfBuzz, for a release's build
                             #    (PKG_CONFIG_PATH=build/deps/text/lib/pkgconfig:… ./build.sh)
-git tag v0.2.0 && git push origin v0.2.0   # a release: built, checked and published by
+git tag v0.3.0 && git push origin v0.3.0   # a release: built, checked and published by
                             #    .github/workflows/release.yml (macOS arm64, Linux x86_64
                             #    and arm64); Actions ▸ Release ▸ Run workflow is a dry run
 ```
