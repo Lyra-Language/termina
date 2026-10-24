@@ -81,7 +81,7 @@ pub let chrome_theme = pure (theme: Theme) -> UiTheme => ui_theme_of(Palette {
 
 /// The chrome's own rules: the tabs in the theme's three tab colours, a button, a chosen menu
 /// item and option in the text's colour on the chosen row's (a light theme's chosen row is
-/// light), and the header bar's quiet buttons.
+/// light), a ticked box filled with the text's colour, and the header bar's quiet buttons.
 pub let chrome_sheet = pure (theme: Theme) -> Sheet => {
   let fg = color(theme.fg)
   let clear = Color { r: 0, g: 0, b: 0, a: 0 }
@@ -109,6 +109,9 @@ pub let chrome_sheet = pure (theme: Theme) -> Sheet => {
       // Text on the chosen row's colour is the text's colour: a light theme's chosen row is
       // light, and ui's white on it unreadable.
       Rule { selector: "Button, Select::option:hover", style: Style { color: Some(fg) } },
+      // A ticked box filled with the text's colour: the chosen row's, the accent, is all but
+      // the background's in a dark theme, and a ticked box looked like an empty one.
+      Rule { selector: "Checkbox::fill", style: Style { background: Some(fg) } },
       Rule {
         selector: "MenuItem:hover, MenuItem:focus-visible, MenuItem:open",
         style: Style { background: Some(color(theme.menu_chosen)), color: Some(fg) },

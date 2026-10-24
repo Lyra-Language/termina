@@ -28,6 +28,7 @@ import std.env.{ lookup }
 import std.io.{ create_dir_all, write_file, remove_file, is_executable }
 import std.path
 import desktop.{ desktop_entry, exec_quoted, APP_ID }
+import settings.{ Settings, WindowPlace, defaults, settings_to_json, settings_from_json }
 import vt.{
   runes_of,
   Spot,
@@ -69,6 +70,7 @@ let main = () -> u8 => {
   var failed = 0
   failed += check_parser()
   failed += check_desktop_entry()
+  failed += check_window_place()
   failed += check_screen()
   failed += check_style()
   failed += check_modes()
@@ -1149,6 +1151,61 @@ let describe_marks = (s: mut Screen) -> string => [m in s.take_marks() | match m
   CommandEnd(status, _) => "D(${status})",
   Cleared(_) => "cleared",
 }].join(" ")
+
+// The window's place in the settings file (Settings ▸ Window): written and read back whole; a
+// place the system never said (Wayland) left out and read as none; a size no window could be,
+// or none, read as no place; and the option off kept.
+let check_window_place = () -> i64 => {
+  var failed = 0
+  let placed = Settings { defaults() | window: Some(WindowPlace {
+    x: 120.0,
+    y: -40.0,
+    placed: true,
+    width: 960.0,
+    height: 600.0,
+    maximized: true
+  }) }
+  failed += check(
+    "window place: kept whole",
+    describe_place(settings_from_json(settings_to_json(placed))),
+    "on 120,-40 960×600 maximized"
+  )
+  let unplaced = Settings { defaults() | window: Some(WindowPlace {
+    width: 800.0,
+    height: 500.0
+  }) }
+  failed += check(
+    "window place: a size alone",
+    describe_place(settings_from_json(settings_to_json(unplaced))),
+    "on nowhere 800×500"
+  )
+  failed += check(
+    "window place: a size no window could be",
+    describe_place(settings_from_json("{\"window\": {\"x\": 1, \"y\": 2, \"width\": 5, \"height\": 600}}")),
+    "on none"
+  )
+  failed += check(
+    "window place: none written",
+    describe_place(settings_from_json("{}")),
+    "on none"
+  )
+  let off = Settings { defaults() | remember_window: false }
+  failed += check(
+    "window place: the option off",
+    describe_place(settings_from_json(settings_to_json(off))),
+    "off none"
+  )
+  failed
+}
+
+/// The option and the place, as a check compares them.
+let describe_place = pure (s: Settings) -> string => {
+  let option = if s.remember_window { "on" } else { "off" }
+  match s.window {
+    Some(w) => "${option} ${if w.placed { "${w.x},${w.y}" } else { "nowhere" }} ${w.width}×${w.height}${if w.maximized { " maximized" } else { "" }}",
+    None => "${option} none",
+  }
+}
 
 // The desktop entry an AppImage installs: the id the window goes by in its file name, its
 // icon and its class; the AppImage's path in `Exec`, quoted as the Desktop Entry

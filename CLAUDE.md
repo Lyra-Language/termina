@@ -171,6 +171,13 @@ of the program's.
   `SAVE_DELAY_MS` after the last change (a save a change, only the last carried out) and as
   the window closes (`save_now`). Buttons and the chosen option take the text's colour
   (`chrome_sheet`): a light theme's chosen row is light.
+- **termina-ui reopens the window where it was last closed** (Settings ▸ Window,
+  `Settings.remember_window`, on by default): as the window closes, `place_of` keeps its place,
+  size and whether it is maximized in the settings file (`window`) — while maximized or
+  minimized, the place and size from before, since the system no longer says them — and it
+  opens at that size, moved there if a display shows the place, maximized again. No place on
+  Wayland, which never tells a window where it is: the size alone. A script's run neither
+  restores nor records it.
 - **termina-ui's sections stand `PAD` in from the window's edges**, the tab bar too: the
   text is set `INSET` (`PAD + BOX_MARGIN`) in across, the cards and the box reaching
   `BOX_MARGIN` out from it, and the box ends `PAD` above the window's foot. Every place a

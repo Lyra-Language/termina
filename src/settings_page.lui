@@ -35,6 +35,8 @@
     | SaveThemeAs
     | DeleteSavedTheme
     | ToggleBoldBright
+    /// Whether the window opens where it was last closed.
+    | ToggleRememberWindow
     | ResetSettings
     /// A swatch's picker opened, by its color's field (`ansi 3` for an ANSI color), or closed.
     | OpenSwatch(string)
@@ -219,6 +221,11 @@
           <Checkbox checked={s.bold_is_bright} on_toggle={ToggleBoldBright}>Draw bold text in bright colors</Checkbox>
         </Column>
       </Flex>
+    </Column>
+
+    <Column class="section">
+      <Text class="heading">Window</Text>
+      <Checkbox checked={s.remember_window} on_toggle={ToggleRememberWindow}>Open the window where it was last closed, at its size</Checkbox>
     </Column>
 
     <Row>

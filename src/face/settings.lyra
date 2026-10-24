@@ -35,6 +35,7 @@ import settings_page.{
   SaveThemeAs,
   DeleteSavedTheme,
   ToggleBoldBright,
+  ToggleRememberWindow,
   ResetSettings,
   OpenSwatch,
   CloseSwatch,
@@ -93,6 +94,8 @@ pub let settings_asked = (t: mut Term, e: SettingsEvent) -> []Command<TermEvent>
     },
     DeleteSavedTheme => delete_theme(t.settings, t.settings.theme_name),
     ToggleBoldBright => { t.settings.bold_is_bright = !t.settings.bold_is_bright },
+    // Kept as it closes: the place itself is taken then (termina_ui.lyra's `place_of`).
+    ToggleRememberWindow => { t.settings.remember_window = !t.settings.remember_window },
     ResetSettings => { t.settings = defaults() },
     OpenSwatch(key) => {
       t.swatch = key

@@ -39,6 +39,22 @@ pub struct Settings {
   /// The themes the user saved, in the order saved.
   themes: []SavedTheme,
   bold_is_bright: bool,
+  /// Whether the window opens where it was last closed, at its size, maximized if it was; and
+  /// where that was (`None` before it was ever closed so).
+  remember_window: bool = true,
+  window: Maybe<WindowPlace> = None,
+}
+
+/// Where the window was: its top-left corner on the screens (in the system's coordinates; none
+/// where the system does not say, as Wayland does not), its size in points — the size it had
+/// before it was maximized, while it is — and whether it was maximized.
+pub struct WindowPlace {
+  x: f32 = 0.0,
+  y: f32 = 0.0,
+  placed: bool = false,
+  width: f32,
+  height: f32,
+  maximized: bool = false,
 }
 
 /// A theme the user saved: its name, none of Termina's own, and its colors.
@@ -392,6 +408,16 @@ pub let settings_to_json = pure (s: Settings) -> string => JsonObject([
     member("name", JsonString(t.name)),
     member("colors", colors_to_json(t.colors)),
   ])])),
+  member("remember_window", JsonBool(s.remember_window)),
+  ...(match s.window {
+    Some(w) => [member("window", JsonObject([
+      ...(if w.placed { [member("x", JsonNumber(f64(w.x))), member("y", JsonNumber(f64(w.y)))] } else { [] }),
+      member("width", JsonNumber(f64(w.width))),
+      member("height", JsonNumber(f64(w.height))),
+      member("maximized", JsonBool(w.maximized)),
+    ]))],
+    None => [],
+  }),
 ]).to_json_pretty()
 
 /// Settings from the file's text: each setting that is there and makes sense, the default
@@ -432,7 +458,28 @@ pub let settings_from_json = pure (text: string) -> Settings => {
     colors: colors_from_json(colors_in(doc), base),
     themes: themes,
     bold_is_bright: (doc.field("bold_is_bright") ?? JsonBool(d.bold_is_bright)).as_bool() ?? d.bold_is_bright,
+    remember_window: (doc.field("remember_window") ?? JsonBool(d.remember_window)).as_bool() ?? d.remember_window,
+    window: window_from_json(doc.field("window")),
   }
+}
+
+/// The window's place from the file: a size it must have, a place and maximized where
+/// written; `None` for no size, or one no window could be.
+let window_from_json = pure (w: Maybe<JsonValue>) -> Maybe<WindowPlace> => {
+  let Some(v) = w else { return None }
+  let Some(width) = number_field(v, "width") else { return None }
+  let Some(height) = number_field(v, "height") else { return None }
+  if width < 100.0 || height < 100.0 || width > 20000.0 || height > 20000.0 { return None }
+  let x = number_field(v, "x")
+  let y = number_field(v, "y")
+  Some(WindowPlace {
+    x: f32(x ?? 0.0),
+    y: f32(y ?? 0.0),
+    placed: x.is_some() && y.is_some(),
+    width: f32(width),
+    height: f32(height),
+    maximized: (v.field("maximized") ?? JsonBool(false)).as_bool() ?? false,
+  })
 }
 
 /// A theme's colors as the file holds them, `#rrggbb` each.

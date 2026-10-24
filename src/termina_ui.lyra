@@ -34,6 +34,7 @@ import ui.app.{
 }
 import ui.script.{ ScriptPlatform, timed_platform, parse_steps, Step, Waited }
 import ui.draw.{ Point, Size }
+import ui.backend.{ Platform, ToMaximized }
 import ui.text.{ Fonts, FontSpec, FontMetrics, fonts_new, glyph_atlas }
 import ui.style.{ OverflowVisible }
 import ui.layout.{ paint }
@@ -43,6 +44,7 @@ import std.env.{ lookup, program_args }
 import std.io.{ write_bytes, sleep_ms }
 import std.png.{ write_png }
 import settings.{
+  WindowPlace,
   load_settings,
   settings_path,
   settings_to_json,
@@ -140,7 +142,13 @@ let windowed = (
   mac: bool
 ) -> (u8, Term) => {
   var fonts = given
-  let window = match gpu.open("Termina", WIDTH, HEIGHT) {
+  // Where it was last closed, if the settings remember it: its size, its place, maximized.
+  let place = if settings.remember_window { settings.window } else { None }
+  let size = match place {
+    Some(p) => Size { w: p.width, h: p.height },
+    None => Size { w: WIDTH, h: HEIGHT },
+  }
+  let window = match gpu.open("Termina", size.w, size.h) {
     Ok(w) => w,
     Err(why) => {
       println("termina-ui: ${why}")
@@ -150,17 +158,54 @@ let windowed = (
   }
   var platform_ = window.platform
   var renderer = window.renderer
+  if let Some(p) = place {
+    if p.placed { platform_.set_window_position(Point { x: p.x, y: p.y }) }
+    if p.maximized { platform_.change_window(ToMaximized) }
+  }
   let Some(start) = started(args, settings, theme, fonts, platform_.scale(), mac) else {
     gpu.close(platform_, renderer)
     fonts.close()
     return (1, empty_term(theme, settings))
   }
   var last = run(app, start, platform_, renderer, fonts)
+  if last.settings.remember_window { last.settings.window = Some(place_of(
+    platform_,
+    last.settings.window
+  )) }
   save_now(last)
   gpu.close(platform_, renderer)
   for s in last.tabs { close_session(s) }
   fonts.close()
   (0, last)
+}
+
+/// Where the window is as it closes: its place and size — or, maximized or minimized, the place
+/// and size it had before (`before`'s, the size the system no longer says), and that it was
+/// maximized.
+let place_of<p> where p: Platform = (
+  platform: p,
+  before: Maybe<WindowPlace>
+) -> WindowPlace => {
+  let state = platform.window_state()
+  let size = platform.window_size()
+  let at = platform.window_position()
+  if state.maximized || state.minimized {
+    let kept = before ?? WindowPlace { width: WIDTH, height: HEIGHT }
+    return WindowPlace { kept | maximized: state.maximized }
+  }
+  WindowPlace {
+    x: match at {
+      Some(pt) => pt.x,
+      None => 0.0,
+    },
+    y: match at {
+      Some(pt) => pt.y,
+      None => 0.0,
+    },
+    placed: at.is_some(),
+    width: size.w,
+    height: size.h,
+  }
 }
 
 /// `steps` played headless through SDL's 2D renderer, the last frame written to `png`: its
