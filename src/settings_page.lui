@@ -139,6 +139,7 @@
     TextInput { width: 220 }
     .groups { gap: 32; row-gap: 20 }
     .group { gap: 10 }
+    .swatch-row { gap: 8 }
     .ansi { gap: 6 }
   </style>
 
@@ -228,10 +229,6 @@
 
 <!-- A color's swatch, its label to its right. -->
 <component name="color_field" props={{ s: Settings, label: string, field: string, open: string }} event={SettingsEvent}>
-  <style>
-    .swatch-row { gap: 8 }
-  </style>
-
   <Row class="swatch-row" key={field}>
     <Swatch
       color={rgb(color_named(s.colors, field))}

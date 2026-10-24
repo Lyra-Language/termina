@@ -128,83 +128,83 @@ const COLOR_GROUPS = [
 /// From settings_page.lui, line 131.
 pub let settings_page = pure (s: Settings, families: []FontFamily, typed: string, open: string) -> Node<SettingsEvent> =>
   component_of("settings_page", settings_page_sheet, [
-    column([ // settings_page.lui:145
-      column([ // settings_page.lui:146
-        text("Font").with_class("heading"), // settings_page.lui:147
-        grid([ // settings_page.lui:148
-          text("Family"), // settings_page.lui:149
-          row([ // settings_page.lui:150
-            select(SelectSpec { options: family_options(s, families), selected: family_shown(s, families), on_change: (k: i64) -> SettingsEvent => family_picked(s, families, k), separators: if s.font_file != "" { [1] } else { [] } }), // settings_page.lui:151
-            button("Other Font File…", ChooseFontFile).keyed("other font"), // settings_page.lui:157
+    column([ // settings_page.lui:146
+      column([ // settings_page.lui:147
+        text("Font").with_class("heading"), // settings_page.lui:148
+        grid([ // settings_page.lui:149
+          text("Family"), // settings_page.lui:150
+          row([ // settings_page.lui:151
+            select(SelectSpec { options: family_options(s, families), selected: family_shown(s, families), on_change: (k: i64) -> SettingsEvent => family_picked(s, families, k), separators: if s.font_file != "" { [1] } else { [] } }), // settings_page.lui:152
+            button("Other Font File…", ChooseFontFile).keyed("other font"), // settings_page.lui:158
           ]).with_class("field"),
-          text("Size"), // settings_page.lui:159
-          row([ // settings_page.lui:160
-            slider(SliderSpec { value: s.font_size, min: FONT_SIZE_RANGE.0, max: FONT_SIZE_RANGE.1, step: 1.0, on_change: (value: f32) -> SettingsEvent => SetFontSize(value) }).keyed("size"), // settings_page.lui:161
-            text("${points(s.font_size)}"), // settings_page.lui:162
+          text("Size"), // settings_page.lui:160
+          row([ // settings_page.lui:161
+            slider(SliderSpec { value: s.font_size, min: FONT_SIZE_RANGE.0, max: FONT_SIZE_RANGE.1, step: 1.0, on_change: (value: f32) -> SettingsEvent => SetFontSize(value) }).keyed("size"), // settings_page.lui:162
+            text("${points(s.font_size)}"), // settings_page.lui:163
           ]).with_class("field"),
-          text("Line spacing"), // settings_page.lui:164
-          row([ // settings_page.lui:165
-            slider(SliderSpec { value: s.line_spacing, min: LINE_SPACING_RANGE.0, max: LINE_SPACING_RANGE.1, step: 0.05, on_change: (value: f32) -> SettingsEvent => SetLineSpacing(value) }).keyed("spacing"), // settings_page.lui:166
-            text("${spacing_text(s.line_spacing)}"), // settings_page.lui:167
+          text("Line spacing"), // settings_page.lui:165
+          row([ // settings_page.lui:166
+            slider(SliderSpec { value: s.line_spacing, min: LINE_SPACING_RANGE.0, max: LINE_SPACING_RANGE.1, step: 0.05, on_change: (value: f32) -> SettingsEvent => SetLineSpacing(value) }).keyed("spacing"), // settings_page.lui:167
+            text("${spacing_text(s.line_spacing)}"), // settings_page.lui:168
           ]).with_class("field"),
         ]).with_class("form"),
       ]).with_class("section"),
-      column([ // settings_page.lui:172
-        text("Colors").with_class("heading"), // settings_page.lui:173
-        grid([ // settings_page.lui:174
-          text("Theme"), // settings_page.lui:175
-          row([ // settings_page.lui:176
-            select(SelectSpec { options: theme_options(s), selected: theme_shown(s), on_change: (k: i64) -> SettingsEvent => theme_picked(s, k), separators: theme_rules(s) }), // settings_page.lui:177
+      column([ // settings_page.lui:173
+        text("Colors").with_class("heading"), // settings_page.lui:174
+        grid([ // settings_page.lui:175
+          text("Theme"), // settings_page.lui:176
+          row([ // settings_page.lui:177
+            select(SelectSpec { options: theme_options(s), selected: theme_shown(s), on_change: (k: i64) -> SettingsEvent => theme_picked(s, k), separators: theme_rules(s) }), // settings_page.lui:178
           ]).with_class("field"),
-          text("Theme name"), // settings_page.lui:184
-          row([ // settings_page.lui:185
-            text_input(FieldSpec { value: typed, placeholder: "Theme name", on_edit: (value: string) -> SettingsEvent => NameTheme(value) }).keyed("theme name"), // settings_page.lui:186
-            button("Save Theme As…", SaveThemeAs).disabled_if(!can_save_as(typed)).keyed("save theme"), // settings_page.lui:187
-            ...(if is_saved(s) { // settings_page.lui:188
+          text("Theme name"), // settings_page.lui:185
+          row([ // settings_page.lui:186
+            text_input(FieldSpec { value: typed, placeholder: "Theme name", on_edit: (value: string) -> SettingsEvent => NameTheme(value) }).keyed("theme name"), // settings_page.lui:187
+            button("Save Theme As…", SaveThemeAs).disabled_if(!can_save_as(typed)).keyed("save theme"), // settings_page.lui:188
+            ...(if is_saved(s) { // settings_page.lui:189
               [
-                button("Delete", DeleteSavedTheme).keyed("delete theme"), // settings_page.lui:189
+                button("Delete", DeleteSavedTheme).keyed("delete theme"), // settings_page.lui:190
               ]
             } else {
               []
             }),
           ]).with_class("field"),
         ]).with_class("form"),
-        flex([ // settings_page.lui:197
-          ...[g in COLOR_GROUPS | column([ // settings_page.lui:198
-              text("${g.heading}").with_class("heading"), // settings_page.lui:200
-              ...[c in g.colors | color_field(s, c.0, c.1, open)], // settings_page.lui:201
+        flex([ // settings_page.lui:198
+          ...[g in COLOR_GROUPS | column([ // settings_page.lui:199
+              text("${g.heading}").with_class("heading"), // settings_page.lui:201
+              ...[c in g.colors | color_field(s, c.0, c.1, open)], // settings_page.lui:202
             ]).with_class("group")],
-          column([ // settings_page.lui:206
-            text("ANSI colors").with_class("heading"), // settings_page.lui:207
-            row([ // settings_page.lui:208
-              ...[k in 0..<8 | ansi_field(s, k, open)], // settings_page.lui:209
+          column([ // settings_page.lui:207
+            text("ANSI colors").with_class("heading"), // settings_page.lui:208
+            row([ // settings_page.lui:209
+              ...[k in 0..<8 | ansi_field(s, k, open)], // settings_page.lui:210
             ]).with_class("ansi"),
-            row([ // settings_page.lui:213
-              ...[k in 8..<16 | ansi_field(s, k, open)], // settings_page.lui:214
+            row([ // settings_page.lui:214
+              ...[k in 8..<16 | ansi_field(s, k, open)], // settings_page.lui:215
             ]).with_class("ansi"),
-            checkbox("Draw bold text in bright colors", s.bold_is_bright, ToggleBoldBright), // settings_page.lui:218
+            checkbox("Draw bold text in bright colors", s.bold_is_bright, ToggleBoldBright), // settings_page.lui:219
           ]).with_class("group"),
         ]).with_style(Style { flex_wrap: Some(Wrap) }).with_class("groups"),
       ]).with_class("section"),
-      row([ // settings_page.lui:223
-        button("Reset to Defaults", ResetSettings).keyed("reset"), // settings_page.lui:224
+      row([ // settings_page.lui:224
+        button("Reset to Defaults", ResetSettings).keyed("reset"), // settings_page.lui:225
       ]),
     ]).aligned(MainStart, CrossStretch).with_class("page"),
   ])
 
-/// From settings_page.lui, line 230.
+/// From settings_page.lui, line 231.
 pub let color_field = pure (s: Settings, label: string, field: string, open: string) -> Node<SettingsEvent> =>
-  component_of("color_field", color_field_sheet, [
-    row([ // settings_page.lui:235
-      swatch(rgb(color_named(s.colors, field)), open == field, OpenSwatch(field), (c: Color) -> SettingsEvent => SetColor(field, rgb_of_color(c)), CloseSwatch), // settings_page.lui:236
-      text("${label}"), // settings_page.lui:243
+  component("color_field", Sheet {}, [
+    row([ // settings_page.lui:232
+      swatch(rgb(color_named(s.colors, field)), open == field, OpenSwatch(field), (c: Color) -> SettingsEvent => SetColor(field, rgb_of_color(c)), CloseSwatch), // settings_page.lui:233
+      text("${label}"), // settings_page.lui:240
     ]).with_class("swatch-row").keyed(field),
   ])
 
-/// From settings_page.lui, line 248.
+/// From settings_page.lui, line 245.
 pub let ansi_field = pure (s: Settings, k: i64, open: string) -> Node<SettingsEvent> =>
   component("ansi_field", Sheet {}, [
-    swatch(rgb(s.colors.ansi[k]), open == "ansi ${k}", OpenSwatch("ansi ${k}"), (c: Color) -> SettingsEvent => SetAnsi(k, rgb_of_color(c)), CloseSwatch).keyed("ansi ${k}"), // settings_page.lui:249
+    swatch(rgb(s.colors.ansi[k]), open == "ansi ${k}", OpenSwatch("ansi ${k}"), (c: Color) -> SettingsEvent => SetAnsi(k, rgb_of_color(c)), CloseSwatch).keyed("ansi ${k}"), // settings_page.lui:246
   ])
 
 let settings_page_sheet = pure (t: Theme) -> Sheet => Sheet { // settings_page.lui:132
@@ -218,12 +218,7 @@ let settings_page_sheet = pure (t: Theme) -> Sheet => Sheet { // settings_page.l
     Rule { selector: "TextInput", style: Style { width: Some(220.0) } }, // settings_page.lui:139
     Rule { selector: ".groups", style: Style { gap: Some(32.0), row_gap: Some(20.0) } }, // settings_page.lui:140
     Rule { selector: ".group", style: Style { gap: Some(10.0) } }, // settings_page.lui:141
-    Rule { selector: ".ansi", style: Style { gap: Some(6.0) } }, // settings_page.lui:142
-  ],
-}
-
-let color_field_sheet = pure (_: Theme) -> Sheet => Sheet { // settings_page.lui:231
-  rules: [
-    Rule { selector: ".swatch-row", style: Style { gap: Some(8.0) } }, // settings_page.lui:232
+    Rule { selector: ".swatch-row", style: Style { gap: Some(8.0) } }, // settings_page.lui:142
+    Rule { selector: ".ansi", style: Style { gap: Some(6.0) } }, // settings_page.lui:143
   ],
 }
