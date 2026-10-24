@@ -549,13 +549,12 @@ let check_pty = () -> i64 => {
   var p = parser()
   var s = screen(20, 4)
   var going = true
-  var spins = 0
-  while going && spins < 2000000 {
+  let deadline = wall_clock_nanos() + 10000000000
+  while going && wall_clock_nanos() < deadline {
     match pty.read() {
       None => { going = false },
       Some(bytes) => {
         if bytes.len() > 0 { s.apply(p.feed(bytes)) }
-        spins += 1
       },
     }
   }
@@ -590,13 +589,12 @@ let check_typing = () -> i64 => {
   var p = parser()
   var s = screen(20, 4)
   let wrote = pty.write("héllo\r")
-  var spins = 0
-  while line_text(s.line(1)).trim() != "héllo" && spins < 2000000 {
+  var deadline = wall_clock_nanos() + 10000000000
+  while line_text(s.line(1)).trim() != "héllo" && wall_clock_nanos() < deadline {
     match pty.read() {
-      None => { spins = 2000000 },
+      None => { deadline = 0 },
       Some(bytes) => {
         if bytes.len() > 0 { s.apply(p.feed(bytes)) }
-        spins += 1
       },
     }
   }
@@ -790,9 +788,9 @@ let check_shell = (shell: string) -> i64 => {
   var from = (-1, -1)
   var a_at = (-1, -1)
   var b_line = -1
-  var spins = 0
+  let deadline = wall_clock_nanos() + 20000000000
   var done = false
-  while !done && spins < 3000000 {
+  while !done && wall_clock_nanos() < deadline {
     // The shell draws the prompt (and its mark) a moment before it turns bracketed paste on; a
     // person's Return comes long after both, and this waits for the second as they do.
     if at_prompt && !sent && s.bracketed_paste {
@@ -821,7 +819,6 @@ let check_shell = (shell: string) -> i64 => {
             _ => {},
           }
         }
-        spins += 1
       },
     }
   }
@@ -926,8 +923,8 @@ let check_completion = (shell: string) -> i64 => {
   var answers: []string = []
   var asked = 0
   var at_prompt = false
-  var spins = 0
-  while answers.len() < asks.len() && spins < 5000000 {
+  var deadline = wall_clock_nanos() + 20000000000
+  while answers.len() < asks.len() && wall_clock_nanos() < deadline {
     if at_prompt && asked == answers.len() {
       let ask = asks[asked]
       match completion_request(i, ask, ask.len()) {
@@ -939,7 +936,7 @@ let check_completion = (shell: string) -> i64 => {
       asked += 1
     }
     match pty.read() {
-      None => { spins = 5000000 },
+      None => { deadline = 0 },
       Some(bytes) => {
         if bytes.len() > 0 { s.apply(p.feed(bytes)) }
         for m in s.take_marks() {
@@ -951,7 +948,6 @@ let check_completion = (shell: string) -> i64 => {
         for l in s.take_completions() {
           answers.push([c in l | "${c.prefix}${c.insert}${c.suffix}"].join(","))
         }
-        spins += 1
       },
     }
   }
@@ -996,8 +992,8 @@ let check_typed_ahead = (shell: string) -> i64 => {
   var prompts = 0
   var sent = false
   var reports: []string = []
-  var spins = 0
-  while prompts < 2 && spins < 5000000 {
+  var deadline = wall_clock_nanos() + 20000000000
+  while prompts < 2 && wall_clock_nanos() < deadline {
     if prompts == 1 && !sent && s.bracketed_paste {
       // The command, then keys typed while it runs.
       let _ = pty.write(submission("sleep 1", true))
@@ -1005,7 +1001,7 @@ let check_typed_ahead = (shell: string) -> i64 => {
       sent = true
     }
     match pty.read() {
-      None => { spins = 5000000 },
+      None => { deadline = 0 },
       Some(bytes) => {
         if bytes.len() > 0 { s.apply(p.feed(bytes)) }
         for m in s.take_marks() {
@@ -1015,7 +1011,6 @@ let check_typed_ahead = (shell: string) -> i64 => {
           }
         }
         for t in s.take_typed_ahead() { reports.push(t) }
-        spins += 1
       },
     }
   }

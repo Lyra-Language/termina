@@ -41,11 +41,19 @@ check() {
 check "a program's screen" "$(run --print printf 'hello\n')" "termina: 1 lines
 hello"
 
-check "a line to cat, and Ctrl+D" \
-  "$(run --print --script "wait:500 'abc' Enter wait:300 Ctrl+d wait:500" cat)" "termina: 3 lines
+# The end of input echoed as `^D` by a Mac's terminal driver; Linux's echoes nothing.
+if [ "$(uname -s)" = Darwin ]; then
+  eof="termina: 3 lines
 abc
 abc
 ^D"
+else
+  eof="termina: 2 lines
+abc
+abc"
+fi
+check "a line to cat, and Ctrl+D" \
+  "$(run --print --script "wait:500 'abc' Enter wait:300 Ctrl+d wait:500" cat)" "$eof"
 
 check "Ctrl+C ends a program" "$(run --print --script "wait:300 Ctrl+c wait:500" sleep 30)" "termina: 1 lines
 ^C"
