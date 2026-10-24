@@ -12,6 +12,8 @@
 //                                     #   2D renderer, `ui.script`'s steps — a `wait:N` taking N
 //                                     #   real milliseconds, for the shell — and the last frame
 //                                     #   written to FILE
+//     build/termina-ui --header …     # the window as off a Mac, on a Mac too: the header bar,
+//                                     #   its ☰ the menus, no system frame — for checks
 //
 // Termina's flags come before the command, whose own are its: `std.collections.parse_args`
 // would take `ls -la`'s `-la` for one of Termina's.
@@ -19,7 +21,17 @@
 import ui.gpu
 import ui.sdl3
 import ui.sdl3.{ SdlRenderer, capture }
-import ui.app.{ App, Running, run, running, step_running, Shortcuts }
+import ui.app.{
+  App,
+  Running,
+  run,
+  running,
+  step_running,
+  Shortcuts,
+  Menus,
+  DrawnTitleBar,
+  SystemTitleBar
+}
 import ui.script.{ ScriptPlatform, timed_platform, parse_steps, Step, Waited }
 import ui.draw.{ Point, Size }
 import ui.text.{ Fonts, FontSpec, FontMetrics, fonts_new, glyph_atlas }
@@ -50,6 +62,7 @@ import face.{
   update,
   subscriptions,
   shortcuts,
+  menus_of,
   grid_of,
   color
 }
@@ -64,18 +77,19 @@ const SLICE_MS: i64 = 10
 let main = () -> u8 => {
   var args = program_args().slice(1, program_args().len())
   var printing = false
+  var header = false
   var script: Maybe<string> = None
   var png: Maybe<string> = None
   while args.len() > 0 && args[0].starts_with("--") {
     let flag = args[0]
-    if flag == "--print" {
-      printing = true
+    if flag == "--print" || flag == "--header" {
+      if flag == "--print" { printing = true } else { header = true }
       args = args.slice(1, args.len())
     } else if (flag == "--script" || flag == "--png") && args.len() > 1 {
       if flag == "--script" { script = Some(args[1]) } else { png = Some(args[1]) }
       args = args.slice(2, args.len())
     } else {
-      println("termina-ui: ${flag}? (--print, --script STEPS, --png FILE)")
+      println("termina-ui: ${flag}? (--print, --header, --script STEPS, --png FILE)")
       return 2
     }
   }
@@ -92,6 +106,9 @@ let main = () -> u8 => {
     let family = "fallback ${k}"
     if fonts.add(family, path) { fonts.add_fallback(family) }
   }
+  // On a Mac the menus are the system's bar, and the title bar the system's; elsewhere the
+  // window has a header bar of Termina's (face/window.lyra), its ☰ the menus.
+  let mac = platform() == "macOS" && !header
   let app = App {
     view: view,
     update: update,
@@ -99,10 +116,12 @@ let main = () -> u8 => {
     background: color(theme.bg),
     window_overflow: OverflowVisible,
     shortcuts: [Shortcuts { of: shortcuts }],
+    menus: if mac { [Menus { of: menus_of }] } else { [] },
+    title_bar: if mac { SystemTitleBar } else { DrawnTitleBar },
   }
   let status = match script {
-    Some(steps) => scripted(app, steps, png, args, settings, theme, fonts),
-    None => windowed(app, args, settings, theme, fonts),
+    Some(steps) => scripted(app, steps, png, args, settings, theme, fonts, mac),
+    None => windowed(app, args, settings, theme, fonts, mac),
   }
   if status.0 != 0 { return status.0 }
   if printing { print_last(status.1) }
@@ -115,7 +134,8 @@ let windowed = (
   args: []string,
   settings: Settings,
   theme: Theme,
-  given: Fonts
+  given: Fonts,
+  mac: bool
 ) -> (u8, Term) => {
   var fonts = given
   let window = match gpu.open("Termina", WIDTH, HEIGHT) {
@@ -128,7 +148,7 @@ let windowed = (
   }
   var platform_ = window.platform
   var renderer = window.renderer
-  let Some(start) = started(args, settings, theme, fonts, platform_.scale()) else {
+  let Some(start) = started(args, settings, theme, fonts, platform_.scale(), mac) else {
     gpu.close(platform_, renderer)
     fonts.close()
     return (1, empty_term(theme, settings))
@@ -149,7 +169,8 @@ let scripted = (
   args: []string,
   settings: Settings,
   theme: Theme,
-  given: Fonts
+  given: Fonts,
+  mac: bool
 ) -> (u8, Term) => {
   var fonts = given
   let parsed = match parse_steps(steps) {
@@ -169,7 +190,7 @@ let scripted = (
     },
   }
   var renderer = window.renderer
-  let Some(start) = started(args, settings, theme, fonts, 1.0) else {
+  let Some(start) = started(args, settings, theme, fonts, 1.0, mac) else {
     sdl3.close(window.platform, renderer)
     fonts.close()
     return (1, empty_term(theme, settings))
@@ -221,13 +242,15 @@ let sliced = pure (steps: []Step) -> []Step => {
 }
 
 /// The first tab, running `args` — a program instead of the shell, without its integration,
-/// where Termina was started — or the login shell; `None`, said why, if it could not start.
+/// where Termina was started — or the login shell, in a window drawn as on a Mac or not;
+/// `None`, said why, if it could not start.
 let started = (
   args: []string,
   settings: Settings,
   theme: Theme,
   fonts: mut Fonts,
-  scale: f32
+  scale: f32,
+  mac: bool
 ) -> Maybe<Term> => {
   let spec = FontSpec { family: "mono", size: settings.font_size }
   let grid = grid_of(spec, fonts.metrics(spec, scale), settings.line_spacing)
@@ -239,7 +262,13 @@ let started = (
     println("termina-ui: the shell could not start")
     return None
   }
-  Some(term_of([s], theme, grid, settings.line_spacing, lookup("HOME") ?? ""))
+  Some(Term { term_of(
+    [s],
+    theme,
+    grid,
+    settings.line_spacing,
+    lookup("HOME") ?? ""
+  ) | mac: mac })
 }
 
 /// A window of no tabs, for a status returned before any opened: nothing is drawn in it, so

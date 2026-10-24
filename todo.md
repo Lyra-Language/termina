@@ -20,5 +20,7 @@ milestones are in `CLAUDE.md` § Plan; finished items move to `done.md`.
 
 ## Found along the way
 
+- **[OPEN] termina-ui: a program starts before the window fits it** — the first tab's PTY opens at 80×24 and is fitted at the first layout, so a program reading its size at once (`tput cols`) can see 80; open it at the window's size, measured before the program starts.
+
 - **[OPEN] Characters past the BMP arrive as U+FFFD** — `bindings.imgui` is built with 16-bit ImWchar; `IMGUI_USE_WCHAR32` would need the generator's `ImWchar` changed too.
 - **[OPEN] Exit status** — a closed terminal comes before the program can be reaped; show the status once `exit_status()` answers.

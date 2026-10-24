@@ -18,12 +18,16 @@ import ui.app.{
   Subscription,
   Readable,
   OnFocus,
+  OnWindowState,
   Shortcut,
+  PasteText,
+  WindowMinimize,
+  WindowMaximize,
+  WindowRestore,
 }
 import ui.draw.{ Size, Rect }
-import ui.backend.{ Modifiers, Character, PageUp, PageDown }
+import ui.backend.{ Modifiers, Character, PageUp, PageDown, WindowState }
 import ui.text.{ FontSpec, FontMetrics }
-import ui.style.{ Style, insets }
 import ui.layout.{
   Node,
   PaintArea,
@@ -35,17 +39,15 @@ import ui.layout.{
   MainStart,
   CrossStretch,
   column,
-  row,
-  button,
   expanded,
   painted,
+  themed,
 }
 import session.{
   Session,
   FrameLayout,
   open_session,
   close_session,
-  tab_title,
   directory,
   frame_layout,
 }
@@ -61,6 +63,9 @@ import term.{
   FontDefault,
   OpenSettings,
   NoCommand,
+  EditAction,
+  Copy,
+  Cut,
   Paste,
 }
 import editor.{ position }
@@ -83,6 +88,8 @@ pub struct Term {
   mods: Modifiers = Modifiers {},
   focused: bool = true,
   mac: bool = false,
+  /// Whether the window is maximized, as last heard ([TermEvent.WindowChanged]).
+  maximized: bool = false,
   /// What a press holds until it is let go: nothing (0), the grid's selection (1), the command
   /// line (2), or a program's mouse report (3, `button` the button held).
   holding: i64 = 0,
@@ -111,8 +118,20 @@ pub data TermEvent =
   | ClipboardRead(string)
   /// The window gained or lost the keyboard.
   | WindowFocus(bool)
-  /// A shortcut, or a tab's button.
+  /// A shortcut, a menu's item or the tab bar's choice.
   | TabAsked(TabCommand)
+  /// Tab `i`'s ×, or a middle click on it.
+  | TabClosed(i64)
+  /// Tab `from` dragged to `to`'s place.
+  | TabMoved(i64, i64)
+  /// An Edit menu item, on the shown tab.
+  | EditAsked(EditAction)
+  /// Quit, and the window minimized or maximized (Window's items and the header bar's).
+  | Quit
+  | Minimize
+  | ToggleMaximize
+  /// What the window went through.
+  | WindowChanged(WindowState)
   /// The font measured again, at a new size.
   | FontMeasured(FontMetrics)
 
@@ -158,38 +177,25 @@ pub let layout_at = pure (t: Term, size: Size) -> FrameLayout => {
 
 // ── The view ─────────────────────────────────────────────────────────────────
 
-/// The window: the tabs' strip — a button a tab, the shown one marked, and `+` — over the
-/// shown tab, painted and taking input raw.
+/// The window, in the theme's colours: on a Mac the tab bar (`window.lyra`), elsewhere the
+/// header bar over it; then the shown tab, painted and taking input raw.
 pub let view = pure (t: Term) -> Node<TermEvent> => {
   if t.tabs.len() == 0 { return column::<TermEvent>([]) }
-  var strip: []Node<TermEvent> = []
-  for i, s in t.tabs {
-    let shown = i == t.active
-    strip.push(button(tab_title(s, t.home), TabAsked(ShowTab(i))).with_style(Style {
-      background: Some(color(if shown { t.theme.tab_selected } else { t.theme.tab })),
-      color: Some(color(t.theme.fg)),
-      padding: Some(insets(6.0)),
-    }))
-  }
-  strip.push(button("+", TabAsked(NewTab)).with_style(Style {
-    background: Some(color(t.theme.tab)),
-    color: Some(color(t.theme.fg)),
-    padding: Some(insets(6.0)),
-  }))
   let raw = RawInput {
     on_key: (k: KeyInput) -> Maybe<TermEvent> => Some(KeyHeard(k)),
     on_text: (x: TextInput) -> Maybe<TermEvent> => Some(TextHeard(x)),
     on_pointer: (p: PointerInput) -> Maybe<TermEvent> => Some(PointerHeard(p)),
     caret: Some(caret_of(t)),
   }
-  column([
-    row(strip).with_style(Style { gap: Some(4.0), padding: Some(insets(6.0)) }),
-    expanded(painted(
-      (area: PaintArea) -> []PaintOp =>
-        paint_tab(t.tabs[t.active], layout_at(t, area.size), t.grid, t.theme, t.focused, area),
-      Some(ViewSized)
-    ).takes_input(raw).keyed("term")),
-  ]).aligned(MainStart, CrossStretch)
+  let terminal = expanded(painted(
+    (area: PaintArea) -> []PaintOp =>
+      paint_tab(t.tabs[t.active], layout_at(t, area.size), t.grid, t.theme, t.focused, area),
+    Some(ViewSized)
+  ).takes_input(raw).keyed("term"))
+  let bars = if t.mac { [tab_strip(t)] } else { [header_bar(t), tab_strip(t)] }
+  themed(chrome_theme(t.theme), chrome_sheet(t.theme), [
+    column([...bars, terminal]).aligned(MainStart, CrossStretch),
+  ])
 }
 
 /// Where typed text goes — the command line's caret at a prompt, the cursor otherwise — for the
@@ -218,11 +224,12 @@ let caret_of = pure (t: Term) -> Rect => {
   }
 }
 
-/// What the window hears of besides its input: each tab's terminal when it has written, and
-/// the window's focus.
+/// What the window hears of besides its input: each tab's terminal when it has written, the
+/// window's focus, and what it went through (Window's Maximize or Restore says which).
 pub let subscriptions = pure (t: Term) -> []Subscription<TermEvent> => [
   ...[i in 0..<t.tabs.len() | Readable(t.tabs[i].pty.fd, PtyReadable(i))],
   OnFocus(WindowFocus),
+  OnWindowState(WindowChanged),
 ]
 
 /// The window's shortcuts, taken before the tab hears the key: on a Mac ⌘T, ⌘W, ⌘1–⌘9,
@@ -303,6 +310,13 @@ pub let update = (t: Term, e: TermEvent) -> (Term, []Command<TermEvent>) => {
       if n.tabs.len() > 0 { n.tabs[n.active].focus_report(on) }
     },
     TabAsked(c) => { commands = tab_asked(n, c) },
+    TabClosed(i) => { if i >= 0 && i < n.tabs.len() { commands = close_tab(n, i) } },
+    TabMoved(from, to) => tab_moved(n, from, to),
+    EditAsked(a) => { commands = edit_asked(n, a) },
+    Quit => { commands = [QuitApp] },
+    Minimize => { commands = [WindowMinimize] },
+    ToggleMaximize => { commands = [if n.maximized { WindowRestore } else { WindowMaximize }] },
+    WindowChanged(w) => { n.maximized = w.maximized },
     FontMeasured(m) => { n.grid = grid_of(n.grid.font, m, n.spacing) },
   }
   settle(n)
@@ -347,6 +361,40 @@ let tab_asked = (t: mut Term, c: TabCommand) -> []Command<TermEvent> => match c 
   FontDefault => resized(t, t.default_size),
   OpenSettings => [],
   NoCommand => [],
+}
+
+/// Tab `from` to `to`'s place, its view with it; the shown tab stays shown.
+let tab_moved = (t: mut Term, from: i64, to: i64) -> void => {
+  let n = t.tabs.len()
+  if from < 0 || from >= n || to < 0 || to >= n || from == to { return }
+  let shown = t.tabs[t.active].id
+  let order = [k in 0..<n | k != from | k]
+  var placed: []i64 = []
+  for k, i in order {
+    if k == to { placed.push(from) }
+    placed.push(i)
+  }
+  if to >= order.len() { placed.push(from) }
+  t.tabs = [i in placed | t.tabs[i]]
+  t.views = [i in placed | t.views[i]]
+  for k, s in t.tabs { if s.id == shown { t.active = k } }
+}
+
+/// An Edit menu item on the shown tab, as its key would do it: a copy or cut put on the
+/// clipboard, a paste asked of it.
+let edit_asked = (t: mut Term, a: EditAction) -> []Command<TermEvent> => {
+  if t.tabs.len() == 0 { return [] }
+  let i = t.active
+  t.views[i].sticking = true
+  match a {
+    Paste => [PasteText(ClipboardRead)],
+    Copy => copied(t.tabs[i].edit_action(Copy)),
+    Cut => copied(t.tabs[i].edit_action(Cut)),
+    other => {
+      let _ = t.tabs[i].edit_action(other)
+      []
+    },
+  }
 }
 
 /// Tab `i` closed, its program hung up on; the window with the last.

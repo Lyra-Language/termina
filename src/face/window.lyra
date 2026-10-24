@@ -1,0 +1,264 @@
+module face
+//! The window's chrome on `ui` (`../../lyra/ui/WINDOW.md`): the tab bar, the menus and the
+//! title bar, in the theme's colours. **On a Mac the menus are the system's own bar**
+//! (`App.menus`, [menus_of]) and the title bar the system's, the tab bar under it ending in `+`.
+//! **Elsewhere the window has a header bar of Termina's**, as GNOME's terminal has it — `+` at
+//! its left, the shown tab's title in its middle, ☰ opening the menus ([header_entries]) and the
+//! window's own buttons at its right — over the tab bar; the window has no frame of the
+//! system's (`DrawnTitleBar`), the bar's empty stretch moving it.
+//!
+//! **One tree of menus**: the Mac's bar and the header's ☰ are made from the same items
+//! (`shell_items`, `edit_items`, `view_items`, `window_items`), each raising a [TermEvent]. A
+//! shortcut an item shows is the window's: the Mac's bar holds its key equivalents, and off a
+//! Mac the app takes a drawn menu's (Edit's Undo and Redo show none there: Ctrl+Z is a running
+//! program's).
+
+import ui.style.{
+  Theme as UiTheme,
+  Palette,
+  Sheet,
+  Rule,
+  Style,
+  insets_xy,
+  theme_of as ui_theme_of
+}
+import ui.draw.{ Color }
+import ui.backend.{ Chord, Modifiers, Character, PageUp, PageDown }
+import ui.layout.{
+  Menu,
+  MenuEntry,
+  MenuItem,
+  MenuItemEntry,
+  Submenu,
+  MenuSeparator,
+  TabsSpec,
+  TabSpec,
+  menu_button,
+  tab_bar,
+  window_buttons,
+  text as words,
+  button,
+  row,
+  expanded,
+  align,
+  CENTER,
+  MainStart,
+  CrossCenter,
+}
+import session.{ tab_title }
+import term.{
+  Theme,
+  NewTab,
+  CloseTab,
+  ShowTab,
+  OpenSettings,
+  FontBigger,
+  FontSmaller,
+  FontDefault,
+  EditAction,
+  Undo,
+  Redo,
+  Cut,
+  Copy,
+  Paste,
+  SelectAll,
+}
+
+// ── The theme ────────────────────────────────────────────────────────────────
+
+/// `ui`'s theme in Termina's colours: the window's background, the completion menu's for a
+/// menu's, the text's, and its chosen row's for what is chosen.
+pub let chrome_theme = pure (theme: Theme) -> UiTheme => ui_theme_of(Palette {
+  background: color(theme.bg),
+  surface: color(theme.menu),
+  text: color(theme.fg),
+  muted: faded_by(color(theme.fg), 0.6),
+  accent: color(theme.menu_chosen),
+  border: color(theme.rule),
+  focus: faded_by(color(theme.menu_chosen), 0.6),
+})
+
+/// The chrome's own rules: the tabs in the theme's three tab colours, a chosen menu item in
+/// the text's colour on the chosen row's (a light theme's chosen row is light), and the header
+/// bar's quiet buttons.
+pub let chrome_sheet = pure (theme: Theme) -> Sheet => {
+  let fg = color(theme.fg)
+  let clear = Color { r: 0, g: 0, b: 0, a: 0 }
+  Sheet {
+    rules: [
+      Rule { selector: "TabBar", style: Style { gap: Some(2.0), padding: Some(insets_xy(4.0, 3.0)) } },
+      Rule { selector: "Tab", style: Style { background: Some(color(theme.tab)), color: Some(fg) } },
+      Rule { selector: "Tab:hover", style: Style { background: Some(color(theme.tab_hovered)) } },
+      Rule {
+        selector: "Tab:checked",
+        style: Style { background: Some(color(theme.tab_selected)), color: Some(fg), border_width: Some(0.0) },
+      },
+      Rule {
+        selector: "MenuItem:hover, MenuItem:focus-visible, MenuItem:open",
+        style: Style { background: Some(color(theme.menu_chosen)), color: Some(fg) },
+      },
+      Rule { selector: ".header", style: Style { gap: Some(4.0), padding: Some(insets_xy(6.0, 4.0)), height: Some(HEADER_HEIGHT) } },
+      Rule { selector: ".title", style: Style { color: Some(fg) } },
+      Rule {
+        selector: "Button.chrome, MenuButton",
+        style: Style { background: Some(clear), color: Some(fg), padding: Some(insets_xy(10.0, 4.0)), radius: Some(6.0) },
+      },
+      Rule { selector: "Button.chrome:hover, MenuButton:hover, MenuButton:open", style: Style { background: Some(color(theme.tab_hovered)) } },
+      Rule { selector: "Button.chrome:active", style: Style { background: Some(color(theme.tab_selected)) } },
+    ],
+  }
+}
+
+/// The header bar's height: half again a menu bar's, as GNOME's.
+const HEADER_HEIGHT: f32 = 40.0
+
+/// `c` at `opacity` times its own alpha.
+let faded_by = pure (c: Color, opacity: f32) -> Color =>
+  Color { c | a: u8((f32(c.a) * opacity).round()) }
+
+// ── The bars ─────────────────────────────────────────────────────────────────
+
+/// The tab bar: a tab a session, labelled with its title, closed by its ×, dragged into a new
+/// order; and on a Mac `+` after them, the header bar holding it elsewhere.
+pub let tab_strip = pure (t: Term) -> Node<TermEvent> => tab_bar(TabsSpec {
+  tabs: [s in t.tabs | TabSpec { label: tab_title(s, t.home), key: "tab ${s.id}" }],
+  selected: t.active,
+  on_select: (i: i64) -> TermEvent => TabAsked(ShowTab(i)),
+  on_close: TabClosed,
+  on_move: TabMoved,
+  after: if t.mac { [button("+", TabAsked(NewTab)).with_class("chrome").keyed("new")] } else { [] },
+})
+
+/// The header bar, off a Mac: `+`, the shown tab's title in the middle, ☰ and the window's
+/// buttons; its empty stretch moves the window.
+pub let header_bar = pure (t: Term) -> Node<TermEvent> => {
+  let title = if t.tabs.len() > 0 { tab_title(
+    t.tabs[t.active],
+    t.home
+  ) } else { "Termina" }
+  row([
+    button("+", TabAsked(NewTab)).with_class("chrome").keyed("new"),
+    expanded(align(CENTER, words::<TermEvent>(title).with_class("title"))),
+    menu_button(words::<TermEvent>("☰"), header_entries(t)).keyed("menu"),
+    window_buttons::<TermEvent>(),
+  ]).aligned(MainStart, CrossCenter).with_class("header").window_drag()
+}
+
+// ── The menus ────────────────────────────────────────────────────────────────
+
+/// The menus for the Mac's own bar: Termina (Settings…; the application menu, which macOS
+/// gives Quit), Shell, Edit and View — macOS adds its Window menu after the last.
+pub let menus_of = pure (t: Term) -> []Menu<TermEvent> => [
+  Menu { label: "Termina", entries: [item("Settings…", TabAsked(OpenSettings), Some(primary(','))) ] },
+  Menu { label: "Shell", entries: shell_items(t) },
+  Menu { label: "Edit", entries: edit_items(t) },
+  Menu { label: "View", entries: view_items(t) },
+]
+
+/// The header bar's ☰: the most used items first, then the menus as submenus, then Quit.
+pub let header_entries = pure (t: Term) -> []MenuEntry<TermEvent> => [
+  item("New Tab", TabAsked(NewTab), Some(own(t, 't'))),
+  item("Settings…", TabAsked(OpenSettings), Some(primary(','))),
+  MenuSeparator,
+  Submenu("Shell", shell_items(t)),
+  Submenu("Edit", edit_items(t)),
+  Submenu("View", view_items(t)),
+  Submenu("Window", window_items(t)),
+  MenuSeparator,
+  item("Quit", Quit, None),
+]
+
+/// Shell's items: a new tab, the tabs before and after the shown one, closing it.
+let shell_items = pure (t: Term) -> []MenuEntry<TermEvent> => {
+  let n = t.tabs.len().max(1)
+  let several = t.tabs.len() > 1
+  [
+    item("New Tab", TabAsked(NewTab), Some(own(t, 't'))),
+    MenuSeparator,
+    MenuItemEntry(MenuItem {
+      label: "Show Previous Tab",
+      on_select: TabAsked(ShowTab((t.active - 1) %% n)),
+      shortcut: Some(if t.mac { with_shift(own(t, '[')) } else { Chord { key: PageUp, mods: Modifiers { primary: true } } }),
+      enabled: several,
+    }),
+    MenuItemEntry(MenuItem {
+      label: "Show Next Tab",
+      on_select: TabAsked(ShowTab((t.active + 1) %% n)),
+      shortcut: Some(if t.mac { with_shift(own(t, ']')) } else { Chord { key: PageDown, mods: Modifiers { primary: true } } }),
+      enabled: several,
+    }),
+    MenuSeparator,
+    item("Close Tab", TabAsked(CloseTab), Some(own(t, 'w'))),
+  ]
+}
+
+/// Edit's items, greyed where the shown tab would do nothing. Off a Mac, Undo and Redo show no
+/// key: Ctrl+Z is the command line's own, and a running program's.
+let edit_items = pure (t: Term) -> []MenuEntry<TermEvent> => {
+  let can = (a: EditAction) -> bool => t.tabs.len() > 0 && t.tabs[t.active].can(a)
+  let editing = (
+    label: string,
+    a: EditAction,
+    key: Maybe<Chord>
+  ) -> MenuEntry<TermEvent> =>
+    MenuItemEntry(MenuItem {
+      label: label,
+      on_select: EditAsked(a),
+      shortcut: key,
+      enabled: can(a)
+    })
+  [
+    editing("Undo", Undo, if t.mac { Some(primary('z')) } else { None }),
+    editing("Redo", Redo, if t.mac { Some(with_shift(primary('z'))) } else { None }),
+    MenuSeparator,
+    editing("Cut", Cut, Some(own(t, 'x'))),
+    editing("Copy", Copy, Some(own(t, 'c'))),
+    editing("Paste", Paste, Some(own(t, 'v'))),
+    editing("Select All", SelectAll, Some(own(t, 'a'))),
+  ]
+}
+
+/// View's items: the font's size.
+let view_items = pure (t: Term) -> []MenuEntry<TermEvent> => [
+  item("Default Font Size", TabAsked(FontDefault), Some(own(t, '0'))),
+  item("Bigger", TabAsked(FontBigger), Some(own(t, '='))),
+  item("Smaller", TabAsked(FontSmaller), Some(own(t, '-'))),
+]
+
+/// Window's items, off a Mac: the window's own, then the tabs, the shown one checked, as a
+/// Mac's Window menu lists windows; the first nine with Alt and their number.
+let window_items = pure (t: Term) -> []MenuEntry<TermEvent> => [
+  item("Minimize", Minimize, None),
+  item(if t.maximized { "Restore" } else { "Maximize" }, ToggleMaximize, None),
+  MenuSeparator,
+  ...[
+    k in 0..<t.tabs.len() |
+      MenuItemEntry(MenuItem {
+        label: tab_title(t.tabs[k], t.home),
+        on_select: TabAsked(ShowTab(k)),
+        shortcut: if k < 9 { Some(Chord { key: Character(rune(i64('1') + k)), mods: Modifiers { alt: true } }) } else { None },
+        checked: k == t.active,
+      })
+  ],
+]
+
+/// An item raising `event`, with `key` shown.
+let item = pure (
+  label: string,
+  event: TermEvent,
+  key: Maybe<Chord>
+) -> MenuEntry<TermEvent> =>
+  MenuItemEntry(MenuItem { label: label, on_select: event, shortcut: key })
+
+/// `c` with the primary modifier: ⌘ on a Mac, Ctrl elsewhere.
+let primary = pure (c: rune) -> Chord =>
+  Chord { key: Character(c), mods: Modifiers { primary: true } }
+
+/// The terminal's own key: ⌘ and `c` on a Mac, Ctrl+Shift and it elsewhere — Ctrl alone is the
+/// shell's, so GNOME Terminal and Konsole add Shift.
+let own = pure (t: Term, c: rune) -> Chord =>
+  if t.mac { primary(c) } else { with_shift(primary(c)) }
+
+/// `c` with Shift too.
+let with_shift = pure (c: Chord) -> Chord =>
+  Chord { c | mods: Modifiers { c.mods | shift: true } }

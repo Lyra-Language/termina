@@ -1,8 +1,9 @@
 #!/bin/sh
 # termina-ui played headless (SDL's dummy driver, `--script`), its screens checked: a program's
 # output, keys sent raw (a line to `cat`, Ctrl+D, Ctrl+C), the window's size reaching the
-# program, and — where zsh is installed — a command run from the command line at its prompt,
-# the frame written as a PNG. Exit 1 on a failure. After ./build.sh:
+# program, the tabs — a new one, the first chosen by its tab and by Alt+1, the shown one closed
+# from the header bar's ☰ — and, where zsh is installed, a command run from the command line at
+# its prompt, the frame written as a PNG. Exit 1 on a failure. After ./build.sh:
 #
 #     tools/termina-ui-check.sh
 #
@@ -45,6 +46,19 @@ abc
 
 check "Ctrl+C ends a program" "$(run --print --script "wait:300 Ctrl+c wait:500" sleep 30)" "termina-ui: 1 lines
 ^C"
+
+# The tabs, drawn as off a Mac (`--header`) so a Mac and Linux are alike: `cat` in the first, a
+# new tab's shell in the second (shown), then the first shown again — its screen printed.
+tabs() {
+  SHELL=/bin/sh run --header --print --script "wait:300 'one' Enter wait:300 Primary+Shift+t wait:600 $1 wait:300" cat
+}
+cat_screen="termina-ui: 2 lines
+one
+one"
+check "a new tab, then the first chosen by its tab" "$(tabs 'click:20,57')" "$cat_screen"
+check "a new tab, then the first chosen by Alt+1" "$(tabs 'Alt+1')" "$cat_screen"
+check "the shown tab closed by ☰ ▸ Shell ▸ Close Tab" \
+  "$(tabs 'click:819,20 move:830,114 move:600,118 click:600,215')" "$cat_screen"
 
 cols="$(run --print sh -c 'tput cols' | tail -1)"
 if [ "$cols" -gt 40 ] 2>/dev/null; then
