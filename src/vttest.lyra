@@ -961,6 +961,14 @@ let check_completion = (shell: string) -> i64 => {
   let _ = remove_file(dir.join("plain.txt"))
   let _ = remove_file(dir.join("a b.txt"))
   var failed = check("${name}: asked them all", "${answers.len()}", "${asks.len()}")
+  // What the shell showed, for a failure on a machine no one can look at (a CI runner).
+  if answers.len() < asks.len() {
+    println("  at a prompt: ${at_prompt}, asked: ${asked}; the screen:")
+    for row in 0..<(s.scrollback_len() + s.rows) {
+      let t = line_text(s.line(row)).trim()
+      if t != "" { println("  | ${t}") }
+    }
+  }
   if answers.len() == asks.len() {
     failed += check("${name}: a file", answers[0], "plain.txt ")
     failed += check("${name}: a directory", answers[1], "sub\\ dir/")

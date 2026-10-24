@@ -128,6 +128,7 @@ jobs:
         if: runner.os == 'Linux'
         run: |
           zsh -fc 'autoload -U compaudit; compaudit' 2>/dev/null | while IFS= read -r dir; do
+            echo "securing $dir: $(stat -c '%U %A' "$dir")"
             sudo chown root:root "$dir" && sudo chmod go-w "$dir"
           done
           zsh -fc 'autoload -U compaudit; compaudit'
