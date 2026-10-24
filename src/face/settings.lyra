@@ -5,7 +5,7 @@ module face
 //! the window's fonts (`LoadFonts`) under a name of its own — **and is kept a moment after the
 //! last** ([SAVE_DELAY_MS]), so a slider's drag writes the file once, not at every step.
 
-import ui.app.{ Command, ChooseFile, LoadFonts, After }
+import ui.app.{ Command, ChooseFile, LoadFonts, After, WindowSeeThrough, WindowBlur }
 import ui.backend.{ FileDialog }
 import ui.text.{ FontFile, FontSpec }
 import settings.{
@@ -36,6 +36,7 @@ import settings_page.{
   DeleteSavedTheme,
   ToggleBoldBright,
   ToggleRememberWindow,
+  SetBlur,
   ResetSettings,
   OpenSwatch,
   CloseSwatch,
@@ -96,6 +97,7 @@ pub let settings_asked = (t: mut Term, e: SettingsEvent) -> []Command<TermEvent>
     ToggleBoldBright => { t.settings.bold_is_bright = !t.settings.bold_is_bright },
     // Kept as it closes: the place itself is taken then (termina_ui.lyra's `place_of`).
     ToggleRememberWindow => { t.settings.remember_window = !t.settings.remember_window },
+    SetBlur(radius) => { t.settings.background_blur = f32(radius.round()) },
     ResetSettings => { t.settings = defaults() },
     OpenSwatch(key) => {
       t.swatch = key
@@ -159,7 +161,20 @@ let applied = (t: mut Term, faces_were: string) -> []Command<TermEvent> => {
     t.grid = Grid { t.grid | font: FontSpec { t.grid.font | family: faces } }
   }
   t.saves += 1
-  [...out, ...resized(t, t.settings.font_size), After(SAVE_DELAY_MS, SaveDue(t.saves))]
+  [
+    ...out,
+    ...resized(t, t.settings.font_size),
+    ...see_through(t),
+    After(SAVE_DELAY_MS, SaveDue(t.saves))
+  ]
+}
+
+/// The window see-through while the background is not opaque, and what is behind it blurred
+/// as the settings say: asked of the system each change (on Linux a window is see-through only
+/// if it opened so, which the next start does).
+pub let see_through = pure (t: Term) -> []Command<TermEvent> => {
+  let on = (t.theme.bg >> 24) != 0xFF
+  [WindowSeeThrough(on), WindowBlur(if on { t.settings.background_blur } else { 0.0 })]
 }
 
 /// The name the settings' faces are loaded as: the family's, or the file's.

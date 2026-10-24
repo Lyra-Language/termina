@@ -28,7 +28,17 @@ import std.env.{ lookup }
 import std.io.{ create_dir_all, write_file, remove_file, is_executable }
 import std.path
 import desktop.{ desktop_entry, exec_quoted, APP_ID }
-import settings.{ Settings, WindowPlace, defaults, settings_to_json, settings_from_json }
+import settings.{
+  Settings,
+  WindowPlace,
+  defaults,
+  settings_to_json,
+  settings_from_json,
+  hex_of,
+  color_of,
+  sections_of
+}
+import term.{ abgr }
 import vt.{
   runes_of,
   Spot,
@@ -71,6 +81,7 @@ let main = () -> u8 => {
   failed += check_parser()
   failed += check_desktop_entry()
   failed += check_window_place()
+  failed += check_color_alpha()
   failed += check_screen()
   failed += check_style()
   failed += check_modes()
@@ -1194,6 +1205,47 @@ let check_window_place = () -> i64 => {
     "window place: the option off",
     describe_place(settings_from_json(settings_to_json(off))),
     "off none"
+  )
+  failed
+}
+
+// A colour's alpha (Settings ▸ Colors, the Background swatch's opacity): `#rrggbbaa` read as how
+// transparent it is in the top byte and written back so, an opaque one as `#rrggbb`; ImGui's
+// alpha from it; only the background's kept from a file; and the sections made from a
+// translucent background opaque.
+let check_color_alpha = () -> i64 => {
+  var failed = 0
+  let half = color_of("#1b1d2280") ?? 0
+  failed += check("color alpha: read", half.to_hex(8), "7f1b1d22")
+  failed += check("color alpha: written", hex_of(half), "#1b1d2280")
+  failed += check(
+    "color alpha: opaque written short",
+    hex_of(color_of("#1b1d22ff") ?? 0),
+    "#1b1d22"
+  )
+  failed += check("color alpha: ImGui's", abgr(half).to_hex(8), "80221d1b")
+  failed += check(
+    "color alpha: an opaque theme colour",
+    abgr(0x1b1d22).to_hex(8),
+    "ff221d1b"
+  )
+  // Only the background may be translucent: the file's other #rrggbbaa read opaque.
+  let read = settings_from_json("{\"theme\": \"Custom\", \"colors\": {\"background\": \"#1b1d2280\", \"input\": \"#3a4a6080\"}}")
+  failed += check(
+    "color alpha: the background's kept, another's dropped",
+    "${hex_of(read.colors.bg)} ${hex_of(read.colors.input)}",
+    "#1b1d2280 #3a4a60"
+  )
+  let (input, output) = sections_of(half)
+  failed += check(
+    "color alpha: the sections opaque on a translucent background",
+    "${(input >> 24).to_hex(2)} ${(output >> 24).to_hex(2)}",
+    "00 00"
+  )
+  failed += check(
+    "color alpha: none of 7 digits",
+    "${color_of("#1b1d228") == None}",
+    "true"
   )
   failed
 }

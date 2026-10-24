@@ -5,7 +5,7 @@
 -->
 
 <script target="ui">
-  import ui.draw.{ Color, rgb }
+  import ui.draw.{ Color }
   import settings.{
     Settings,
     FontFamily,
@@ -16,6 +16,7 @@
     THEME_NAMES,
     FONT_SIZE_RANGE,
     LINE_SPACING_RANGE,
+    BLUR_RANGE,
   }
 
   /// What the settings can be asked to do; the Settings tab carries it out.
@@ -37,6 +38,8 @@
     | ToggleBoldBright
     /// Whether the window opens where it was last closed.
     | ToggleRememberWindow
+    /// What is behind a see-through window blurred by, as the slider is dragged.
+    | SetBlur(f32)
     | ResetSettings
     /// A swatch's picker opened, by its color's field (`ansi 3` for an ANSI color), or closed.
     | OpenSwatch(string)
@@ -103,8 +106,17 @@
   /// Whether the theme in use is one the user saved.
   let is_saved = pure (s: Settings) -> bool => saved_colors(s.themes, s.theme_name) != None
 
-  /// A color as the settings keep it, `0xRRGGBB`, from a swatch's.
-  let rgb_of_color = pure (c: Color) -> u32 => (u32(c.r) << 16) | (u32(c.g) << 8) | u32(c.b)
+  /// A swatch's colour as the settings keep it: `0xRRGGBB`, how transparent in the top byte.
+  let rgb_of_color = pure (c: Color) -> u32 =>
+    ((255 - u32(c.a)) << 24) | (u32(c.r) << 16) | (u32(c.g) << 8) | u32(c.b)
+
+  /// A colour as the settings keep it — how transparent it is in the top byte — as a swatch's.
+  let swatch_color = pure (v: u32) -> Color => Color {
+    r: u8((v >> 16) & 0xFF),
+    g: u8((v >> 8) & 0xFF),
+    b: u8(v & 0xFF),
+    a: u8(255 - ((v >> 24) & 0xFF)),
+  }
 
   /// The size, in whole points; the spacing to two places.
   let points = pure (size: f32) -> string => "${i64(size.round())} pt"
@@ -143,6 +155,7 @@
     .group { gap: 10 }
     .swatch-row { gap: 8 }
     .ansi { gap: 6 }
+    Text.note { color: $colors.muted; font-size: 12 }
   </style>
 
   <Column class="page" cross="stretch">
@@ -226,6 +239,14 @@
     <Column class="section">
       <Text class="heading">Window</Text>
       <Checkbox checked={s.remember_window} on_toggle={ToggleRememberWindow}>Open the window where it was last closed, at its size</Checkbox>
+      <Grid class="form">
+        <Text>Blur behind</Text>
+        <Row class="field">
+          <Slider value={s.background_blur} min={BLUR_RANGE.0} max={BLUR_RANGE.1} step="1" on_change={SetBlur} key="blur"/>
+          <Text>{points(s.background_blur)}</Text>
+        </Row>
+      </Grid>
+      <Text class="note">The window shows what is behind it while the Background's opacity is below full (its swatch's opacity strip); the blur is macOS's.</Text>
     </Column>
 
     <Row>
@@ -238,11 +259,12 @@
 <component name="color_field" props={{ s: Settings, label: string, field: string, open: string }} event={SettingsEvent}>
   <Row class="swatch-row" key={field}>
     <Swatch
-      color={rgb(color_named(s.colors, field))}
+      color={swatch_color(color_named(s.colors, field))}
       open={open == field}
       on_open={OpenSwatch(field)}
       on_change={(c: Color) -> SettingsEvent => SetColor(field, rgb_of_color(c))}
       on_dismiss={CloseSwatch}
+      opaque={field != "bg"}
     />
     <Text>{label}</Text>
   </Row>
@@ -251,11 +273,12 @@
 <!-- ANSI color `k`'s swatch, unlabelled. -->
 <component name="ansi_field" props={{ s: Settings, k: i64, open: string }} event={SettingsEvent}>
   <Swatch
-    color={rgb(s.colors.ansi[k])}
+    color={swatch_color(s.colors.ansi[k])}
     open={open == "ansi ${k}"}
     on_open={OpenSwatch("ansi ${k}")}
     on_change={(c: Color) -> SettingsEvent => SetAnsi(k, rgb_of_color(c))}
     on_dismiss={CloseSwatch}
+    opaque
     key="ansi {k}"
   />
 </component>

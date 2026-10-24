@@ -39,6 +39,9 @@ pub struct Settings {
   /// The themes the user saved, in the order saved.
   themes: []SavedTheme,
   bold_is_bright: bool,
+  /// What is behind a see-through window — one whose background is not opaque — blurred by,
+  /// in points (0 for none; macOS only).
+  background_blur: f32 = 0.0,
   /// Whether the window opens where it was last closed, at its size, maximized if it was; and
   /// where that was (`None` before it was ever closed so).
   remember_window: bool = true,
@@ -63,7 +66,10 @@ pub struct SavedTheme {
   colors: Colors,
 }
 
-/// A theme's colors, each `0xRRGGBB`.
+/// A theme's colors, each `0xRRGGBB` with how transparent it is in the top byte — 0, as every
+/// theme's own are, opaque. Only the background may be other than opaque
+/// (`background_alone_clear`), which makes the window see-through; the file writes it
+/// `#rrggbbaa` then (`hex_of`).
 pub struct Colors {
   fg: u32,
   bg: u32,
@@ -105,6 +111,8 @@ pub let defaults = pure () -> Settings => Settings {
 /// The sizes and spacings the window offers.
 pub const FONT_SIZE_RANGE: (f32, f32) = (9.0, 32.0)
 pub const LINE_SPACING_RANGE: (f32, f32) = (1.0, 2.0)
+/// The blur behind a see-through window, in points.
+pub const BLUR_RANGE: (f32, f32) = (0.0, 64.0)
 
 // ── Themes ───────────────────────────────────────────────────────────────────
 
@@ -296,30 +304,34 @@ pub let color_named = pure (c: Colors, field: string) -> u32 => match field {
   _ => 0,
 }
 
-/// `c` with the field named `field` (as [color_named] names them) set to `rgb`; `c` itself
-/// for any other name.
-pub let with_color = pure (c: Colors, field: string, rgb: u32) -> Colors => match field {
-  "fg" => Colors { c | fg: rgb },
-  "bg" => Colors { c | bg: rgb },
-  "cursor" => Colors { c | cursor: rgb },
-  "selection" => Colors { c | selection: rgb },
-  "input" => Colors { c | input: rgb },
-  "output" => Colors { c | output: rgb },
-  "input_text" => Colors { c | input_text: rgb },
-  "tab" => Colors { c | tab: rgb },
-  "tab_hovered" => Colors { c | tab_hovered: rgb },
-  "tab_selected" => Colors { c | tab_selected: rgb },
-  "editor_text" => Colors { c | editor_text: rgb },
-  "menu" => Colors { c | menu: rgb },
-  "menu_chosen" => Colors { c | menu_chosen: rgb },
-  _ => c,
+/// `c` with the field named `field` (as [color_named] names them) set to `given` — opaque but
+/// for the background, the one colour that may be translucent; `c` itself for any other name.
+pub let with_color = pure (c: Colors, field: string, given: u32) -> Colors => {
+  // Only the background may be translucent.
+  let rgb = if field == "bg" { given } else { given & 0xFFFFFF }
+  match field {
+    "fg" => Colors { c | fg: rgb },
+    "bg" => Colors { c | bg: rgb },
+    "cursor" => Colors { c | cursor: rgb },
+    "selection" => Colors { c | selection: rgb },
+    "input" => Colors { c | input: rgb },
+    "output" => Colors { c | output: rgb },
+    "input_text" => Colors { c | input_text: rgb },
+    "tab" => Colors { c | tab: rgb },
+    "tab_hovered" => Colors { c | tab_hovered: rgb },
+    "tab_selected" => Colors { c | tab_selected: rgb },
+    "editor_text" => Colors { c | editor_text: rgb },
+    "menu" => Colors { c | menu: rgb },
+    "menu_chosen" => Colors { c | menu_chosen: rgb },
+    _ => c,
+  }
 }
 
 /// `c` with ANSI color `k` set to `rgb`, in an array of its own: `c`'s is shared with every
 /// copy of these colors, a saved theme's among them.
 pub let with_ansi = pure (c: Colors, k: i64, rgb: u32) -> Colors => {
   var ansi = [...c.ansi]
-  if k >= 0 && k < ansi.len() { ansi[k] = rgb }
+  if k >= 0 && k < ansi.len() { ansi[k] = rgb & 0xFFFFFF }
   Colors { c | ansi: ansi }
 }
 
@@ -408,6 +420,7 @@ pub let settings_to_json = pure (s: Settings) -> string => JsonObject([
     member("name", JsonString(t.name)),
     member("colors", colors_to_json(t.colors)),
   ])])),
+  member("background_blur", JsonNumber(f64(s.background_blur))),
   member("remember_window", JsonBool(s.remember_window)),
   ...(match s.window {
     Some(w) => [member("window", JsonObject([
@@ -458,6 +471,7 @@ pub let settings_from_json = pure (text: string) -> Settings => {
     colors: colors_from_json(colors_in(doc), base),
     themes: themes,
     bold_is_bright: (doc.field("bold_is_bright") ?? JsonBool(d.bold_is_bright)).as_bool() ?? d.bold_is_bright,
+    background_blur: f32(number_field(doc, "background_blur") ?? 0.0).clamp(BLUR_RANGE.0, BLUR_RANGE.1),
     remember_window: (doc.field("remember_window") ?? JsonBool(d.remember_window)).as_bool() ?? d.remember_window,
     window: window_from_json(doc.field("window")),
   }
@@ -516,7 +530,7 @@ let colors_from_json = pure (c: JsonValue, base: Colors) -> Colors => {
     }
     if whole { ansi = read }
   }
-  Colors {
+  background_alone_clear(Colors {
     fg: color_field(c, "foreground") ?? base.fg,
     bg: color_field(c, "background") ?? base.bg,
     cursor: color_field(c, "cursor") ?? base.cursor,
@@ -531,15 +545,43 @@ let colors_from_json = pure (c: JsonValue, base: Colors) -> Colors => {
     menu: color_field(c, "menu") ?? base.menu,
     menu_chosen: color_field(c, "menu_chosen") ?? base.menu_chosen,
     ansi: ansi,
-  }
+  })
 }
 
-/// `0xRRGGBB` as `#rrggbb`.
-pub let hex_of = pure (rgb: u32) -> string => "#${(rgb & 0xFFFFFF).to_hex(6)}"
+/// `c` with every colour but the background made opaque: only the window's background may be
+/// translucent (it makes the window see-through); a file's other `#rrggbbaa` is read opaque.
+let background_alone_clear = pure (c: Colors) -> Colors => Colors {
+  c |
+  fg: c.fg & 0xFFFFFF,
+  cursor: c.cursor & 0xFFFFFF,
+  selection: c.selection & 0xFFFFFF,
+  input: c.input & 0xFFFFFF,
+  output: c.output & 0xFFFFFF,
+  input_text: c.input_text & 0xFFFFFF,
+  tab: c.tab & 0xFFFFFF,
+  tab_hovered: c.tab_hovered & 0xFFFFFF,
+  tab_selected: c.tab_selected & 0xFFFFFF,
+  editor_text: c.editor_text & 0xFFFFFF,
+  menu: c.menu & 0xFFFFFF,
+  menu_chosen: c.menu_chosen & 0xFFFFFF,
+  ansi: [x in c.ansi | x & 0xFFFFFF],
+}
 
-/// `#rrggbb` (or `rrggbb`) as `0xRRGGBB`; `None` for anything else.
+/// A colour as `#rrggbb`, or `#rrggbbaa` where it is not opaque.
+pub let hex_of = pure (rgb: u32) -> string => {
+  let clear = (rgb >> 24) & 0xFF
+  if clear == 0 { "#${(rgb & 0xFFFFFF).to_hex(6)}" } else { "#${(rgb & 0xFFFFFF).to_hex(6)}${(255 - clear).to_hex(2)}" }
+}
+
+/// `#rrggbb` or `#rrggbbaa` (the `#` optional) as a colour, its alpha kept as how transparent
+/// it is in the top byte; `None` for anything else.
 pub let color_of = pure (text: string) -> Maybe<u32> => {
   let digits = if text.starts_with("#") { text.slice(1, text.len()) } else { text }
+  if digits.len() == 8 {
+    let Some(rgb) = color_of(digits.slice(0, 6)) else { return None }
+    let Some(alpha) = color_of("0000${digits.slice(6, 8)}") else { return None }
+    return Some(((255 - alpha) << 24) | rgb)
+  }
   if digits.len() != 6 { return None }
   var v: u32 = 0
   for r in digits.to_runes() {

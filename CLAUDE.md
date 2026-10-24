@@ -171,6 +171,16 @@ of the program's.
   `SAVE_DELAY_MS` after the last change (a save a change, only the last carried out) and as
   the window closes (`save_now`). Buttons and the chosen option take the text's colour
   (`chrome_sheet`): a light theme's chosen row is light.
+- **The background alone may be translucent**: a settings colour is `0xRRGGBB` with how
+  transparent it is in the top byte, so every theme's own `0xRRGGBB` is opaque; the file
+  writes `#rrggbbaa` for a background that is not (`hex_of`, `color_of`), and every other
+  colour is made opaque wherever it comes from (`background_alone_clear`, `with_color`,
+  `with_ansi`; their swatches are `opaque`, no opacity strip). **A background that is not
+  opaque makes the window see-through** (`ui`'s `set_see_through`; termina-ui clears to
+  nothing and its view's root paints the background), its title bar staying opaque (a Mac's
+  through `bindings.gpu`'s shim, the header bar's own background elsewhere), with what is
+  behind it blurred by `background_blur` (Settings ▸ Window, macOS only). On Linux the window
+  is see-through only if it opened so: a change takes effect at the next start.
 - **termina-ui reopens the window where it was last closed** (Settings ▸ Window,
   `Settings.remember_window`, on by default): as the window closes, `place_of` keeps its place,
   size and whether it is maximized in the settings file (`window`) — while maximized or

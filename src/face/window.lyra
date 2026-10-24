@@ -116,7 +116,17 @@ pub let chrome_sheet = pure (theme: Theme) -> Sheet => {
         selector: "MenuItem:hover, MenuItem:focus-visible, MenuItem:open",
         style: Style { background: Some(color(theme.menu_chosen)), color: Some(fg) },
       },
-      Rule { selector: ".header", style: Style { gap: Some(4.0), padding: Some(insets_xy(6.0, 4.0)), height: Some(HEADER_HEIGHT) } },
+      // The title bar opaque, as a Mac's is, over a see-through window: only the terminal's
+      // background shows what is behind.
+      Rule {
+        selector: ".header",
+        style: Style {
+          gap: Some(4.0),
+          padding: Some(insets_xy(6.0, 4.0)),
+          height: Some(HEADER_HEIGHT),
+          background: Some(Color { color(theme.bg) | a: 255 }),
+        },
+      },
       Rule { selector: ".title", style: Style { color: Some(fg) } },
       Rule {
         selector: "Button.chrome, MenuButton",

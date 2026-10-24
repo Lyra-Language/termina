@@ -125,9 +125,10 @@ pub let clear_color = pure (t: Theme) -> (f32, f32, f32) => (
   f32((t.bg >> 16) & 0xFF) / 255.0,
 )
 
-/// `0xRRGGBB` as ImGui's opaque `0xAABBGGRR`.
+/// A settings colour as ImGui's `0xAABBGGRR`: `0xRRGGBB`, its top byte how transparent it is
+/// (`settings.Colors`) — 0, as every theme's colours are, opaque.
 pub let abgr = pure (rgb: u32) -> u32 =>
-  0xFF000000 | ((rgb & 0xFF) << 16) | (rgb & 0xFF00) | ((rgb >> 16) & 0xFF)
+  ((255 - ((rgb >> 24) & 0xFF)) << 24) | ((rgb & 0xFF) << 16) | (rgb & 0xFF00) | ((rgb >> 16) & 0xFF)
 
 /// xterm's 256 colors: the 16 given, then a 6×6×6 cube (levels 0, 95, 135, 175, 215, 255),
 /// then 24 greys from 8 to 238.

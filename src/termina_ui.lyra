@@ -33,7 +33,7 @@ import ui.app.{
   SystemTitleBar
 }
 import ui.script.{ ScriptPlatform, timed_platform, parse_steps, Step, Waited }
-import ui.draw.{ Point, Size }
+import ui.draw.{ Point, Size, Color }
 import ui.backend.{ Platform, ToMaximized }
 import ui.text.{ Fonts, FontSpec, FontMetrics, fonts_new, glyph_atlas }
 import ui.style.{ OverflowVisible }
@@ -117,7 +117,9 @@ let main = () -> u8 => {
     view: view,
     update: update,
     subscriptions: subscriptions,
-    background: color(theme.bg),
+    // Cleared to nothing: the view's root paints the theme's background, which a see-through
+    // window shows the desktop through.
+    background: Color { r: 0, g: 0, b: 0, a: 0 },
     window_overflow: OverflowVisible,
     shortcuts: [Shortcuts { of: shortcuts }],
     menus: if mac { [Menus { of: menus_of }] } else { [] },
@@ -148,7 +150,9 @@ let windowed = (
     Some(p) => Size { w: p.width, h: p.height },
     None => Size { w: WIDTH, h: HEIGHT },
   }
-  let window = match gpu.open("Termina", size.w, size.h) {
+  // See-through while the background is not opaque — on Linux only a window opened so can be.
+  let see_through = (theme.bg >> 24) != 0xFF
+  let window = match gpu.open("Termina", size.w, size.h, see_through) {
     Ok(w) => w,
     Err(why) => {
       println("termina-ui: ${why}")
@@ -158,6 +162,7 @@ let windowed = (
   }
   var platform_ = window.platform
   var renderer = window.renderer
+  if see_through { let _ = platform_.set_backdrop_blur(settings.background_blur) }
   if let Some(p) = place {
     if p.placed { platform_.set_window_position(Point { x: p.x, y: p.y }) }
     if p.maximized { platform_.change_window(ToMaximized) }
