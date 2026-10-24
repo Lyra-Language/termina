@@ -8,9 +8,12 @@
 #                               #    build/release/Termina-<version>-linux-<arch>.AppImage
 #
 # **SDL3 goes with the program**, the one library Termina links that a machine may not
-# have (the PTY, ImGui and FreeType are linked in). It is taken from where pkg-config's
-# `sdl3` says, so a release builds it first (`tools/sdl3.sh`) and points PKG_CONFIG_PATH at
-# it; run on a developer's machine, it bundles Homebrew's or the system's.
+# have: the PTY and `ui`'s halves are linked in, and so are FreeType and HarfBuzz when the
+# build found static ones (`tools/textlibs.sh`, first on PKG_CONFIG_PATH) — which a release
+# does, and which is checked here: a program linking them as shared libraries is refused.
+# SDL3 is taken from where pkg-config's `sdl3` says, so a release builds it first
+# (`tools/sdl3.sh`) and points PKG_CONFIG_PATH at it; run on a developer's machine, it
+# bundles Homebrew's or the system's.
 #
 # - **macOS**: into `Termina.app/Contents/Frameworks/`, the program told to look there
 #   (`@rpath`, with `@executable_path/../Frameworks` its rpath), and the bundle signed —
@@ -123,6 +126,10 @@ case "$(uname -s)" in
     cp "$ROOT/build/termina" "$STAGE/"
     cp -L "$SDL_LIBDIR/libSDL3.so.0" "$STAGE/lib/"
     patchelf --set-rpath '$ORIGIN/lib' "$STAGE/termina"
+    # FreeType and HarfBuzz inside the program (tools/textlibs.sh), not the build machine's.
+    if readelf -d "$STAGE/termina" | grep -E 'NEEDED.*lib(freetype|harfbuzz)' >&2; then
+      die "the program links FreeType or HarfBuzz as a shared library: build with tools/textlibs.sh's first on PKG_CONFIG_PATH"
+    fi
     cp "$ROOT/LICENSE" "$ROOT/README.md" "$STAGE/"
     # SDL3 found in the archive, not wherever the build machine had it — asked as a user's
     # machine would ask, without the LD_LIBRARY_PATH a build may set, which outranks the

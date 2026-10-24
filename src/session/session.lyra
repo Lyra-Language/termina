@@ -1,9 +1,8 @@
 module session
 //! One tab: a program on a pseudo-terminal (the user's shell, usually), what it has drawn,
 //! where its shell is, and its command line — read every frame whether it is shown or not.
-//! What it looks like and how input reaches it are each front end's: ImGui's
-//! (`../gui/session_view.lyra`) and `ui`'s; [frame_layout] is where everything goes, which they
-//! share. `../termina.lyra` keeps the tabs.
+//! What it looks like and how input reaches it are `../face/`'s, on lyra's `ui`;
+//! [frame_layout] is where everything goes. `../face/app.lyra` keeps the tabs.
 
 import std.env.{ lookup }
 import std.io.{ remove_file }

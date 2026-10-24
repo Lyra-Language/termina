@@ -4,7 +4,8 @@ module term
 //! that looks like: its own foreground and background, the 16 ANSI colors, and xterm's
 //! 256-color palette built from them.
 //!
-//! Colors here are ImGui's: `0xAABBGGRR`, as `IM_COL32` packs them. A theme is made from
+//! Colors here are `0xAABBGGRR` — as Dear ImGui's `IM_COL32` packed them, when Termina drew
+//! with it — and `face` reads them as `ui`'s. A theme is made from
 //! the user's settings ([theme_of]); `../settings/settings.lyra` holds the themes offered.
 
 import settings.{ Settings, defaults }
@@ -109,7 +110,7 @@ impl Theme {
   }
 }
 
-/// An ImGui color as a program asking for it (OSC 10, 11) is told it: `rrrr/gggg/bbbb`, each
+/// A theme's color as a program asking for it (OSC 10, 11) is told it: `rrrr/gggg/bbbb`, each
 /// channel's byte twice, as X11's 16-bit form.
 pub let report_of = pure (c: u32) -> string => {
   let r = (c & 0xFF).to_hex(2)
@@ -125,7 +126,7 @@ pub let clear_color = pure (t: Theme) -> (f32, f32, f32) => (
   f32((t.bg >> 16) & 0xFF) / 255.0,
 )
 
-/// A settings colour as ImGui's `0xAABBGGRR`: `0xRRGGBB`, its top byte how transparent it is
+/// A settings colour as a theme's `0xAABBGGRR`: `0xRRGGBB`, its top byte how transparent it is
 /// (`settings.Colors`) — 0, as every theme's colours are, opaque.
 pub let abgr = pure (rgb: u32) -> u32 =>
   ((255 - ((rgb >> 24) & 0xFF)) << 24) | ((rgb & 0xFF) << 16) | (rgb & 0xFF00) | ((rgb >> 16) & 0xFF)
@@ -148,7 +149,7 @@ let palette_256 = pure (ansi: []u32) -> []u32 => {
   out
 }
 
-/// Half-way between two ImGui colors, opaque.
+/// Half-way between two theme colors, opaque.
 let blend = pure (a: u32, b: u32) -> u32 => {
   let r = ((a & 0xFF) + (b & 0xFF)) / 2
   let g = (((a >> 8) & 0xFF) + ((b >> 8) & 0xFF)) / 2

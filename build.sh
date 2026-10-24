@@ -3,12 +3,12 @@
 # Build Termina's programs into build/.
 #
 #   ./build.sh              # build/: the terminal (termina, and Termina.app on macOS) and
-#                           # the tests (vttest; uitest, the command line on a headless host;
-#                           # menutest, the Mac's menu bar)
+#                           # vttest; tools/check.sh plays the window headless
 #
 # Uses the sibling compiler, ../lyra/build/lyrac (run ../lyra/build.sh first), whose
-# install layout puts `std/`, `bindings/` and the bindings' C halves (`lib/liblyra-pty.a`,
-# `lib/liblyra-imgui.a`) beside it. Override with $LYRAC.
+# install layout puts `std/`, `bindings/`, `ui/` and the bindings' C halves (`lib/liblyra-*.a`)
+# beside it. Override with $LYRAC. FreeType and HarfBuzz are linked wherever pkg-config finds
+# them: a release points PKG_CONFIG_PATH at static ones first (tools/textlibs.sh).
 set -euo pipefail
 
 readonly ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -19,7 +19,7 @@ if [ ! -x "$LYRAC" ]; then
   exit 1
 fi
 
-# The settings and menus are markup (src/*.lui), generated into the modules beside them by
+# The Settings tab is markup (src/*.lui), generated into the module beside it by
 # lui, which sits beside lyrac: a module older than its markup is refused here rather than
 # built. `../lyra/build/lui src/<name>.lui` regenerates one.
 readonly LUI="$(dirname "$LYRAC")/lui"
@@ -32,10 +32,8 @@ fi
 mkdir -p "$ROOT/build"
 "$LYRAC" build -o "$ROOT/build/termina" "$ROOT/src/termina.lyra"
 "$LYRAC" build -o "$ROOT/build/vttest" "$ROOT/src/vttest.lyra"
-"$LYRAC" build -o "$ROOT/build/uitest" "$ROOT/src/uitest.lyra"
-"$LYRAC" build -o "$ROOT/build/menutest" "$ROOT/src/menutest.lyra"
-# Termina on `ui` (`src/termina_ui.lyra`), beside the ImGui app until `ui` has the rest.
-"$LYRAC" build -o "$ROOT/build/termina-ui" "$ROOT/src/termina_ui.lyra"
+# What the ImGui front end built, gone with it.
+rm -f "$ROOT/build/termina-ui" "$ROOT/build/uitest" "$ROOT/build/menutest"
 
 # **On macOS, also an app** — build/Termina.app, the same program in a bundle — so that it
 # opens from Finder and the Dock, and the system (and anything driving it, such as

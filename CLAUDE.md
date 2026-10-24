@@ -10,35 +10,30 @@ workspace's `CLAUDE.md` rules apply here too. **macOS and Linux** — Windows wa
 ## Commands
 
 ```bash
-../lyra/build.sh            # the compiler, std/, bindings/ and lib/liblyra-{pty,imgui}.a
-./build.sh                  # -> build/: termina (and Termina.app on macOS), termina-ui,
-                            #    vttest, uitest, menutest
+../lyra/build.sh            # the compiler, std/, bindings/, ui/ and lib/liblyra-*.a
+./build.sh                  # -> build/: termina (and Termina.app on macOS), vttest
 build/termina               # the login shell ($SHELL -l) in a window of tabs: ⌘T new (in the
                             #    shown tab's directory), ⌘W close, ⌘1–⌘9, ⌘⇧[ ⌘⇧]; a tab
                             #    closes when its shell ends, the window with the last
 build/termina CMD [ARG…]    # that program instead (as xterm -e), no integration — a test
                             #    script's colors, say, seen without typing
 open build/Termina.app      # the same, as a Mac app
-                            # Settings… (⌘,; Ctrl+, off macOS): font, size, spacing, colors —
-                            #    kept in ~/.config/termina/settings.json ($XDG_CONFIG_HOME)
-build/termina-ui            # Termina on lyra's `ui` instead of ImGui, beside it (below): the tab
-                            #    bar, the menus (the Mac's own bar; elsewhere a header bar's ☰),
-                            #    the Settings tab; the same CMD [ARG…]
-build/termina-ui --header … # drawn as off a Mac on a Mac too — the header bar — for checks
-build/termina-ui --print CMD …   # and, when it ends, its screen printed
-build/termina-ui --script STEPS [--png FILE] [CMD …]   # played headless (with
+                            # Settings… (⌘,; Ctrl+, off macOS): font, size, spacing, colors,
+                            #    the window — kept in ~/.config/termina/settings.json
+build/termina --header …    # drawn as off a Mac on a Mac too — the header bar — for checks
+build/termina --print CMD … # and, when it ends, its screen printed
+build/termina --script STEPS [--png FILE] [CMD …]   # played headless (with
                             #    SDL_VIDEODRIVER=dummy): `ui.script`'s steps, `wait:N` real time
-tools/termina-ui-check.sh   # termina-ui's checks, scripted, each in a HOME of its own
-build/vttest                # parser, screen, editor, PTY, zsh and bash checks; exit 1 on a failure
-SDL_VIDEODRIVER=dummy build/uitest   # the command line on a headless ImGui host, driven by
-                            #    injected keys, typing and clicks (double-click included)
-build/menutest              # the Mac's menu bar, installed and read back (SDL's real video
-                            #    driver, no window)
-../lyra/build/lui src/menus_view.lui     # regenerate a markup's module after editing it
-                            #    (or `lui --watch src/*.lui`); build.sh refuses a stale one
+tools/check.sh              # the window's checks, scripted, each in a HOME of its own
+build/vttest                # parser, screen, editor, PTY, zsh and bash checks, and the
+                            #    window's logic; exit 1 on a failure
+../lyra/build/lui src/settings_page.lui  # regenerate the Settings markup's module after
+                            #    editing it (or `lui --watch src/*.lui`); build.sh refuses a stale one
 ./package.sh 0.2.0          # after build.sh: build/release/Termina-0.2.0-macos-arm64.zip, or
                             #    termina-0.2.0-linux-<arch>.tar.gz, SDL3 inside; with
                             #    TERMINA_APPIMAGE=1 on Linux, Termina-0.2.0-linux-<arch>.AppImage
+tools/textlibs.sh build/deps/text   # static FreeType and HarfBuzz, for a release's build
+                            #    (PKG_CONFIG_PATH=build/deps/text/lib/pkgconfig:… ./build.sh)
 git tag v0.2.0 && git push origin v0.2.0   # a release: built, checked and published by
                             #    .github/workflows/release.yml (macOS arm64, Linux x86_64
                             #    and arm64); Actions ▸ Release ▸ Run workflow is a dry run
@@ -50,8 +45,16 @@ git tag v0.2.0 && git push origin v0.2.0   # a release: built, checked and publi
   (a dry run may name other refs) beside Termina, builds SDL3, lyra (Go's build cache
   cleared first: it does not hash the grammar's `#include`d parser, so a restored one
   builds lyra with the old grammar) and Termina, runs
-  vttest, uitest and menutest, packages, and publishes the archives with the commits each
+  vttest and `tools/check.sh`, packages, and publishes the archives with the commits each
   was built from in the notes — a tag of Termina pins nothing of the compiler's.
+- **FreeType and HarfBuzz are built static** (`tools/textlibs.sh`, pinned and SHA-256
+  checked, no optional dependencies, HarfBuzz from its one amalgamated source without a C++
+  runtime) and come first on `PKG_CONFIG_PATH`, so the program carries them: `ui` draws its
+  text with them, and a machine may have neither (Homebrew's are built for the macOS they
+  run on). `package.sh` refuses a Linux program linking either as a shared library, and a
+  Mac's linking anything outside the system and the bundle. On Linux lyrac links a program's
+  libraries as one group, since two static archives depend on each other in an order the
+  linker would otherwise need given.
 - **SDL3 is built from source** (`tools/sdl3.sh`, lyra's pin — move the two together) and
   **travels with the program**: in `Termina.app/Contents/Frameworks` (found through
   `@rpath`), or in the archive's `lib/` (an rpath of `$ORIGIN/lib`, set by patchelf).
@@ -65,7 +68,7 @@ git tag v0.2.0 && git push origin v0.2.0   # a release: built, checked and publi
   mounted, where there is no FUSE (`APPIMAGE_EXTRACT_AND_RUN`); an AppImage of another
   processor does not run under emulation, its header's magic tripping the emulator.
 - **The Mac app runs on macOS 13 and later** (`MACOSX_DEPLOYMENT_TARGET`, read by clang,
-  SDL3's CMake and ImGui's build). Linux archives run on glibc 2.39 and later (Ubuntu
+  SDL3's CMake and the text libraries' build). Linux archives run on glibc 2.39 and later (Ubuntu
   24.04's).
 - **The Mac app is signed with a Developer ID and notarized** when the repository has the
   secrets below; without them, ad hoc, with a warning in the run and the release notes.
@@ -96,49 +99,37 @@ git tag v0.2.0 && git push origin v0.2.0   # a release: built, checked and publi
 ## Architecture
 
 ```
-shell ⇄ bindings.pty ──bytes──▶ vt.Parser ──[]Action──▶ vt.Screen ──▶ gui (ImGui DrawList)
-  ▲                                                       │ marks          │ or face (ui's PaintOps)
+shell ⇄ bindings.pty ──bytes──▶ vt.Parser ──[]Action──▶ vt.Screen ──▶ face (ui's PaintOps)
+  ▲                                                       │ marks
   │                                                       ▼ (OSC 133)
   ├──── keys as typed (control_bytes…) ◀──── Mode: Raw ─┬─ AtPrompt(line, col)
   └──── submission (bracketed paste + ⏎) ◀── term.CommandLine ◀─ editor.Editor
 ```
 
-**Two front ends over one terminal.** `session`, `term`, `vt`, `editor`, `shell` and
+**One front end over the terminal.** `session`, `term`, `vt`, `editor`, `shell` and
 `settings` know no interface framework — they import only `ui.draw`'s `Point` and
-`ui.backend`'s keys, pure Lyra, never `bindings.imgui` (a module importing it links
-ImGui). `gui` draws them with ImGui (`build/termina`, the app that ships); `face` paints them
-on lyra's `ui` (`build/termina-ui`), the move `../lyra/ui/TERMINAL.md` plans, until `ui` has
-the widgets the rest needs — tabs, menus off macOS, the Settings tab's controls, a title bar
-of the program's.
+`ui.backend`'s keys, pure Lyra. `face` paints them on lyra's `ui` (`../lyra/ui/WINDOW.md`):
+each tab a painter taking input raw, under `ui`'s tab bar, menus and Settings tab. (Until
+10/23 a Dear ImGui front end, `gui`, drew them; `ui` replaced it.)
 
 | file | what |
 |---|---|
-| `src/termina.lyra` | `main`: the ImGui host and the window's state (`App`), and `frame`: the tabs read, the menus and keys carried out, the window drawn; fonts |
-| `src/termina_ui.lyra` | `main` on `ui`: the fonts (the settings' family as `mono`, the fallbacks), the window on the GPU, or played headless by `--script` through SDL's 2D renderer, a `wait:` taking real time in slices so the shell is heard; `--print`, `--png` |
-| `package.sh`, `tools/sdl3.sh`, `tools/appimagetool.sh` | a release archive with SDL3 inside — the Mac app signed and notarized when given an identity and key, an AppImage on Linux — SDL3 built from source for it, and the pinned appimagetool (Releases, above) |
-| `tools/termina-ui-check.sh` | termina-ui's checks: scripted runs, each in a `HOME` of its own, their screens compared |
+| `src/termina.lyra` | `main`: the fonts (the settings' family as `mono`, the fallbacks), the window on the GPU — at its remembered place, see-through if the background is — or played headless by `--script` through SDL's 2D renderer, a `wait:` taking real time in slices so the shell is heard; `--print`, `--png`, `--header`; on Linux the window's id and an AppImage's desktop entry |
+| `package.sh`, `tools/sdl3.sh`, `tools/textlibs.sh`, `tools/appimagetool.sh` | a release archive with SDL3 inside — the Mac app signed and notarized when given an identity and key, an AppImage on Linux — SDL3, and static FreeType and HarfBuzz, built from source for it, and the pinned appimagetool (Releases, above) |
+| `tools/check.sh` | the window's checks: scripted runs, each in a `HOME` of its own, their screens or settings compared — tabs, menus, the Settings tab, and the command line at zsh's prompt |
 | `assets/` | the icon: `termina.svg` the source; `Termina.icns` (the app's) and `termina.png` made from it (`assets/README.md`); `Termina.entitlements`, what the signed app's commands may ask for (Releases, above) |
 | `src/desktop/desktop.lyra` | Termina on a Linux desktop: the id its windows go by (`APP_ID`), and, run as an AppImage, the desktop entry and icon it installs for the launcher and the dock |
 | `src/session/session.lyra` | one tab: its PTY, screen, `Mode`, blocks and command line, read when it has written; where its frame's parts go (`frame_layout`: the box, the grid's lines, `Rows`, the page), the grid's selection, the bytes a key sends (`key_sequence`, `control_bytes`) — no framework |
 | `src/term/line.lyra` | the editor at the prompt (`CommandLine`): keys and typed text (`LineInput`) and the mouse into editor calls, history, Ctrl+R, the completion menu's layout; what it asks of its host as an `Outcome` (`Submit`, `Send`, `Complete`, `Clip`, `PasteWanted`) — no framework |
-| `src/term/tabs.lyra` | a tab's label and the tab commands both front ends carry out (`TabCommand`) |
+| `src/term/tabs.lyra` | a tab's label and the tab commands the window carries out (`TabCommand`) |
 | `src/term/theme.lyra` | recorded colors → pixels (ABGR): the theme's own pair, ANSI 16, xterm's 256; inverse, dim, hidden |
 | `src/term/typeahead.lyra` | keys typed ahead, raw, made into lines (Backspace, Ctrl+U/W applied; escapes dropped) |
-| `src/gui/session_view.lyra` | a tab drawn with ImGui — the blocks' cards, the grid, the box, the scrollbar — its mouse polled, and its keys as ImGui reports them sent (`send_keys`) |
-| `src/gui/line_view.lyra` | the command line under ImGui: its input polled each frame (`update_line`), the clipboard, and it and its menu drawn |
-| `src/gui/grid.lyra` | a screen line drawn: background runs, text runs of one style, faces, underlines, strike |
-| `src/gui/tabs.lyra` | the tab bar (reorderable, its order read back) and the tab shortcuts |
-| `src/gui/modifiers.lyra` | the modifier keys as pressed — ImGui's macOS Ctrl/⌘ swap undone |
-| `src/gui/settings_window.lyra` | the Settings tab drawn: the markup rendered and its events carried out (`carry_out`) |
 | `src/face/app.lyra` | the window on `ui` (`Term`, `TermEvent`): the bars over the shown tab's painter taking raw input, each tab's PTY a `Readable`, the shortcuts, update |
 | `src/face/settings.lyra` | the Settings tab on `ui`: its events carried out on the window's settings — the theme, the font (a family loaded through `LoadFonts`), the file written a moment after the last change |
-| `src/settings_page.lui` | the Settings tab as `ui`-target markup; `settings_page.lyra` is generated from it (`settings_view.lui` is the ImGui app's) |
+| `src/settings_page.lui` | the Settings tab as `ui`-target markup — font family or file, size, spacing, theme (saved ones too), every color, bold as bright, the window; `settings_page.lyra` is generated from it (edit the `.lui`) |
 | `src/face/window.lyra` | the chrome on `ui`: the tab bar, the header bar off a Mac, the menus as data (`menus_of` for the Mac's bar, `header_entries` for ☰), all in `ui`'s theme made from Termina's |
-| `src/face/paint.lyra` | a tab painted (`paint_tab`): the grid as `PaintCells`, the cards, the box, the command line and its menu, the scrollbar — from `session.frame_layout`, as `gui` draws it |
+| `src/face/paint.lyra` | a tab painted (`paint_tab`): the grid as `PaintCells`, the cards, the box, the command line and its menu, the scrollbar — from `session.frame_layout` |
 | `src/face/input.lyra` | keys, typed text and the pointer as the painter hears them: to the command line at a prompt, else encoded for the program; the mouse selecting, editing or reported |
-| `src/menus_view.lui` | the menus as `.lui` markup, one tree for both bars; `menus_view.lyra` is generated from it (edit the `.lui`) |
-| `src/menus/menus.lyra` | the menus shown: installed in the Mac's bar (once, greyed each frame) or drawn as ImGui's main menu bar elsewhere |
-| `src/menutest.lyra` | the menu bar installed and read back |
 | `src/shell/shell.lyra` | shell integration (zsh's `.zshenv` through `ZDOTDIR`, bash's rc file through `--rcfile`): the marks, Tab's completion widget and its request file, the history files, what Return sends |
 | `src/editor/editor.lyra` | the command line's editor — text, caret, selection, motions, words, undo, layout; **pure** |
 | `src/editor/syntax.lyra` | the command line's syntax for coloring: each rune's kind (command, option, quoted, variable, operator, comment); **pure** |
@@ -148,21 +139,19 @@ of the program's.
 | `src/vt/selection.lyra` | a selection on the screen and scrollback: its text, a word's span; **pure** |
 | `src/vt/style.lyra` | a `Cell`'s colors and attributes, and SGR on the `Pen` that writes them; **pure** |
 | `src/settings/settings.lyra` | the user's settings, the themes offered, the file (read leniently), the monospaced families found |
-| `src/settings_view.lui` | the Settings tab as `.lui` markup — font family or file, size, spacing, theme (saved ones too), every color, bold as bright; `settings_view.lyra` is generated from it |
-| `src/vttest.lyra` | the checks: byte strings against actions and screens, the editor on text, real programs, zsh and bash on a PTY (each skipped, and said so, where not installed) |
-| `src/uitest.lyra` | the command line on a headless ImGui host: injected input, the editor checked after |
+| `src/vttest.lyra` | the checks: byte strings against actions and screens, the editor on text, real programs, zsh and bash on a PTY (each skipped, and said so, where not installed), and the window's logic — the theme, sessions, mouse reports, the settings file |
 
 - **A constructor's name is the program's, not its module's**: Lyra matches them program-wide
   by name, so Termina's own may not take one `ui` or `bindings.sdl3` has (`vt`'s parser state
   is `EscapeState`, not `Escape`; the editor's `OtherEdit`, not `Other`).
-- **termina-ui's menus are one tree as data** (`face/window.lyra`): on a Mac `App.menus`
+- **The menus are one tree as data** (`face/window.lyra`): on a Mac `App.menus`
   installs them in the system's bar, which holds their keys (⌘⇧[ given to AppKit as `⌘{`,
   `ui.sdl3`'s doing); elsewhere `App.title_bar` is `DrawnTitleBar` and the header bar draws
   `+`, the title, ☰ (`menu_button` over `header_entries`) and `window_buttons`, the app taking
   the drawn menus' keys. Off a Mac, Edit's Undo and Redo show no key: Ctrl+Z is a running
   program's. The chrome is `themed` in a `ui` theme made from Termina's (`chrome_theme`,
   `chrome_sheet`): the tab colours, the completion menu's for a menu.
-- **termina-ui's Settings tab** is the last of the tab bar's, out of the tabs' order, shown in
+- **The Settings tab** is the last of the tab bar's, out of the tabs' order, shown in
   place of the terminal (which goes on being read); ⌘W while it is shown closes it. A change
   takes at once: the theme is rebuilt and told to every tab — the window's root takes its
   background, `App.background` being fixed at the start — and the font is measured again; a
@@ -176,36 +165,30 @@ of the program's.
   writes `#rrggbbaa` for a background that is not (`hex_of`, `color_of`), and every other
   colour is made opaque wherever it comes from (`background_alone_clear`, `with_color`,
   `with_ansi`; their swatches are `opaque`, no opacity strip). **A background that is not
-  opaque makes the window see-through** (`ui`'s `set_see_through`; termina-ui clears to
+  opaque makes the window see-through** (`ui`'s `set_see_through`; Termina clears to
   nothing and its view's root paints the background), its title bar staying opaque (a Mac's
   through `bindings.gpu`'s shim, the header bar's own background elsewhere), with what is
   behind it blurred by `background_blur` (Settings ▸ Window, macOS only). On Linux the window
   is see-through only if it opened so: a change takes effect at the next start.
-- **termina-ui reopens the window where it was last closed** (Settings ▸ Window,
+- **Termina reopens the window where it was last closed** (Settings ▸ Window,
   `Settings.remember_window`, on by default): as the window closes, `place_of` keeps its place,
   size and whether it is maximized in the settings file (`window`) — while maximized or
   minimized, the place and size from before, since the system no longer says them — and it
   opens at that size, moved there if a display shows the place, maximized again. No place on
   Wayland, which never tells a window where it is: the size alone. A script's run neither
   restores nor records it.
-- **termina-ui's sections stand `PAD` in from the window's edges**, the tab bar too: the
+- **The sections stand `PAD` in from the window's edges**, the tab bar too: the
   text is set `INSET` (`PAD + BOX_MARGIN`) in across, the cards and the box reaching
   `BOX_MARGIN` out from it, and the box ends `PAD` above the window's foot. Every place a
   column turns into an x, or back (the pointer, the caret), goes through `INSET`. The tabs
   are rounded above only (`Style.corners`) and stand on the terminal.
-- **termina-ui takes the keyboard when its painter is first laid out** (`ViewSized` asks
-  `FocusKeyed("term")`): `ui` focuses nothing by itself. **Text typed at a prompt is handed over
+- **The terminal takes the keyboard when its painter is first laid out** (`ViewSized` asks
+  `FocusKeyed("term")`): `ui` focuses nothing by itself. The painter takes input raw
+  (`RawInput`): the arrows and Tab are the shell's, ⌘ (Ctrl+Shift off macOS) is the
+  terminal's own, Ctrl+letter the control character. **Text typed at a prompt is handed over
   without the modifiers**: SDL types nothing for a Ctrl or ⌘ chord, and the last key's may be
-  stale (a script's text comes with no key before it) — the command line's chord guard is for
-  ImGui's polling. **The terminal scrolls itself**, not in a `ui` scroller, since its columns
-  and rows are the view's (`face/app.lyra`'s note).
-- **A frame is `frame()`, over the module-level `app`**, called by `main`'s loop and by the
-  host while the window is resized (`bindings.imgui`'s `set_redraw`, a `pub extern` called in
-  `unsafe`), so the contents follow the edge as it is dragged — on macOS AppKit's
-  resize loop holds the main thread inside `begin_frame` until the mouse is let go. **`app`
-  is read after `begin_frame`**: the frames drawn during a resize run inside it, and a copy
-  taken before would undo them, the terminals' parsed screens included. State a frame keeps
-  is a field of `App`, never a local of `main`.
+  stale (a script's text comes with no key before it). **The terminal scrolls itself**, not
+  in a `ui` scroller, since its columns and rows are the view's (`face/app.lyra`'s note).
 - **On Linux the window's id is `dev.lyra_language.Termina`** (`desktop.APP_ID`, set as
   SDL's `SDL_APP_ID` before the window opens: its Wayland app id and X11 class), and a
   desktop entry's file name and `StartupWMClass` must be that id for the dock to show its
@@ -220,50 +203,15 @@ of the program's.
 - **Every tab is read every frame, shown or not** (`Session.step`), so a program writing in a
   hidden tab never waits on a full terminal; only the shown one is drawn and gets keys.
   **Reading only ever ends a tab** (`alive` cleared, never set): a tab the user closed
-  (`request_close`) stays closed though its program has not ended yet. **Tabs drag into a new order** (`TAB_BAR_FLAGS_REORDERABLE`): ImGui keeps that order to
-  itself, so `gui.tab_bar` reads each tab's place after drawing it and answers the order
-  (`TabBar.order`), and the loop puts its sessions in it — one order for the bar, ⌘1–9 and
-  ⌘⇧[ ⌘⇧], the shown tab followed. A
-  tab's label is `name###tab<id>`: ImGui keys a tab by the part after `###`, which a
-  changing title must not move. The grid is a child window under the bar, so it scrolls
-  alone; focus is asked of root and child (`FOCUSED_FLAGS_ROOT_AND_CHILD_WINDOWS`), and a
-  frame whose keys were a tab shortcut gives the tab none.
-- **The menus are one tree** (`menus_view.lui`, built each frame), shown three ways by
-  `menus/menus.lyra`; the Mac's install looks through the item components a menu holds
-  (`flat`); a choice is a `MenuChoice`, carried out in one place in the loop.
-  An item's choice must not depend on the frame (Show Previous Tab, not the tab it was):
-  the Mac's bar sends what it was installed with.
-- **On a Mac the menu bar is Termina's own** (`menus.install_native`, through
-  `bindings.menubar`), replacing SDL's, whose Window ▸ Close took ⌘W and closed the window —
-  the app — not the tab. Installed once — its shape never changes there, the tabs being
-  listed only in the drawn bar — and greyed each frame from the tree (`sync_native`). Shell
-  holds New Tab ⌘T, Show Previous/Next Tab ⌘⇧[ ⌘⇧] (spelled `{` `}`, as AppKit matches
-  shifted keys) and Close Tab ⌘W, and `tab_command` leaves those keys alone when the bar is
-  there, since AppKit hands a key equivalent to SDL too. ⌘1–⌘9 have no items and stay keys.
-  View holds the font's size — Default Font Size ⌘0, Bigger ⌘=, Smaller ⌘- — a point at a
-  time within the settings' range, kept as any setting is (`FontBigger`, `FontSmaller`,
-  `FontDefault`). The Window menu is macOS's standard one.
-- **On Linux the menus are a GNOME header bar in the window's title bar**, as Ubuntu's
-  terminal has them (`menus.draw_header_bar`; the host made with `HOST_CUSTOM_TITLE_BAR`,
-  so the window has no title bar of the system's): `+` (a new tab) at its left, the title
-  in its middle, a ☰ button before the window's buttons whose popup holds New Tab, Settings…, Quit and the menus as submenus (`menus_view.lui`'s
-  `header_menu`, built from the same item components as the bar). The bar is half again
-  the classic menu bar's height (`HEADER_SCALE`); `+` and ☰ are `title_bar_button`s, the
-  window buttons' size, their glyphs lines drawn from the bar's height (`draw_glyph`): the
-  interface's font has no ☰. The corners are square: SDL's GPU API refuses the
-  transparent window round ones would need (3.4's, on every driver). The
-  tab bar has no `+` there (`tab_bar`'s `plus`). Its empty stretch moves the window and its
-  edges resize it; a double-click on it does nothing yet (SDL starts a move first).
-- **Off macOS Termina draws the same tree** (`menus.draw_menu_bar`, ImGui's main menu bar),
-  with Quit in the Termina menu and a Window menu (Minimize, Maximize, the tabs, Alt+1–9),
-  where there is no header bar (a headless host, a platform not yet given one).
-  There the keys stay keys and an item only shows them (Ctrl+Shift+…, Ctrl+Z for Undo,
-  Ctrl+PgUp/PgDn; the font's size Ctrl+Shift+= - 0, since Ctrl+- is readline's undo). The
-  bar takes its height off the viewport's work area, which the terminal's window fills.
+  (`request_close`) stays closed though its program has not ended yet. **Tabs drag into a new
+  order** (`ui`'s tab bar raising `TabMoved`, `face/app.lyra`'s `tab_moved`), the window's
+  list put in it — one order for the bar, ⌘1–9 and ⌘⇧[ ⌘⇧], the shown tab followed. A tab
+  is keyed by its session's id (`tab <id>`), which a changing title must not move. Past the
+  strip's width the tabs shrink, then the rest go into the strip's more-tabs menu.
 - **Edit's items are one path with their keys** (`EditAction`): `CommandLine.edit_action` at a
   prompt, and while a program runs only Paste, sent bracketed when the program set
-  `?2004` (`session.pasted`). With the menu bar the command line leaves ⌘Z/⌘X/⌘C/⌘V/⌘A to
-  it (`menu_keys`), and each frame greys what would do nothing (`Session.can`).
+  `?2004` (`session.pasted`). The Mac's bar holds ⌘Z/⌘X/⌘C/⌘V/⌘A and sends Edit's item
+  (`EditAsked`); each item is greyed where it would do nothing (`Session.can`).
 - **The screen answers questions through `replies`** (DA1, DA2, XTVERSION, DSR, DECRQM, the
   color queries OSC 10/11/12), which a session writes to the program each frame; a check
   running a program on a PTY must answer them too (`vttest`'s `full_screen`).
@@ -283,16 +231,13 @@ of the program's.
   line; a copy joins such a line to the next, its trailing blanks kept. Being a cell's bit
   it travels with the line through scrolls, scrollback and inserts, and a write or erase of
   that cell clears it.
-- **The terminal's text is hinted off macOS** (`bindings.imgui`'s `set_font_hinting`:
-  FreeType for the fonts from files, the faces and their fallbacks): a Linux display is most
-  often a pixel a point, where stb_truetype's unhinted stems straddle two columns and look
-  soft. The interface — tabs, menus, settings — keeps ImGui's own font as stb_truetype
-  draws it, hinted only where the cells are. A Mac draws text unhinted, and Termina there does
-  too. Hinted advances are whole pixels, so a cell is.
+- **Text is hinted off macOS** (`ui.text`'s `Fonts.hinting`, FreeType's light hinting): a
+  Linux display is most often a pixel a point, where unhinted stems straddle two columns and
+  look soft. A Mac draws text unhinted, and Termina there does too. Hinted advances are whole
+  pixels, so a cell is.
 - **Glyphs a family lacks come from fallback fonts** (`settings.fallback_fonts`: Arial
-  Unicode or Noto Sans CJK, then Apple Symbols or DejaVu Sans), merged into every face
-  (`bindings.imgui`'s `merge_font_file`). Color emoji are not drawn: stb_truetype has no
-  color, and ImGui's 16-bit `ImWchar` reaches only the BMP.
+  Unicode or Noto Sans CJK, then Apple Symbols or DejaVu Sans), `ui.text`'s fallbacks
+  (`add_fallback`). Color emoji are not drawn yet (`ui.text` has no colour glyphs).
 - **A command is a block of the transcript** (`Session.blocks`, `Block`): `C` opens one
   from the last prompt's `A` line (`OutputStart(line)`), `D` closes it
   (`CommandEnd(status, line)`, its line the first the output did not write on). Drawn as a
@@ -327,10 +272,8 @@ of the program's.
   `colors` in it, read as `colours` where a file has no `colors`** (`colors_in`,
   `OLD_COLORS_KEY`): files from before 10/20 spelled them so, the current ones and each
   saved theme's.
-- **Settings take at once and are kept when the mouse is let go**: a change rebuilds the
-  theme (`term.theme_of`), reloads the faces only when the family or file changed (ImGui keeps
-  a face per file; its size is chosen as it is pushed), and is written to the file once no
-  button is held, not every frame of a slider's drag. The file is read leniently — a
+- **Settings take at once and are kept a moment after the last change** (`face/settings.lyra`,
+  above). The file is read leniently — a
   setting missing or wrong keeps its default — and a theme named in it gives the colors a
   `colors` object does not. Programs asking the colors (OSC 10/11) are told the theme's.
 - **A theme is every color Termina draws**, not only the grid's: the sections' input (the
@@ -341,20 +284,16 @@ of the program's.
   row. A theme names its text, background, cursor, selection, sections and ANSI sixteen;
   the rest is made from them (`settings.colors_of`), and a dark theme's sections lighten
   its background, a light one's darken it (`sections_of`). The settings edit each, and an
-  edit makes the theme `Custom`. Only ImGui's own widgets — the settings' fields, the
-  menus — keep ImGui's style.
-- **The settings are a tab** (`gui.settings_panel` in `draw_window`), written as markup
-  (`settings_view.lui`) whose every control is an event (`SettingsEvent`, `carry_out`):
-  the sliders' values (the size made whole points), and each color by its field's name
+  edit makes the theme `Custom`. The chrome — tabs, menus, the Settings tab's controls — is
+  `ui`'s, in a `ui` theme made from Termina's (`chrome_theme`).
+- **The settings are markup** (`settings_page.lui`) whose every control is an event
+  (`SettingsEvent`, carried out by `face/settings.lyra`'s `settings_asked`): the sliders'
+  values (the size made whole points), and each color by its field's name
   (`SetColor("tab_hovered", …)`, `settings.color_named`/`with_color`) or its ANSI index
   (`with_ansi`, into an array of its own — the one a theme's colors hold is shared by
   every copy of them). An edited color makes the theme `Custom`. The color groups stand side
-  by side as the width allows (a wrapping `Row` of `Group`s, each its heading over a form
-  of its own), wrapping to new lines in a narrow window; uitest draws it at both widths. Settings… opens a
-  Settings tab at the tab bar's right end, out of the tabs' order (`TAB_ITEM_FLAGS_TRAILING`,
-  as `+` is), and shows it; it fills the tabs' area in the interface's font. Its × or ⌘W
-  while it is shown closes it; a terminal's tab chosen by a key or a click takes over. The
-  terminals go on being read behind it.
+  by side as the width allows (a wrapping `Flex` of columns, each its heading over its
+  swatches), wrapping to new lines in a narrow window.
 - **The user's themes are saved in the settings file** (`Settings.themes`, `SavedTheme`):
   the colors under a name not Termina's own nor `Custom` (`can_save_as`; a saved one of
   that name replaced), listed after Termina's, deleted to `Custom` with the colors kept.
@@ -370,15 +309,8 @@ of the program's.
   one variable font. Bold italic falls back to the italic face drawn bold.
 - **Lines are separate arrays** (`blank_line`): rows are written in place, and two rows
   sharing one array show each other's text.
-- **A cell's width is measured over 100 characters**: ImGui's `CalcTextSize` rounds up to a
-  whole pixel, which over one character put the cursor cells to the right of the text.
-- **Read modifiers through `gui.held()`, never `io.key_ctrl()`/`key_super()`.** ImGui swaps
-  Ctrl and ⌘ on macOS (`ConfigMacOSXBehaviors`), so its Ctrl is ⌘ there; a terminal needs
-  the keys themselves. The headless host turns the swap off, so `uitest`'s
-  `check_mac_modifiers` turns it back on to test what the real window does.
-- **Keys**: ImGui's keyboard navigation is turned off (the arrows and Tab are the shell's);
-  typed text arrives through `bindings.imgui`'s `request_text_input`/`typed_text`. ⌘ (Ctrl+Shift
-  off macOS) is the terminal's own; Ctrl+letter is the control character.
+- **A cell is the font's advance wide** (`face.grid_of`, from `MeasureFont`'s metrics) and
+  its size times the spacing tall, whole points.
 - **At a prompt the command line is a box pinned to the window's foot**, as Warp has it: the
   shell's prompt (the `B` line's cells before the input column) on its first row, the
   editor from column 0 below, the completion menu opening upward (`Place.menu_above`, its
@@ -462,7 +394,6 @@ of the program's.
   unended rest goes into the editor.
 - **Editor edits build new arrays** (undo snapshots share buffers); typing joins one undo
   step until a word ends, rune deletes join, word and line deletes stand alone.
-- **ImGui's mouse is at -FLT_MAX when it is nowhere**: test before any cell arithmetic.
 - **Gaps in Lyra or its bindings go in `../lyra/todo.md`**, as Sheliak's do.
 
 ## Plan

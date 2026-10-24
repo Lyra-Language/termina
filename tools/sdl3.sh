@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 #
 # Build SDL3 from its release source for a Termina release: a shared library and its
-# pkg-config file under <prefix>, for lyra's build (bindings/imgui) and Termina's to build
+# pkg-config file under <prefix>, for lyra's build (its `ui` bindings) and Termina's to build
 # against, and package.sh to put beside the program.
 #
 #   tools/sdl3.sh <prefix>       # -> <prefix>/lib/libSDL3.{0.dylib,so.0}, lib/pkgconfig/sdl3.pc

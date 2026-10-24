@@ -95,7 +95,7 @@ pub let settings_asked = (t: mut Term, e: SettingsEvent) -> []Command<TermEvent>
     },
     DeleteSavedTheme => delete_theme(t.settings, t.settings.theme_name),
     ToggleBoldBright => { t.settings.bold_is_bright = !t.settings.bold_is_bright },
-    // Kept as it closes: the place itself is taken then (termina_ui.lyra's `place_of`).
+    // Kept as it closes: the place itself is taken then (termina.lyra's `place_of`).
     ToggleRememberWindow => { t.settings.remember_window = !t.settings.remember_window },
     SetBlur(radius) => { t.settings.background_blur = f32(radius.round()) },
     ResetSettings => { t.settings = defaults() },

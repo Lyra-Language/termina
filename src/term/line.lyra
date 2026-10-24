@@ -469,8 +469,8 @@ impl CommandLine {
 
   /// One key or typed text, as the front end hands them over (a frame's text before its keys,
   /// as typing comes first): what the command line asks of the terminal for it. A key's
-  /// `Character` is its unshifted character; `mods` are the keys as pressed, never ImGui's
-  /// macOS swap of Ctrl and ⌘.
+  /// `Character` is its unshifted character; `mods` are the keys as pressed, Ctrl and ⌘ never
+  /// swapped.
   pub let input = (self: mut, wrap: Wrap, i: LineInput) -> Outcome => {
     let mods = match i {
       LineKey(_, m) => m,

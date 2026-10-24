@@ -1,7 +1,7 @@
 <!--
   Termina's settings on lyra's `ui`, as markup: `../lyra/build/lui src/settings_page.lui`
-  writes settings_page.lyra beside it. termina-ui's Settings tab draws it (`face/app.lyra`)
-  and carries out its events (`face/settings.lyra`). (`settings_view.lui` is the ImGui app's.)
+  writes settings_page.lyra beside it. The Settings tab draws it (`face/app.lyra`) and carries
+  out its events (`face/settings.lyra`).
 -->
 
 <script target="ui">

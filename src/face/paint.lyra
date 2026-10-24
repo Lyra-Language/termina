@@ -1,14 +1,13 @@
 module face
-//! A tab drawn for `ui` (`../gui/session_view.lyra` draws it for ImGui): the ops a painter
-//! answers, in its own coordinates, from the tab's state and where everything goes
-//! (`session.frame_layout`, which both front ends share) — the blocks' cards under the text,
+//! A tab drawn for `ui`: the ops a painter answers, in its own coordinates, from the tab's state
+//! and where everything goes (`session.frame_layout`) — the blocks' cards under the text,
 //! the grid's lines a cell at a time (`PaintCells`: a run of one color, each cell its own face),
 //! how each block ended over them, the selection, and at a prompt the command line's box with
 //! the prompt in it, or the cursor while a program runs.
 //!
-//! **The theme's colors are ImGui's** (`0xAABBGGRR`, `../term/theme.lyra`): [color] reads them
-//! as `ui`'s. **Underlines and the strikeout are where the font says** (`FontMetrics`), not at
-//! fractions of the size as ImGui's grid has them, and **bold is a face** — the family's, a
+//! **The theme's colors are `0xAABBGGRR`** (`../term/theme.lyra`): [color] reads them as `ui`'s.
+//! **Underlines and the strikeout are where the font says** (`FontMetrics`), not at fractions
+//! of the size, and **bold is a face** — the family's, a
 //! variable font's instance or one made bold — never the text drawn twice.
 
 import ui.draw.{ Point, Rect, Radii, Color, Fill, Border, radius }
@@ -70,7 +69,7 @@ pub struct Grid {
 }
 
 /// The grid for a font's measurements: a cell as wide as its advance and as tall as its size
-/// times `spacing`, a whole number of points, its text centred in it as ImGui's is.
+/// times `spacing`, a whole number of points, its text centred in it.
 pub let grid_of = pure (font: FontSpec, m: FontMetrics, spacing: f32) -> Grid => {
   let cell_y = f32((font.size * spacing).round())
   let text_height = m.ascent + m.descent
@@ -91,7 +90,7 @@ pub const PAD: f32 = 10.0
 /// box — stand `BOX_MARGIN` out from it, and [PAD] in from the window's edges.
 pub const INSET: f32 = PAD + BOX_MARGIN
 
-/// An ImGui color (`0xAABBGGRR`) as `ui`'s.
+/// A theme's color (`0xAABBGGRR`) as `ui`'s.
 pub let color = pure (abgr: u32) -> Color => Color {
   r: u8(abgr & 0xFF),
   g: u8((abgr >> 8) & 0xFF),

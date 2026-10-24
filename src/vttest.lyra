@@ -38,8 +38,21 @@ import settings.{
   color_of,
   sections_of
 }
-import term.{ abgr }
+import term.{ abgr, dark_theme, Theme, typed_lines, command_line }
+import session.{
+  block_rows_layout,
+  Session,
+  Block,
+  open_session,
+  close_session,
+  tab_title,
+  directory,
+  mouse_report,
+  wheel_keys,
+  meta,
+}
 import vt.{
+  HIDDEN,
   runes_of,
   Spot,
   selected_on,
@@ -82,6 +95,11 @@ let main = () -> u8 => {
   failed += check_desktop_entry()
   failed += check_window_place()
   failed += check_color_alpha()
+  failed += check_theme()
+  failed += check_typeahead_lines()
+  failed += check_sessions()
+  failed += check_mouse_reports()
+  failed += check_meta_and_bright()
   failed += check_screen()
   failed += check_style()
   failed += check_modes()
@@ -1163,6 +1181,273 @@ let describe_marks = (s: mut Screen) -> string => [m in s.take_marks() | match m
   Cleared(_) => "cleared",
 }].join(" ")
 
+// ── The window's logic, needing no window ───────────────────────────────────
+
+// Alt as Meta, and bold as bright.
+let check_meta_and_bright = () -> i64 => {
+  var failed = 0
+  failed += check("meta", meta("bf").replace("\e", "^"), "^b^f")
+  let off = dark_theme()
+  let on = Theme { off | bold_is_bright: true }
+  let bold_red = Cell { ch: 'x', fg: indexed(1), bg: DEFAULT, attrs: BOLD }
+  failed += check("bold red, as asked", hex(off.colors(bold_red).0), hex(off.palette[1]))
+  failed += check("bold red, bright", hex(on.colors(bold_red).0), hex(off.palette[9]))
+  let bold_208 = Cell { ch: 'x', fg: indexed(208), bg: DEFAULT, attrs: BOLD }
+  failed += check(
+    "past the first eight, as asked",
+    hex(on.colors(bold_208).0),
+    hex(off.palette[208])
+  )
+  let plain_red = Cell { ch: 'x', fg: indexed(1), bg: DEFAULT, attrs: 0 }
+  failed += check("not bold, as asked", hex(on.colors(plain_red).0), hex(off.palette[1]))
+  failed
+}
+
+// The mouse as a program that asked is told of it.
+let check_mouse_reports = () -> i64 => {
+  var failed = 0
+  failed += check(
+    "SGR press",
+    shown_bytes(mouse_report(0, 4, 9, true, true)),
+    "\\e[<0;5;10M"
+  )
+  failed += check(
+    "SGR release",
+    shown_bytes(mouse_report(2, 0, 0, false, true)),
+    "\\e[<2;1;1m"
+  )
+  failed += check(
+    "SGR wheel down, ctrl",
+    shown_bytes(mouse_report(65 + 16, 1, 1, true, true)),
+    "\\e[<81;2;2M"
+  )
+  failed += check(
+    "SGR drag",
+    shown_bytes(mouse_report(32, 300, 1, true, true)),
+    "\\e[<32;301;2M"
+  )
+  failed += check(
+    "X10 press",
+    shown_bytes(mouse_report(0, 4, 9, true, false)),
+    "\\e[M 32 37 42"
+  )
+  failed += check(
+    "X10 release is button 3",
+    shown_bytes(mouse_report(2, 0, 0, false, false)),
+    "\\e[M 35 33 33"
+  )
+  failed += check(
+    "X10 stops at 223",
+    shown_bytes(mouse_report(0, 400, 0, true, false)),
+    "\\e[M 32 255 33"
+  )
+  failed += check("wheel up as arrows", wheel_keys(1, false), "\e[A\e[A\e[A")
+  failed += check("wheel down, cursor keys", wheel_keys(-1, true), "\eOB\eOB\eOB")
+  failed
+}
+
+/// Bytes as text: an ESC as `\e`, the printable rest as itself, other bytes after `[M` by
+/// their numbers (X10's place bytes).
+let shown_bytes = pure (bytes: []u8) -> string => {
+  if bytes.len() == 6 && bytes[2] == 0x4D {
+    return "\\e[M ${bytes[3]} ${bytes[4]} ${bytes[5]}"
+  }
+  bytes.decode_utf8().replace("\e", "\\e")
+}
+
+// Real tabs: a tab named by its program's title, then by its directory, and one whose
+// program ends found ended.
+let check_sessions = () -> i64 => {
+  var failed = 0
+  let Some(titled) = open_session(
+    ["/bin/sh", "-c", "printf '\\033]0;builds\\007'; sleep 2"],
+    None,
+    1
+  ) else {
+    return check("open a tab", "failed", "opened")
+  }
+  var a = titled
+  failed += check("a program's name first", tab_title(a, "/home/me"), "sh")
+  for _ in 0..<2000000 { if a.shown.title == "" { a.step(true) } }
+  failed += check("its title once set", tab_title(a, "/home/me"), "builds")
+  close_session(a)
+  let Some(placed) = open_session(
+    ["/bin/sh", "-c", "printf '\\033]7;file://host/Users/me/dev%%20box\\007'; sleep 2"],
+    None,
+    2
+  ) else {
+    return check("open a tab", "failed", "opened")
+  }
+  var b = placed
+  for _ in 0..<2000000 { if b.shown.cwd == "" { b.step(false) } }
+  failed += check("named by its directory", tab_title(b, "/Users/me"), "dev box")
+  failed += check(
+    "a tab beside it starts there",
+    "${directory(b) ?? "none"}",
+    "/Users/me/dev box"
+  )
+  failed += check("output unseen while hidden", "${b.unseen}", "true")
+  b.step(true)
+  failed += check("seen once shown", "${b.unseen}", "false")
+  close_session(b)
+  // A command's block, from a shell's marks: its prompt's line, where its output began and
+  // ended, its status. A screen erased whole takes the blocks on it.
+  let marks = "printf '\\033]133;A\\007$ \\033]133;B\\007ls\\r\\n\\033]133;C\\007out\\r\\n\\033]133;D;2\\007\\033]133;A\\007$ \\033]133;B\\007'"
+  let Some(blocked) = open_session(["/bin/sh", "-c", "${marks}; sleep 2"], None, 5) else {
+    return check("open a tab", "failed", "opened")
+  }
+  var e = blocked
+  for _ in 0..<2000000 { if e.blocks.len() == 0 { e.step(true) } }
+  failed += check(
+    "a command's block",
+    [x in e.blocks | "${x.prompt}-${x.output}-${x.end} ${x.status}"].join(","),
+    "0-1-2 2"
+  )
+  // Its room, a row 20 points high: above its input the margin and padding (16), between
+  // input and output the padding of each (12), below the output padding (6).
+  let laid = block_rows_layout(e, 0.0, 0, 20.0, 3)
+  failed += check(
+    "a block's rows",
+    "${laid.y_of(0)} ${laid.y_of(1)} ${laid.y_of(2)} ${laid.line_at_y(50.0, 3)}",
+    "16 48 74 1"
+  )
+  // Laying out the rows, a running block among them, leaves the session's blocks as they
+  // were — a frame's layout once added the running block to them, a block a frame.
+  var busy = Session {
+    e |
+    running_block: Some(Block { prompt: 2, output: 3, end: -1, status: -1, started: 0, ended: 0 }),
+  }
+  for _ in 0..<3 { let _ = block_rows_layout(busy, 0.0, 0, 20.0, 4) }
+  failed += check("layout leaves the blocks be", "${busy.blocks.len()}", "1")
+  close_session(e)
+  let Some(cleared) = open_session(
+    ["/bin/sh", "-c", "${marks}; sleep 0.3; printf '\\033[2J'; sleep 2"],
+    None,
+    6
+  ) else {
+    return check("open a tab", "failed", "opened")
+  }
+  var f = cleared
+  var seen_block = false
+  for _ in 0..<4000000 {
+    if f.blocks.len() > 0 { seen_block = true }
+    if !(seen_block && f.blocks.len() == 0) { f.step(true) }
+  }
+  failed += check(
+    "erased whole, its blocks go",
+    "${seen_block}|${f.blocks.len()}",
+    "true|0"
+  )
+  close_session(f)
+  let Some(brief) = open_session(["/bin/sh", "-c", "exit 0"], None, 3) else {
+    return check("open a tab", "failed", "opened")
+  }
+  // A tab the user closes stays closed, though its program is still running.
+  let Some(running) = open_session(["/bin/sh", "-c", "sleep 5"], None, 4) else {
+    return check("open a tab", "failed", "opened")
+  }
+  var d = running
+  d.step(true)
+  d.request_close()
+  for _ in 0..<1000 { d.step(true) }
+  failed += check("a closed tab stays closed", "${d.alive}", "false")
+  close_session(d)
+  // A tab's grid: Select All takes everything, and Copy is then there to choose.
+  let Some(printing) = open_session(
+    ["/bin/sh", "-c", "printf 'first\\nsecond\\n'; sleep 5"],
+    None,
+    5
+  ) else {
+    return check("open a tab", "failed", "opened")
+  }
+  var e = printing
+  // Read until the second line has arrived.
+  for _ in 0..<2000000 { if e.shown.line(1)[0].ch != 's' { e.step(true) } }
+  failed += check(
+    "nothing selected yet",
+    "${e.has_selection()} ${e.can(Copy)}",
+    "false false"
+  )
+  let _ = e.edit_action(SelectAll)
+  failed += check("select all", e.selected_text().trim(), "first\nsecond")
+  failed += check("copy then", "${e.can(Copy)} ${e.can(SelectAll)}", "true true")
+  close_session(e)
+  var c = brief
+  for _ in 0..<2000000 { if c.alive { c.step(true) } }
+  failed += check("a tab whose program ended", "${c.alive}", "false")
+  close_session(c)
+  failed
+}
+
+// Keys typed ahead: raw keys made into lines, and the lines handed to prompts in turn.
+let check_typeahead_lines = () -> i64 => {
+  var failed = 0
+  failed += check("text and backspace", typed_lines("git statx\x7fus"), "git status")
+  failed += check("an arrow is dropped", typed_lines("ab\e[Dc"), "abc")
+  failed += check("return ends a line", typed_lines("make\nls -l"), "make\nls -l")
+  failed += check("carriage return too", typed_lines("make\rls"), "make\nls")
+  failed += check("ctrl-u clears the line", typed_lines("oops\x15ls"), "ls")
+  failed += check(
+    "ctrl-w takes a word",
+    typed_lines("git push --force\x17--dry-run"),
+    "git push --dry-run"
+  )
+  failed += check("non-ASCII", typed_lines("echo größe"), "echo größe")
+  failed += check("backspace on nothing", typed_lines("\x7f\x7fx"), "x")
+
+  var line = command_line([])
+  line.typed_ahead("make\nls -l\ngit st")
+  let one = line.take_typed_ahead() ?? "none"
+  let two = line.take_typed_ahead() ?? "none"
+  let three = line.take_typed_ahead() ?? "none"
+  failed += check("commands in turn", "${one}|${two}|${three}", "make|ls -l|none")
+  failed += check("then the rest in the editor", line.edit.content(), "git st")
+  failed += check("and nothing after", "${line.take_typed_ahead() ?? "none"}", "none")
+  line.typed_ahead("us")
+  let _ = line.take_typed_ahead()
+  failed += check("more joins at the caret", line.edit.content(), "git stus")
+  failed
+}
+
+// The theme: what a cell's recorded colors look like.
+let check_theme = () -> i64 => {
+  let t = dark_theme()
+  var failed = 0
+  failed += check("256 entries", "${t.palette.len()}", "256")
+  // The cube's corner and the greys' first step, as xterm has them.
+  failed += check("cube white", hex(t.palette[231]), hex(abgr(0xFFFFFF)))
+  failed += check("cube 0,95,135", hex(t.palette[16 + 1 * 6 + 2]), hex(abgr(0x005F87)))
+  failed += check("first grey", hex(t.palette[232]), hex(abgr(0x080808)))
+  failed += check("24-bit", hex(t.color(rgb(1, 2, 3), 0)), hex(abgr(0x010203)))
+  let (fg, bg) = t.colors(Cell { ch: 'x', fg: DEFAULT, bg: DEFAULT, attrs: 0 })
+  failed += check("plain", "${hex(fg)} ${bg == None}", "${hex(t.fg)} true")
+  let (ifg, ibg) = t.colors(Cell { ch: 'x', fg: DEFAULT, bg: DEFAULT, attrs: INVERSE })
+  failed += check(
+    "inverse of the defaults",
+    "${hex(ifg)} ${hex(ibg ?? 0)}",
+    "${hex(t.bg)} ${hex(t.fg)}"
+  )
+  let (
+    rfg,
+    rbg
+  ) = t.colors(Cell { ch: 'x', fg: indexed(1), bg: indexed(4), attrs: INVERSE })
+  failed += check(
+    "inverse of colors",
+    "${hex(rfg)} ${hex(rbg ?? 0)}",
+    "${hex(t.palette[4])} ${hex(t.palette[1])}"
+  )
+  let (
+    hfg,
+    _
+  ) = t.colors(Cell { ch: 'x', fg: indexed(1), bg: indexed(4), attrs: HIDDEN })
+  failed += check("hidden is the background", hex(hfg), hex(t.palette[4]))
+  let (dfg, _) = t.colors(Cell { ch: 'x', fg: DEFAULT, bg: DEFAULT, attrs: DIM })
+  failed += check("dim is nearer the background", "${hex(dfg) != hex(t.fg)}", "true")
+  failed
+}
+
+let hex = pure (c: u32) -> string => "${c}"
+
 // The window's place in the settings file (Settings ▸ Window): written and read back whole; a
 // place the system never said (Wayland) left out and read as none; a size no window could be,
 // or none, read as no place; and the option off kept.
@@ -1210,7 +1495,7 @@ let check_window_place = () -> i64 => {
 }
 
 // A colour's alpha (Settings ▸ Colors, the Background swatch's opacity): `#rrggbbaa` read as how
-// transparent it is in the top byte and written back so, an opaque one as `#rrggbb`; ImGui's
+// transparent it is in the top byte and written back so, an opaque one as `#rrggbb`; a theme's
 // alpha from it; only the background's kept from a file; and the sections made from a
 // translucent background opaque.
 let check_color_alpha = () -> i64 => {
@@ -1223,7 +1508,7 @@ let check_color_alpha = () -> i64 => {
     hex_of(color_of("#1b1d22ff") ?? 0),
     "#1b1d22"
   )
-  failed += check("color alpha: ImGui's", abgr(half).to_hex(8), "80221d1b")
+  failed += check("color alpha: a theme's", abgr(half).to_hex(8), "80221d1b")
   failed += check(
     "color alpha: an opaque theme colour",
     abgr(0x1b1d22).to_hex(8),

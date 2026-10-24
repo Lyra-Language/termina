@@ -13,14 +13,13 @@ milestones are in `CLAUDE.md` § Plan; finished items move to `done.md`.
 
 ## M1 — a classic terminal
 
-- **[OPEN] Color emoji** — CJK and symbols come from fallback fonts, but emoji need ImGui's FreeType loader with color, and `IMGUI_USE_WCHAR32` (below) to reach them at all.
+- **[OPEN] Color emoji** — CJK and symbols come from fallback fonts, but emoji need colour glyphs, which `ui.text` does not draw yet (FreeType's colour bitmaps or COLR layers; lyra's todo).
 - **[OPEN] Copies keep the filler before a wrapped wide rune** — a wide rune that wrapped early leaves a blank in the last column, which a joined copy includes as a space.
 
 ## Settings
 
 ## Found along the way
 
-- **[OPEN] termina-ui: a program starts before the window fits it** — the first tab's PTY opens at 80×24 and is fitted at the first layout, so a program reading its size at once (`tput cols`) can see 80; open it at the window's size, measured before the program starts.
+- **[OPEN] A program starts before the window fits it** — the first tab's PTY opens at 80×24 and is fitted at the first layout, so a program reading its size at once (`tput cols`) can see 80; open it at the window's size, measured before the program starts.
 
-- **[OPEN] Characters past the BMP arrive as U+FFFD** — `bindings.imgui` is built with 16-bit ImWchar; `IMGUI_USE_WCHAR32` would need the generator's `ImWchar` changed too.
 - **[OPEN] Exit status** — a closed terminal comes before the program can be reaped; show the status once `exit_status()` answers.

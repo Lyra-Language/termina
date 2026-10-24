@@ -1,8 +1,7 @@
 module face
 //! A tab's input on `ui`: keys, typed text and the pointer as the painter hears them raw, given
-//! to the command line at a prompt (`term.CommandLine.input`, the same as ImGui's front end
-//! feeds it) or encoded for the program otherwise, as `../gui/session_view.lyra`'s `send_keys`
-//! does — **the terminal's own chord is ⌘ on a Mac, Ctrl+Shift elsewhere** (copy, paste and the
+//! to the command line at a prompt (`term.CommandLine.input`) or encoded for the program
+//! otherwise — **the terminal's own chord is ⌘ on a Mac, Ctrl+Shift elsewhere** (copy, paste and the
 //! rest of the Edit menu's), Ctrl and a letter the control character, Alt the Meta prefix off a
 //! Mac. The pointer selects on the grid, edits in the box, and is reported to a program that
 //! asked for it (`?1000`…), Shift taking it back for selecting; the wheel scrolls the view, or
@@ -111,7 +110,7 @@ pub let text_heard = (t: mut Term, x: TextInput) -> void => {
       let wrap = layout_at(t, t.size).wrap
       t.views[i].sticking = true
       // Without the modifiers: the platform types nothing for a chord of Ctrl or ⌘ — the
-      // command line's guard against one is ImGui's polling — and the last key's may be
+      // command line's guard against one was for a host that polled keys — and the last key's may be
       // stale (a script's text comes with no key before it).
       let _ = outcome(t, t.tabs[i].line.input(wrap, LineText(text, Modifiers {})))
     },

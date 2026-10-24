@@ -1,6 +1,6 @@
 module term
 //! A window's tabs as data, whatever draws them: a tab's label, the commands its shortcuts and
-//! menus give, and the order a bar dragged its tabs into (`../gui/tabs.lyra` draws ImGui's).
+//! menus give, and the order a bar dragged its tabs into.
 
 /// A tab on the bar: what it is called, and its identity, which no other tab of the window
 /// has and a changing name must not move.

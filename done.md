@@ -57,3 +57,8 @@ Finished work, moved from `todo.md` with its section; the rules it left behind a
 ## Settings
 
 - **[DONE 10/17] A settings window** — font family or file, size, line spacing, six themes, every colour, bold as bright; kept in `~/.config/termina/settings.json`.
+
+## The window on `ui` (10/23)
+
+- **[DONE 10/23] Termina on lyra's `ui`** — the tab bar, the menus (the Mac's own bar, a header bar's ☰ elsewhere), the Settings tab in markup, a see-through background; the Dear ImGui front end, uitest and menutest gone (lyra's `ui/WINDOW.md` step 9).
+- **[DONE 10/23] Characters past the BMP** — arrived as U+FFFD through ImGui's 16-bit `ImWchar`; `ui` takes typed text as UTF-8.

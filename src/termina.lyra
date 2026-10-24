@@ -1,595 +1,394 @@
-// termina — a terminal: the user's shell on a pseudo-terminal, its output drawn in a window
-// and the keyboard sent back to it.
+// termina — a terminal: the user's shell on a pseudo-terminal, in a window of tabs drawn with
+// lyra's `ui` — the grid, the blocks, the command line and its box Termina's own (`session`,
+// `term`, `face`), the tab bar, the menus (the Mac's own bar; a header bar's ☰ elsewhere) and
+// the Settings tab `ui`'s.
 //
-//   build/termina              the login shell ($SHELL, else /bin/sh), in the home directory
-//   build/termina CMD [ARG…]   that program instead, in this directory (as `xterm -e`)
+//     build/termina                # the login shell, in a window of tabs
+//     build/termina CMD [ARG…]     # that program instead, where Termina was started (as xterm -e)
+//     build/termina --print CMD …  # and when it ends, its screen printed
+//     build/termina --script STEPS [--png FILE] [CMD …]
+//                                  # played headless (SDL_VIDEODRIVER=dummy) through SDL's 2D
+//                                  #   renderer, `ui.script`'s steps — a `wait:N` taking N real
+//                                  #   milliseconds, for the shell — and the last frame written
+//                                  #   to FILE
+//     build/termina --header …     # the window as off a Mac, on a Mac too: the header bar, its ☰
+//                                  #   the menus, no system frame — for checks
 //
-// A classic terminal, in color, in tabs, whose command line is an editor of its own while
-// zsh is at a prompt (its integration says when — shell/shell.lyra; the keys are in
-// ui/command_line.lyra). Each tab is a session (session/session.lyra); a tab closes when
-// its program ends, and the window with its last. ⌘V (Ctrl+Shift+V off macOS) pastes; the
-// wheel scrolls back.
-//
-// Tabs, on a Mac: ⌘T opens one (in the shown tab's directory), ⌘W closes the shown one,
-// ⌘1–⌘8 show that one and ⌘9 the last, ⌘⇧[ and ⌘⇧] the one before and after. Elsewhere
-// Ctrl+Shift+T and Ctrl+Shift+W, Alt+1–9, Ctrl+PageUp and Ctrl+PageDown.
+// Termina's flags come before the command, whose own are its: `std.collections.parse_args`
+// would take `ls -la`'s `-la` for one of Termina's.
 
-import std.env.{ lookup }
-import bindings.imgui.{
-  HOST_CUSTOM_TITLE_BAR,
-  has_custom_title_bar,
-  request_quit,
-  minimize,
-  toggle_maximized,
-  is_maximized,
-  create_host,
-  begin_frame,
-  end_frame,
-  destroy_host,
-  set_redraw,
-  set_window_title,
-  font_file,
-  merge_font_file,
-  set_font_hinting,
-  push_font_float,
-  pop_font,
-  begin,
-  end,
-  begin_child,
-  end_child,
-  get_main_viewport,
-  set_next_window_pos,
-  set_next_window_size,
-  get_io,
-  push_style_var_vec2,
-  pop_style_var,
-  calc_text_size,
-  get_font_size,
-  is_window_focused,
-  Vec2,
-  Host,
-  Font,
-  WINDOW_FLAGS_NO_DECORATION,
-  WINDOW_FLAGS_NO_NAV_INPUTS,
-  WINDOW_FLAGS_NO_BACKGROUND,
-  WINDOW_FLAGS_NO_SAVED_SETTINGS,
-  WINDOW_FLAGS_NO_SCROLLBAR,
-  WINDOW_FLAGS_NO_SCROLL_WITH_MOUSE,
-  WINDOW_FLAGS_NO_BRING_TO_FRONT_ON_FOCUS,
-  is_mouse_down,
-  show_open_dialog,
-  poll_dialog,
-  FileFilter,
-  Chosen,
-  STYLE_VAR_WINDOW_PADDING,
-  CONFIG_FLAGS_NAV_ENABLE_KEYBOARD,
-  FOCUSED_FLAGS_ROOT_AND_CHILD_WINDOWS,
-  CHILD_FLAGS_ALWAYS_USE_WINDOW_PADDING,
+import ui.gpu
+import ui.sdl3
+import ui.sdl3.{ SdlRenderer, capture }
+import ui.app.{
+  App,
+  Running,
+  run,
+  running,
+  step_running,
+  Shortcuts,
+  Menus,
+  DrawnTitleBar,
+  SystemTitleBar
 }
-import session.{
-  open_session,
-  close_session,
-  tab_title,
-  directory,
-  Session,
-}
-import menus.{
-  install_native,
-  sync_native,
-  native_choices,
-  draw_menu_bar,
-  draw_header_bar,
-  tab_command_of
-}
-import menus_view.{
-  menus_view,
-  header_menu,
-  MenuChoice,
-  Edit,
-  QuitApp,
-  MinimizeWindow,
-  ToggleMaximized,
-  EDIT_ACTIONS
-}
+import ui.script.{ ScriptPlatform, timed_platform, parse_steps, Step, Waited }
+import ui.draw.{ Point, Size, Color }
+import ui.backend.{ Platform, ToMaximized }
+import ui.text.{ Fonts, FontSpec, FontMetrics, fonts_new, glyph_atlas }
+import ui.style.{ OverflowVisible }
+import ui.layout.{ paint }
 import bindings.sdl3.{ platform, set_hint }
-import desktop.{ APP_ID, install_desktop_entry }
+import bindings.freetype.{ HintNone, HintLight }
+import std.env.{ lookup, program_args }
+import std.io.{ write_bytes, sleep_ms }
+import std.png.{ write_png }
 import settings.{
-  settings_path,
+  WindowPlace,
   load_settings,
-  save_settings,
+  settings_path,
   settings_to_json,
   font_families,
-  fallback_fonts,
   family_for,
-  defaults,
-  Settings,
-  FontFamily,
-  FONT_SIZE_RANGE,
+  fallback_fonts,
+  Settings
 }
-import term.{
-  theme_of,
-  clear_color,
-  OpenSettings,
-  FontBigger,
-  FontSmaller,
-  FontDefault,
-  TabLabel,
-  Theme,
-  TabCommand,
-  NoCommand,
-  NewTab,
-  CloseTab,
-  ShowTab,
-}
-import gui.{
-  draw_session,
-  Look,
-  edit_session,
-  settings_panel,
-  SettingsAsk,
-  tab_command,
-  tab_bar,
-  TabBar,
-  Fonts,
+import session.{ open_session, close_session }
+import term.{ Theme, theme_of }
+import desktop.{ APP_ID, install_desktop_entry }
+import face.{
+  Term,
+  TermEvent,
+  term_of,
+  screen_text,
+  view,
+  update,
+  subscriptions,
+  shortcuts,
+  menus_of,
+  save_now,
+  grid_of,
+  color
 }
 
-let main = () -> void => {
-  // On Linux, the id the desktop knows the window by — so the dock shows the entry's icon
-  // — and, run as an AppImage, that entry installed for the launcher to find.
+const WIDTH: f32 = 960.0
+const HEIGHT: f32 = 600.0
+
+/// What a script's `wait:` is played in: a pass a slice, so the shell's output is read as
+/// it comes rather than once at the end.
+const SLICE_MS: i64 = 10
+
+let main = () -> u8 => {
+  var args = program_args().slice(1, program_args().len())
+  var printing = false
+  var header = false
+  var script: Maybe<string> = None
+  var png: Maybe<string> = None
+  while args.len() > 0 && args[0].starts_with("--") {
+    let flag = args[0]
+    if flag == "--print" || flag == "--header" {
+      if flag == "--print" { printing = true } else { header = true }
+      args = args.slice(1, args.len())
+    } else if (flag == "--script" || flag == "--png") && args.len() > 1 {
+      if flag == "--script" { script = Some(args[1]) } else { png = Some(args[1]) }
+      args = args.slice(2, args.len())
+    } else {
+      println("termina: ${flag}? (--print, --header, --script STEPS, --png FILE)")
+      return 2
+    }
+  }
+  // On Linux, the id the desktop knows the window by — so the dock shows the entry's icon —
+  // and, run as an AppImage, that entry installed for the launcher to find.
   if platform() == "Linux" {
     let _ = set_hint("SDL_APP_ID", APP_ID)
     for path in install_desktop_entry() { println("termina: wrote ${path}") }
   }
-  // Off macOS Termina draws the window's title bar itself, as a GNOME header bar holding
-  // its menus (`menus.draw_header_bar`); a Mac's title bar is the system's.
-  let flags = if platform() == "Linux" { HOST_CUSTOM_TITLE_BAR } else { 0 }
-  let Some(host) = create_host("Termina", 960, 600, flags) else { return }
-  // The keyboard is the shell's: ImGui's own navigation would take the arrows and Tab.
-  let io = get_io()
-  io.set_config_flags(io.config_flags() & ~CONFIG_FLAGS_NAV_ENABLE_KEYBOARD)
-  // Text hinted off macOS — FreeType's hinting, as the Linux desktop draws its own — where a
-  // display is most often a pixel a point and unhinted glyphs are soft. A Mac draws text
-  // unhinted, and so does Termina there.
-  if platform() != "macOS" { set_font_hinting(host, true) }
-  // On a Mac, Termina's own menu bar in place of SDL's, whose Window ▸ Close takes ⌘W and
-  // would close the window, and so quit, rather than the tab; elsewhere Termina draws it.
-  let installed = if platform() == "macOS" {
-    install_native([menus_view([], 0, [], true, false)])
-  } else {
-    None
+  let settings = load_settings(settings_path())
+  let theme = theme_of(settings)
+  var fonts = fonts_new()
+  // A Mac draws text unhinted; elsewhere a pixel is most often a point, and unhinted stems
+  // straddle two of them.
+  fonts.hinting = if platform() == "macOS" { HintNone } else { HintLight }
+  let _ = fonts.add_system_font()
+  add_family(fonts, settings)
+  for k, path in fallback_fonts() {
+    let family = "fallback ${k}"
+    if fonts.add(family, path) { fonts.add_fallback(family) }
   }
-  // The user's settings, the font families on offer, and the faces and theme made of them.
-  let settings_file = settings_path()
-  let settings = load_settings(settings_file)
-  let families = font_families()
-  // A program given on the command line runs in the first tab instead of the shell,
-  // without the shell's integration, where Termina was started; tabs opened after it run
-  // the shell.
-  let given = program_args().slice(1, program_args().len())
-  var sessions: []Session = []
-  match open_session(given, if given.len() > 0 { lookup("PWD") } else { None }, 0) {
-    Some(s) => sessions.push(s),
-    None => {},
+  // On a Mac the menus are the system's bar, and the title bar the system's; elsewhere the
+  // window has a header bar of Termina's (face/window.lyra), its ☰ the menus.
+  let mac = platform() == "macOS" && !header
+  let app = App {
+    view: view,
+    update: update,
+    subscriptions: subscriptions,
+    // Cleared to nothing: the view's root paints the theme's background, which a see-through
+    // window shows the desktop through.
+    background: Color { r: 0, g: 0, b: 0, a: 0 },
+    window_overflow: OverflowVisible,
+    shortcuts: [Shortcuts { of: shortcuts }],
+    menus: if mac { [Menus { of: menus_of }] } else { [] },
+    title_bar: if mac { SystemTitleBar } else { DrawnTitleBar },
   }
-  app = Some(App {
-    host: host,
-    installed: installed,
-    menus: installed != None,
-    header: has_custom_title_bar(host),
-    settings_file: settings_file,
-    settings: settings,
-    saved: settings_to_json(settings),
-    families: families,
-    fonts: load_fonts(host, families, settings),
-    theme: theme_of(settings),
-    home: lookup("HOME") ?? "",
-    sessions: sessions,
-  })
-  // The window's contents follow its edge as it is resized, rather than stretching.
-  unsafe { set_redraw(host, redraw) }
-  while frame() {}
-  if let Some(a) = app { for s in a.sessions { close_session(s) } }
-  destroy_host(host)
+  let status = match script {
+    Some(steps) => scripted(app, steps, png, args, settings, theme, fonts, mac),
+    None => windowed(app, args, settings, theme, fonts, mac),
+  }
+  if status.0 != 0 { return status.0 }
+  if printing { print_last(status.1) }
+  0
 }
 
-/// What the window keeps from one frame to the next: everything [frame] reads and changes.
-/// A module-level value, as the host draws frames of its own while the window is resized
-/// ([redraw]) — called back from C, which keeps no closure's captures.
-struct App {
-  host: Host,
-  /// The Mac's own menu bar's items, when it has one (`menus`); off macOS Termina draws
-  /// the bar.
-  installed: Maybe<[]MenuChoice>,
-  menus: bool,
-  /// Whether the menus are a header bar Termina draws as the window's title bar.
-  header: bool,
-  settings_file: string,
+/// The window on the GPU, until it is closed: its status, and the window as it was left.
+let windowed = (
+  app: App<Term, TermEvent>,
+  args: []string,
   settings: Settings,
-  /// The settings as last written to the file.
-  saved: string,
-  families: []FontFamily,
-  fonts: Fonts,
   theme: Theme,
-  /// The Settings tab: whether it is open, to be made the one shown, or the one shown.
-  settings_open: bool = false,
-  select_settings: bool = false,
-  on_settings: bool = false,
-  /// What is typed in the settings window to save the colors as a theme.
-  theme_name_typed: string = "",
-  home: string,
-  sessions: []Session,
-  /// The next tab's id; the first tab's is 0.
-  next_id: i64 = 1,
-  active: i64 = 0,
-  /// A tab to show, chosen by a key or opened, for the tab bar to select this frame.
-  select: Maybe<i64> = Some(0),
-  title: string = "",
+  given: Fonts,
+  mac: bool
+) -> (u8, Term) => {
+  var fonts = given
+  // Where it was last closed, if the settings remember it: its size, its place, maximized.
+  let place = if settings.remember_window { settings.window } else { None }
+  let size = match place {
+    Some(p) => Size { w: p.width, h: p.height },
+    None => Size { w: WIDTH, h: HEIGHT },
+  }
+  // See-through while the background is not opaque — on Linux only a window opened so can be.
+  let see_through = (theme.bg >> 24) != 0xFF
+  let window = match gpu.open("Termina", size.w, size.h, see_through) {
+    Ok(w) => w,
+    Err(why) => {
+      println("termina: ${why}")
+      fonts.close()
+      return (2, empty_term(theme, settings))
+    },
+  }
+  var platform_ = window.platform
+  var renderer = window.renderer
+  if see_through { let _ = platform_.set_backdrop_blur(settings.background_blur) }
+  if let Some(p) = place {
+    if p.placed { platform_.set_window_position(Point { x: p.x, y: p.y }) }
+    if p.maximized { platform_.change_window(ToMaximized) }
+  }
+  let Some(start) = started(args, settings, theme, fonts, platform_.scale(), mac) else {
+    gpu.close(platform_, renderer)
+    fonts.close()
+    return (1, empty_term(theme, settings))
+  }
+  var last = run(app, start, platform_, renderer, fonts)
+  if last.settings.remember_window { last.settings.window = Some(place_of(
+    platform_,
+    last.settings.window
+  )) }
+  save_now(last)
+  gpu.close(platform_, renderer)
+  for s in last.tabs { close_session(s) }
+  fonts.close()
+  (0, last)
 }
 
-/// The window's state, once `main` has made it.
-var app: Maybe<App> = None
-
-/// A frame the host draws while the window is resized.
-let redraw = () -> void => { let _ = frame() }
-
-/// One frame of the window: the tabs read, the menus and keys carried out, the window
-/// drawn. Whether the window goes on — a tab left, and no quit asked.
-let frame = () -> bool => {
-  let Some(before) = app else { return false }
-  if before.sessions.len() == 0 || !begin_frame(before.host) { return false }
-  // Read again: frames drawn during a resize, inside begin_frame's pump, changed it.
-  let Some(current) = app else { return false }
-  var win = current
-  let going = frame_of(win)
-  app = Some(win)
-  going
+/// Where the window is as it closes: its place and size — or, maximized or minimized, the place
+/// and size it had before (`before`'s, the size the system no longer says), and that it was
+/// maximized.
+let place_of<p> where p: Platform = (
+  platform: p,
+  before: Maybe<WindowPlace>
+) -> WindowPlace => {
+  let state = platform.window_state()
+  let size = platform.window_size()
+  let at = platform.window_position()
+  if state.maximized || state.minimized {
+    let kept = before ?? WindowPlace { width: WIDTH, height: HEIGHT }
+    return WindowPlace { kept | maximized: state.maximized }
+  }
+  WindowPlace {
+    x: match at {
+      Some(pt) => pt.x,
+      None => 0.0,
+    },
+    y: match at {
+      Some(pt) => pt.y,
+      None => 0.0,
+    },
+    placed: at.is_some(),
+    width: size.w,
+    height: size.h,
+  }
 }
 
-/// [frame]'s work on `win`; whether the window goes on.
-let frame_of = (win: mut App) -> bool => {
-  // Every tab is read every frame, shown or not, so that a program writing in a hidden
-  // one never waits on a full terminal.
-  for k in 0..<win.sessions.len() { win.sessions[k].step(k == win.active) }
-  // A tab whose program has ended closes.
-  var k = win.sessions.len() - 1
-  while k >= 0 {
-    if !win.sessions[k].alive {
-      close_session(win.sessions[k])
-      win.sessions = [
-        ...win.sessions.slice(0, k),
-        ...win.sessions.slice(k + 1, win.sessions.len())
-      ]
-      if win.active > k || win.active >= win.sessions.len() { win.active = (win.active - 1).max(0) }
-      win.select = Some(win.active)
-    }
-    k -= 1
-  }
-  if win.sessions.len() == 0 { return false }
-
-  var command = tab_command(win.active, win.sessions.len(), win.menus)
-  // The menus' choices: the Mac's bar, or off macOS the one Termina draws — one tree, its
-  // items carried out the same. Edit's would-do-nothing items are greyed either way.
-  let can = [a in EDIT_ACTIONS | win.sessions[win.active].can(a) | a]
-  let tree = [
-    menus_view(
-      tab_labels(win.sessions, win.home),
-      win.active,
-      can,
-      win.menus,
-      is_maximized(win.host)
-    )
-  ]
-  let chosen = match win.installed {
-    Some(choices) => {
-      sync_native(tree)
-      native_choices(choices)
-    },
-    None => if win.header {
-      draw_header_bar(
-        win.host,
-        win.title,
-        [
-          header_menu(
-            tab_labels(win.sessions, win.home),
-            win.active,
-            can,
-            is_maximized(win.host)
-          )
-        ],
-        (_) => {},
-        (_) => {}
-      )
-    } else {
-      draw_menu_bar(tree, (_) => {})
-    },
-  }
-  for choice in chosen {
-    match choice {
-      // Edit's items act on the tab shown.
-      Edit(a) => edit_session(win.sessions[win.active], a),
-      QuitApp => request_quit(win.host),
-      MinimizeWindow => minimize(win.host),
-      ToggleMaximized => toggle_maximized(win.host),
-      _ => match tab_command_of(choice, win.active, win.sessions.len()) {
-        NoCommand => {},
-        c => { command = c },
-      },
-    }
-  }
-  match command {
-    NewTab => {
-      match open_session([], directory(win.sessions[win.active]), win.next_id) {
-        Some(s) => {
-          win.sessions.push(s)
-          win.active = win.sessions.len() - 1
-          win.select = Some(win.active)
-        },
-        None => {},
-      }
-      win.next_id += 1
-    },
-    // ⌘W on the Settings tab closes it, not the terminal behind it.
-    CloseTab => if win.on_settings { win.settings_open = false } else { win.sessions[win.active].request_close() },
-    ShowTab(n) => {
-      win.active = n
-      win.select = Some(n)
-    },
-    OpenSettings => {
-      win.settings_open = true
-      win.select_settings = true
-    },
-    // A point at a time, within the settings' range; kept as any setting is.
-    FontBigger => { win.settings.font_size = (win.settings.font_size + 1.0).min(FONT_SIZE_RANGE.1) },
-    FontSmaller => { win.settings.font_size = (win.settings.font_size - 1.0).max(FONT_SIZE_RANGE.0) },
-    FontDefault => { win.settings.font_size = defaults().font_size },
-    NoCommand => {},
-  }
-  // The faces are drawn at the size pushed: a new one takes at once.
-  win.fonts.size = win.settings.font_size
-
-  // The window: the tabs, and the one shown — a terminal, or the settings, whose change
-  // takes at once and is kept once the mouse is let go (not every frame of a slider's
-  // drag).
-  let faces_were = "${win.settings.font_family}|${win.settings.font_file}"
-  let (bar, ask) = draw_window(
-    win.sessions,
-    win.active,
-    win.select,
-    win.fonts,
-    win.theme,
-    win.home,
-    command,
-    win.menus,
-    !win.header,
-    SettingsTab { open: win.settings_open, select: win.select_settings },
-    win.settings,
-    win.families,
-    win.theme_name_typed
-  )
-  win.select_settings = false
-  if bar.settings_closed { win.settings_open = false }
-  win.on_settings = bar.settings_shown && win.settings_open
-  if ask.choose_file {
-    let _ = show_open_dialog(
-      win.host,
-      FONT_DIALOG,
-      [FileFilter { name: "Fonts", extensions: "ttf;otf;ttc" }]
-    )
-  }
-  // A font file chosen in the system's dialog becomes the font.
-  match poll_dialog(win.host) {
-    Some(Chosen(tag, path)) => if tag == FONT_DIALOG { win.settings.font_file = path },
-    _ => {},
-  }
-  if ask.changed || "${win.settings.font_family}|${win.settings.font_file}" != faces_were {
-    win.theme = theme_of(win.settings)
-    if "${win.settings.font_family}|${win.settings.font_file}" != faces_were {
-      win.fonts = load_fonts(win.host, win.families, win.settings)
-    }
-    win.fonts.size = win.settings.font_size
-  }
-  let now_json = settings_to_json(win.settings)
-  if now_json != win.saved && !is_mouse_down(0) {
-    let _ = save_settings(win.settings_file, win.settings)
-    win.saved = now_json
-  }
-  win.select = None
-  win.active = bar.shown
-  match bar.closing {
-    Some(n) => win.sessions[n].request_close(),
-    None => {},
-  }
-  // Tabs dragged into a new order: the list put in it, the shown tab still the same one.
-  if !in_order(bar.order) {
-    var moved: []Session = []
-    for old in bar.order { moved.push(win.sessions[old]) }
-    win.sessions = moved
-    for i in 0..<bar.order.len() {
-      if bar.order[i] == win.active {
-        win.active = i
-      }
-    }
-  }
-  if bar.add {
-    match open_session([], directory(win.sessions[win.active]), win.next_id) {
-      Some(s) => {
-        win.sessions.push(s)
-        win.active = win.sessions.len() - 1
-        win.select = Some(win.active)
-      },
-      None => {},
-    }
-    win.next_id += 1
-  }
-  let now = tab_title(win.sessions[win.active], win.home)
-  if now != win.title {
-    win.title = now
-    set_window_title(win.host, win.title)
-  }
-  let clear = clear_color(win.theme)
-  end_frame(win.host, clear.0, clear.1, clear.2)
-  true
-}
-
-/// The window: the tab bar, and the tab shown below it, drawn and given the keys — unless a
-/// tab shortcut took them this frame. Answers what was done to the bar (`ui.tab_bar`).
-let draw_window = (
-  sessions: mut []Session,
-  active: i64,
-  select: Maybe<i64>,
-  fonts: Fonts,
+/// `steps` played headless through SDL's 2D renderer, the last frame written to `png`: its
+/// status, and the window as the script left it.
+let scripted = (
+  app: App<Term, TermEvent>,
+  steps: string,
+  png: Maybe<string>,
+  args: []string,
+  settings: Settings,
   theme: Theme,
-  home: string,
-  command: TabCommand,
-  menus: bool,
-  // The tab bar's own `+`: not where the header bar has one.
-  plus: bool,
-  settings_tab: SettingsTab,
-  settings: mut Settings,
-  families: []FontFamily,
-  theme_name: mut string
-) -> (TabBar, SettingsAsk) => {
-  let line_spacing = settings.line_spacing
-  let viewport = get_main_viewport()
-  set_next_window_pos(viewport.work_pos())
-  set_next_window_size(viewport.work_size())
-  push_style_var_vec2(STYLE_VAR_WINDOW_PADDING, Vec2 { x: PADDING, y: PADDING })
-  let flags = WINDOW_FLAGS_NO_DECORATION | WINDOW_FLAGS_NO_NAV_INPUTS |
-    WINDOW_FLAGS_NO_BACKGROUND | WINDOW_FLAGS_NO_SAVED_SETTINGS | WINDOW_FLAGS_NO_SCROLLBAR |
-    WINDOW_FLAGS_NO_SCROLL_WITH_MOUSE | WINDOW_FLAGS_NO_BRING_TO_FRONT_ON_FOCUS
-  let _ = begin("terminal", flags)
-  pop_style_var()
-
-  let bar = tab_bar(
-    tab_labels(sessions, home),
-    active,
-    select,
-    theme,
-    settings_tab.open,
-    settings_tab.select,
-    plus
+  given: Fonts,
+  mac: bool
+) -> (u8, Term) => {
+  var fonts = given
+  let parsed = match parse_steps(steps) {
+    Ok(p) => p,
+    Err(why) => {
+      println("termina: the script: ${why}")
+      fonts.close()
+      return (2, empty_term(theme, settings))
+    },
+  }
+  let window = match sdl3.open("Termina", WIDTH, HEIGHT) {
+    Ok(w) => w,
+    Err(why) => {
+      println("termina: ${why}")
+      fonts.close()
+      return (2, empty_term(theme, settings))
+    },
+  }
+  var renderer = window.renderer
+  let Some(start) = started(args, settings, theme, fonts, 1.0, mac) else {
+    sdl3.close(window.platform, renderer)
+    fonts.close()
+    return (1, empty_term(theme, settings))
+  }
+  let played = running(
+    app,
+    start,
+    timed_platform(sliced(parsed), Size { w: WIDTH, h: HEIGHT }),
+    renderer,
+    fonts
   )
-  let shown = bar.shown
-
-  // The shown tab fills the rest of the window, in a child that scrolls on its own.
-  push_style_var_vec2(STYLE_VAR_WINDOW_PADDING, Vec2 { x: PADDING, y: PADDING / 2.0 })
-  let _ = begin_child(
-    "grid",
-    Vec2 { x: 0.0, y: 0.0 },
-    CHILD_FLAGS_ALWAYS_USE_WINDOW_PADDING,
-    WINDOW_FLAGS_NO_NAV_INPUTS | WINDOW_FLAGS_NO_BACKGROUND
-  )
-  pop_style_var()
-  // The Settings tab shown: the settings in its area, in the interface's font.
-  if bar.settings_shown && settings_tab.open {
-    let ask = settings_panel(settings, families, theme_name)
-    end_child()
-    end()
-    return (bar, ask)
+  loop {
+    let p = played.platform
+    if p.next < p.steps.len() {
+      if let Waited(_) = p.steps[p.next] { sleep_ms(SLICE_MS) }
+    }
+    if !step_running(played) { break }
   }
-  match fonts.regular {
-    Some(f) => push_font_float(f, fonts.size),
-    None => {},
+  var status: u8 = 0
+  if let Some(path) = png {
+    if !save(played, path) {
+      println("termina: the frame could not be written to ${path}")
+      status = 1
+    }
   }
-  // A cell is one advance wide, measured over a long run: ImGui rounds a measured width up
-  // to a whole pixel, which over one character overstates the advance by up to a pixel and
-  // put the cursor cells to the right of the text it follows.
-  let cell = Vec2 {
-    x: calc_text_size(MEASURE).x / f32(MEASURE.len()),
-    y: f32((get_font_size() * line_spacing).round()),
-  }
-  let look = Look {
-    cell: cell,
-    text_dy: f32(((cell.y - get_font_size()) / 2.0).floor()),
-    // One display pixel, in points: what a drawn bold is offset by.
-    pixel: 1.0 / get_io().display_framebuffer_scale().x.max(1.0),
-    fonts: fonts,
-    theme: theme,
-  }
-  let keys_taken = match command {
-    NoCommand => false,
-    _ => true,
-  }
-  let focused = is_window_focused(FOCUSED_FLAGS_ROOT_AND_CHILD_WINDOWS) && !keys_taken
-  draw_session(sessions[shown], look, focused, menus)
-  match fonts.regular {
-    Some(_) => pop_font(),
-    None => {},
-  }
-  end_child()
-  end()
-  (bar, SettingsAsk { changed: false, choose_file: false })
+  var last = played.host.state
+  save_now(last)
+  for s in last.tabs { close_session(s) }
+  sdl3.close(window.platform, played.renderer)
+  played.fonts.close()
+  (status, last)
 }
 
-/// The Settings tab: whether it is open, and whether to make it the one shown this frame.
-struct SettingsTab {
-  open: bool,
-  select: bool,
-}
-
-/// The tabs' names on the bar and in the menus — a `•` for output not yet seen — and their
-/// identities.
-let tab_labels = pure (sessions: []Session, home: string) -> []TabLabel =>
-  [k in 0..<sessions.len() | TabLabel {
-    name: "${if sessions[k].unseen { "• " } else { "" }}${tab_title(sessions[k], home)}",
-    id: sessions[k].id,
-  }]
-
-/// Whether `order` is 0, 1, 2, … — the tabs as they were.
-let in_order = pure (order: []i64) -> bool => {
-  for i in 0..<order.len() { if order[i] != i { return false } }
-  true
-}
-
-/// The tag the font file dialog's answer comes back under.
-const FONT_DIALOG: i32 = 1
-
-/// Points between the window's edge and the grid.
-const PADDING: f32 = 10.0
-
-/// The run of characters a cell's width is measured over.
-const MEASURE: string = "MMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMM"
-
-/// Reads per frame at most — a megabyte — so that a program writing without end (`yes`)
-/// cannot stop the window drawing.
-const READS_PER_FRAME: i64 = 16
-
-/// The faces the settings choose (a chosen file's, else the family's — the first family when
-/// it is not installed), at the settings' size; ImGui's own face (monospaced) alone when no family is found.
-let load_fonts = (host: Host, families: []FontFamily, s: Settings) -> Fonts => {
-  let none = Fonts {
-    regular: None,
-    bold: None,
-    italic: None,
-    bold_italic: None,
-    size: s.font_size
-  }
-  let Some(family) = family_for(s, families) else { return none }
-  match face(host, family.regular, s.font_size) {
-    Some(regular) => {
-      let fonts = Fonts {
-        regular: Some(regular),
-        bold: face(host, family.bold, s.font_size),
-        italic: face(host, family.italic, s.font_size),
-        bold_italic: face(host, family.bold_italic, s.font_size),
-        size: s.font_size,
-      }
-      // What the family lacks — CJK, symbols — drawn from the fallback fonts, in every face.
-      let fallbacks = fallback_fonts()
-      for f in [fonts.regular, fonts.bold, fonts.italic, fonts.bold_italic] {
-        match f {
-          Some(font) =>
-            for path in fallbacks { let _ = merge_font_file(host, font, path) },
-          None => {},
+/// Each `wait:` cut into slices of `SLICE_MS`, each a pass of its own.
+let sliced = pure (steps: []Step) -> []Step => {
+  var out: []Step = []
+  for step in steps {
+    match step {
+      Waited(ms) => {
+        var left = ms
+        while left > 0 {
+          out.push(Waited(left.min(SLICE_MS)))
+          left -= SLICE_MS
         }
-      }
-      fonts
-    },
-    None => none,
+      },
+      other => out.push(other),
+    }
+  }
+  out
+}
+
+/// The first tab, running `args` — a program instead of the shell, without its integration,
+/// where Termina was started — or the login shell, in a window drawn as on a Mac or not;
+/// `None`, said why, if it could not start.
+let started = (
+  args: []string,
+  settings: Settings,
+  theme: Theme,
+  fonts: mut Fonts,
+  scale: f32,
+  mac: bool
+) -> Maybe<Term> => {
+  let spec = FontSpec { family: "mono", size: settings.font_size }
+  let grid = grid_of(spec, fonts.metrics(spec, scale), settings.line_spacing)
+  let Some(s) = open_session(
+    args,
+    if args.len() > 0 { lookup("PWD") } else { None },
+    0
+  ) else {
+    println("termina: the shell could not start")
+    return None
+  }
+  // The settings, which the Settings tab edits and keeps in their file.
+  Some(Term {
+    term_of([s], theme, grid, settings.line_spacing, lookup("HOME") ?? "") |
+    mac: mac,
+    settings: settings,
+    settings_file: settings_path(),
+    saved: settings_to_json(settings),
+    families: font_families(),
+  })
+}
+
+/// A window of no tabs, for a status returned before any opened: nothing is drawn in it, so
+/// its font is not measured.
+let empty_term = (theme: Theme, settings: Settings) -> Term => {
+  let spec = FontSpec { family: "mono", size: settings.font_size }
+  term_of(
+    [],
+    theme,
+    grid_of(spec, FontMetrics {}, settings.line_spacing),
+    settings.line_spacing,
+    ""
+  )
+}
+
+/// The frame the host last laid out, drawn without showing it and written as a PNG.
+let save = (
+  played: shared Running<Term, TermEvent, ScriptPlatform, SdlRenderer>,
+  path: string
+) -> bool => {
+  var atlas = glyph_atlas()
+  var f = played.fonts
+  var r = played.renderer
+  let ops = paint(played.host.shown[0], Point {}, 1.0, f, atlas, r)
+  let Some(frame) = capture(
+    r,
+    color(played.host.state.theme.bg),
+    ops
+  ) else { return false }
+  var bytes: []u8 = []
+  for p in frame.argb {
+    bytes.push(u8((p >> 16) & 0xFF))
+    bytes.push(u8((p >> 8) & 0xFF))
+    bytes.push(u8(p & 0xFF))
+    bytes.push(u8((p >> 24) & 0xFF))
+  }
+  match write_png(frame.width, frame.height, bytes) {
+    Ok(image) => write_bytes(path, image),
+    Err(_) => false,
   }
 }
 
-/// A face from `path` (`None` for `""`, or a file that cannot be read). ImGui keeps one per
-/// file, and a size is chosen as it is pushed, so the size here is only its first.
-let face = (host: Host, path: string, size: f32) -> Maybe<Font> =>
-  if path == "" { None } else { font_file(host, path, size) }
+/// The settings' family — a chosen font file's, else the family named, else the first found —
+/// as `mono`'s faces: its regular, bold, italic and bold italic where it has them.
+let add_family = (fonts: mut Fonts, s: Settings) -> void => {
+  let Some(family) = family_for(s, font_families()) else { return }
+  for (path, weight, italic) in [
+    (family.regular, 400, false),
+    (family.bold, 700, false),
+    (family.italic, 400, true),
+    (family.bold_italic, 700, true),
+  ] {
+    if path != "" { let _ = fonts.add("mono", path, 0, weight, italic) }
+  }
+}
+
+/// The shown tab's screen, a line a row, trailing blanks dropped — or, with every tab closed,
+/// the one the last tab's program left.
+let print_last = (t: Term) -> void => {
+  let lines = if t.tabs.len() > 0 { screen_text(t.tabs[t.active]) } else { t.closed_screen }
+  println("termina: ${lines.len()} lines")
+  for line in lines { println(line) }
+}
