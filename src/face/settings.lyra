@@ -22,12 +22,33 @@ import settings.{
   preview_name,
   with_blur,
   RULE_WIDTH_RANGE,
+  with_backing,
+  with_backing_kind,
+  gradient_named,
+  image_named,
+  with_gradient_shape,
+  settled_gradient,
+  fit_named,
+  BackingStop,
+  BackingImage,
+  GradientBacking,
+  ImageBacking,
+  GRADIENT_STOPS,
   save_settings,
   settings_to_json,
   FONT_SIZE_RANGE,
 }
 import settings_page.{
   SettingsEvent,
+  SetFill,
+  SetGradientShape,
+  SetGradientAngle,
+  SetStopColor,
+  SetStopAt,
+  AddStop,
+  RemoveStop,
+  ChooseFillImage,
+  SetImageFit,
   UseFamily,
   ChooseFontFile,
   SetFontSize,
@@ -58,6 +79,51 @@ const SAVE_DELAY_MS: i64 = 500
 pub let settings_asked = (t: mut Term, e: SettingsEvent) -> []Command<TermEvent> => {
   let faces_were = faces_of(t)
   match e {
+    // A fill changed: the colors' own, so the theme is the user's (`edit_colors`).
+    SetFill(field, kind) => {
+      t.settings.colors = with_backing_kind(t.settings.colors, field, kind)
+      edit_colors(t.settings)
+    },
+    SetGradientShape(field, shape) =>
+      gradient_edited(t, field, (g) => with_gradient_shape(g, shape)),
+    SetGradientAngle(field, angle) =>
+      gradient_edited(t, field, (g) => BackingGradient { g | angle: f32(angle.round()) }),
+    SetStopColor(field, k, rgb) => gradient_edited(t, field, (g) => {
+      var stops = [...g.stops]
+      if k >= 0 && k < stops.len() { stops[k] = BackingStop { stops[k] | color: rgb } }
+      BackingGradient { g | stops: stops }
+    }),
+    SetStopAt(field, k, at) => gradient_edited(t, field, (g) => {
+      var stops = [...g.stops]
+      if k >= 0 && k < stops.len() { stops[k] = BackingStop { stops[k] | at: at } }
+      BackingGradient { g | stops: stops }
+    }),
+    // A stop added at the end, as the last is, at the far end.
+    AddStop(field) => gradient_edited(t, field, (g) => {
+      if g.stops.len() >= GRADIENT_STOPS.1 { return g }
+      let last = g.stops[g.stops.len() - 1]
+      BackingGradient { g | stops: [...g.stops, BackingStop { last | at: 1.0 }] }
+    }),
+    RemoveStop(field, k) => gradient_edited(t, field, (g) => {
+      if g.stops.len() <= GRADIENT_STOPS.0 { return g }
+      BackingGradient { g | stops: [i in 0..<g.stops.len() | i != k | g.stops[i]] }
+    }),
+    ChooseFillImage(field) => {
+      return [ChooseFile(
+        FileDialog { filters: [("Images", "png;jpg;jpeg;svg")] },
+        (path: Maybe<string>) -> TermEvent => FillImageChosen(field, path)
+      )]
+    },
+    SetImageFit(field, k) => {
+      let Some(i) = image_named(t.settings.colors, field) else { return [] }
+      let fit = fit_named(if k == 0 { "tile" } else if k == 1 { "stretch" } else { "cover" })
+      t.settings.colors = with_backing(
+        t.settings.colors,
+        field,
+        ImageBacking(BackingImage { i | fit: fit })
+      )
+      edit_colors(t.settings)
+    },
     // Picking a family goes back to families from a chosen file.
     UseFamily(name) => {
       t.settings.font_family = name
@@ -141,6 +207,41 @@ pub let font_stepped = (t: mut Term, by: f32) -> []Command<TermEvent> => {
 }
 
 /// A font file chosen in the system's dialog: the font, from now on.
+/// The gradient filling the background `field` names changed by `change`, kept to the stops it
+/// may have ([settled_gradient]); nothing where no gradient fills it.
+let gradient_edited = (
+  t: mut Term,
+  field: string,
+  change: (BackingGradient) -> BackingGradient
+) -> void => {
+  let Some(g) = gradient_named(t.settings.colors, field) else { return }
+  let changed = GradientBacking(settled_gradient(change(g)))
+  t.settings.colors = with_backing(t.settings.colors, field, changed)
+  edit_colors(t.settings)
+}
+
+/// The image file chosen for the background `field` names: its fill that image, at the fit it
+/// had; nothing for a dialog dismissed.
+pub let fill_image_chosen = (
+  t: mut Term,
+  field: string,
+  path: Maybe<string>
+) -> []Command<TermEvent> => {
+  let Some(chosen) = path else { return [] }
+  let fit = match image_named(t.settings.colors, field) {
+    Some(i) => i.fit,
+    None => fit_named("cover"),
+  }
+  let faces_were = faces_of(t)
+  t.settings.colors = with_backing(
+    t.settings.colors,
+    field,
+    ImageBacking(BackingImage { path: chosen, fit: fit })
+  )
+  edit_colors(t.settings)
+  applied(t, faces_were)
+}
+
 pub let font_file_chosen = (t: mut Term, path: Maybe<string>) -> []Command<TermEvent> => {
   let Some(chosen) = path else { return [] }
   let faces_were = faces_of(t)
@@ -166,6 +267,7 @@ pub let save_now = (t: mut Term) -> void => {
 let applied = (t: mut Term, faces_were: string) -> []Command<TermEvent> => {
   t.theme = theme_of(t.settings)
   for i in 0..<t.tabs.len() { told_colors(t.tabs[i], t.theme) }
+  fill_images(t.settings.colors, t.images, t.image_revision)
   t.spacing = t.settings.line_spacing
   var out: []Command<TermEvent> = []
   let faces = faces_of(t)

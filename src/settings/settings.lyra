@@ -109,6 +109,11 @@ pub struct Colors {
   /// The 16 ANSI colors: black, red, green, yellow, blue, magenta, cyan, white, then
   /// their bright versions.
   ansi: []u32,
+  /// What fills the backgrounds beyond their colors — the window's, the input sections', the
+  /// output sections' — at their colors' opacity ([Backing], `backing.lyra`).
+  bg_fill: Backing = PlainBacking,
+  input_fill: Backing = PlainBacking,
+  output_fill: Backing = PlainBacking,
 }
 
 /// The settings before any are chosen.
@@ -566,6 +571,15 @@ let colors_to_json = pure (c: Colors) -> JsonValue => JsonObject([
   member("menu", JsonString(hex_of(c.menu))),
   member("menu_chosen", JsonString(hex_of(c.menu_chosen))),
   member("ansi", JsonArray([x in c.ansi | JsonString(hex_of(x))])),
+  ...[
+    f in [
+      ("background_fill", c.bg_fill),
+      ("input_fill", c.input_fill),
+      ("output_fill", c.output_fill)
+    ] |
+      backing_to_json(f.1).is_some() |
+      member(f.0, backing_to_json(f.1) ?? JsonBool(false))
+  ],
 ])
 
 /// Colors from the file's object `c`: each written there that makes sense, `base`'s for
@@ -600,6 +614,9 @@ let colors_from_json = pure (c: JsonValue, base: Colors) -> Colors => {
     menu: color_field(c, "menu") ?? base.menu,
     menu_chosen: color_field(c, "menu_chosen") ?? base.menu_chosen,
     ansi: ansi,
+    bg_fill: if c.field("background_fill").is_some() { backing_from_json(c.field("background_fill")) } else { base.bg_fill },
+    input_fill: if c.field("input_fill").is_some() { backing_from_json(c.field("input_fill")) } else { base.input_fill },
+    output_fill: if c.field("output_fill").is_some() { backing_from_json(c.field("output_fill")) } else { base.output_fill },
   })
 }
 

@@ -8,9 +8,10 @@
 #                               #    build/release/Termina-<version>-linux-<arch>.AppImage
 #
 # **SDL3 goes with the program**, the one library Termina links that a machine may not
-# have: the PTY and `ui`'s halves are linked in, and so are FreeType and HarfBuzz when the
-# build found static ones (`tools/textlibs.sh`, first on PKG_CONFIG_PATH) — which a release
-# does, and which is checked here: a program linking them as shared libraries is refused.
+# have: the PTY and `ui`'s halves are linked in, and so are FreeType, HarfBuzz and SDL3_image
+# when the build found static ones (`tools/textlibs.sh`, `tools/sdl3_image.sh`, first on
+# PKG_CONFIG_PATH) — which a release does, and which is checked here: a program linking them
+# as shared libraries is refused.
 # SDL3 is taken from where pkg-config's `sdl3` says, so a release builds it first
 # (`tools/sdl3.sh`) and points PKG_CONFIG_PATH at it; run on a developer's machine, it
 # bundles Homebrew's or the system's.
@@ -66,7 +67,8 @@ case "$(uname -s)" in
     chmod u+w "$APP/Frameworks/libSDL3.0.dylib"
     install_name_tool -id @rpath/libSDL3.0.dylib "$APP/Frameworks/libSDL3.0.dylib"
     # Whatever path the program was linked against, it looks in the bundle instead.
-    linked="$(otool -L "$EXE" | awk '/libSDL3/ { print $1 }')"
+    # SDL3's own library, not SDL3_image's, which a release links in (tools/sdl3_image.sh).
+    linked="$(otool -L "$EXE" | awk '/libSDL3\.[0-9]/ { print $1 }')"
     [ -n "$linked" ] || die "build/termina does not link SDL3"
     install_name_tool -change "$linked" @rpath/libSDL3.0.dylib "$EXE"
     install_name_tool -add_rpath @executable_path/../Frameworks "$EXE"
@@ -126,9 +128,10 @@ case "$(uname -s)" in
     cp "$ROOT/build/termina" "$STAGE/"
     cp -L "$SDL_LIBDIR/libSDL3.so.0" "$STAGE/lib/"
     patchelf --set-rpath '$ORIGIN/lib' "$STAGE/termina"
-    # FreeType and HarfBuzz inside the program (tools/textlibs.sh), not the build machine's.
-    if readelf -d "$STAGE/termina" | grep -E 'NEEDED.*lib(freetype|harfbuzz)' >&2; then
-      die "the program links FreeType or HarfBuzz as a shared library: build with tools/textlibs.sh's first on PKG_CONFIG_PATH"
+    # FreeType, HarfBuzz and SDL3_image inside the program (tools/textlibs.sh,
+    # tools/sdl3_image.sh), not the build machine's.
+    if readelf -d "$STAGE/termina" | grep -E 'NEEDED.*lib(freetype|harfbuzz|SDL3_image)' >&2; then
+      die "the program links FreeType, HarfBuzz or SDL3_image as a shared library: build with tools/textlibs.sh's and tools/sdl3_image.sh's first on PKG_CONFIG_PATH"
     fi
     cp "$ROOT/LICENSE" "$ROOT/README.md" "$STAGE/"
     # SDL3 found in the archive, not wherever the build machine had it — asked as a user's

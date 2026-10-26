@@ -6,6 +6,7 @@
 
 <script target="ui">
   import ui.draw.{ Color }
+  import std.path
   import settings.{
     Settings,
     FontFamily,
@@ -16,6 +17,16 @@
     saved_colors,
     color_named,
     blur_named,
+    BackingGradient,
+    BackingImage,
+    backing_named,
+    backing_kind,
+    gradient_named,
+    image_named,
+    gradient_between,
+    gradient_shape,
+    fit_name,
+    GRADIENT_STOPS,
     may_be_clear,
     THEME_NAMES,
     FONT_SIZE_RANGE,
@@ -26,7 +37,20 @@
 
   /// What the settings can be asked to do; the Settings tab carries it out.
   pub data SettingsEvent =
-    UseFamily(string)
+    /// A background's fill, by its color's field: its kind (0 the color, 1 a gradient, 2 an
+    /// image); a gradient's shape (0 linear, 1 radial, 2 a circle), angle, and a stop's color,
+    /// place, removal or one added; an image file asked for, and how it fits (0 tiled, 1
+    /// stretched, 2 stretched and cropped).
+    SetFill(string, i64)
+    | SetGradientShape(string, i64)
+    | SetGradientAngle(string, f32)
+    | SetStopColor(string, i64, u32)
+    | SetStopAt(string, i64, f32)
+    | AddStop(string)
+    | RemoveStop(string, i64)
+    | ChooseFillImage(string)
+    | SetImageFit(string, i64)
+    | UseFamily(string)
     | ChooseFontFile
     /// The font's size or the line spacing, as the slider is dragged.
     | SetFontSize(f32)
@@ -136,6 +160,29 @@
 
   /// The size, in whole points; the spacing to two places.
   let points = pure (size: f32) -> string => "${i64(size.round())} pt"
+
+  /// The fills' kinds, a gradient's shapes and an image's fits, as their lists show them.
+  const FILL_KINDS: []string = ["Color", "Gradient", "Image"]
+  const GRADIENT_SHAPES: []string = ["Linear", "Radial", "Circle"]
+  const IMAGE_FITS: []string = ["Tile", "Stretch", "Stretch and crop"]
+
+  /// Where an image's fit is in [IMAGE_FITS].
+  let fit_index = pure (i: BackingImage) -> i64 => match fit_name(i.fit) {
+    "tile" => 0,
+    "stretch" => 1,
+    _ => 2,
+  }
+
+  /// An image's file name, or that none is chosen yet.
+  let image_label = pure (i: BackingImage) -> string =>
+    if i.path == "" { "No image chosen" } else { i.path.base() }
+
+  /// The swatch key of a gradient's stop `k`, for the background `field` names.
+  let stop_key = pure (field: string, k: i64) -> string => "stop ${field} ${k}"
+
+  /// An angle in whole degrees, and a place along a gradient in whole percent.
+  let degrees = pure (a: f32) -> string => "${i64(a.round())}°"
+  let percent = pure (x: f32) -> string => "${i64((x * 100.0).round())}%"
   let spacing_text = pure (x: f32) -> string => {
     let hundredths = i64((x * 100.0).round())
     "${hundredths / 100}.${if hundredths % 100 < 10 { "0" } else { "" }}${hundredths % 100}"
@@ -262,6 +309,16 @@
           </Flex>
         </Column>
 
+        <!-- Each background's fill beyond its color: a gradient or an image, at its color's
+             opacity. -->
+        <Column class="section">
+          <Text class="heading">Backgrounds</Text>
+          <for each={b in [("Window", "bg"), ("Input", "input"), ("Output", "output")]}>
+            <fill_editor s={s} label={b.0} field={b.1} open={open}/>
+          </for>
+          <Text class="note">A gradient or an image fills a background over its color, at its color's opacity, and is blurred behind as the color would be. Images may be PNG, JPEG or SVG.</Text>
+        </Column>
+
         <Column class="section">
           <Text class="heading">Window</Text>
           <Checkbox checked={s.remember_window} on_toggle={ToggleRememberWindow}>Open the window where it was last closed, at its size</Checkbox>
@@ -328,4 +385,70 @@
     opaque
     key="ansi {k}"
   />
+</component>
+
+<!-- A background's fill: the color alone, a gradient, or an image file and how it fits. -->
+<component name="fill_editor" props={{ s: Settings, label: string, field: string, open: string }} event={SettingsEvent}>
+  <style>
+    .fill { gap: 10 }
+    .fill-row { gap: 12 }
+    .fill-label { width: 70 }
+  </style>
+  <Column class="fill" key={field}>
+    <Row class="fill-row">
+      <Text class="fill-label">{label}</Text>
+      <Select options={FILL_KINDS} selected={backing_kind(backing_named(s.colors, field))} on_change={(k: i64) -> SettingsEvent => SetFill(field, k)}/>
+    </Row>
+    <if test={gradient_named(s.colors, field).is_some()}>
+      <gradient_editor g={gradient_named(s.colors, field) ?? gradient_between(0, 0)} field={field} open={open}/>
+    </if>
+    <if test={image_named(s.colors, field).is_some()}>
+      <Row class="fill-row">
+        <Button on_click={ChooseFillImage(field)}>Choose Image…</Button>
+        <Text>{image_label(image_named(s.colors, field) ?? BackingImage { path: "" })}</Text>
+        <Select options={IMAGE_FITS} selected={fit_index(image_named(s.colors, field) ?? BackingImage { path: "" })} on_change={(k: i64) -> SettingsEvent => SetImageFit(field, k)}/>
+      </Row>
+    </if>
+  </Column>
+</component>
+
+<!-- A gradient's shape and angle, and its stops: each its color, with its opacity, and its
+     place along it, removable while there are more than the fewest. -->
+<component name="gradient_editor" props={{ g: BackingGradient, field: string, open: string }} event={SettingsEvent}>
+  <style>
+    .gradient { gap: 8 }
+    .stop { gap: 12 }
+    Slider { width: 200 }
+  </style>
+  <Column class="gradient">
+    <Row class="stop">
+      <Select options={GRADIENT_SHAPES} selected={gradient_shape(g)} on_change={(k: i64) -> SettingsEvent => SetGradientShape(field, k)}/>
+      <if test={!g.radial}>
+        <Text>Angle</Text>
+        <Slider value={g.angle} min="0" max="360" step="1" on_change={(v: f32) -> SettingsEvent => SetGradientAngle(field, v)}/>
+        <Text>{degrees(g.angle)}</Text>
+      </if>
+    </Row>
+    <for each={k in 0..<g.stops.len()}>
+      <Row class="stop" key="stop {k}">
+        <Swatch
+          color={swatch_color(g.stops[k].color)}
+          open={open == stop_key(field, k)}
+          on_open={OpenSwatch(stop_key(field, k))}
+          on_change={(c: Color) -> SettingsEvent => SetStopColor(field, k, rgb_of_color(c))}
+          on_dismiss={CloseSwatch}
+        />
+        <Slider value={g.stops[k].at} min="0" max="1" step="0.01" on_change={(v: f32) -> SettingsEvent => SetStopAt(field, k, v)}/>
+        <Text>{percent(g.stops[k].at)}</Text>
+        <if test={g.stops.len() > GRADIENT_STOPS.0}>
+          <Button on_click={RemoveStop(field, k)}>Remove</Button>
+        </if>
+      </Row>
+    </for>
+    <if test={g.stops.len() < GRADIENT_STOPS.1}>
+      <Row>
+        <Button on_click={AddStop(field)}>Add Stop</Button>
+      </Row>
+    </if>
+  </Column>
 </component>

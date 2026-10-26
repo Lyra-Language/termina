@@ -116,6 +116,7 @@ pub let paint_tab = pure (
   f: FrameLayout,
   g: Grid,
   theme: Theme,
+  fills: Fills,
   focused: bool,
   area: PaintArea
 ) -> []PaintOp => {
@@ -135,12 +136,13 @@ pub let paint_tab = pure (
   }
   // The commands' blocks under the text: the input's band, the output's below it.
   if !s.shown.alt {
-    for b in s.blocks { card(ops, s, theme, g, f, b, false) }
+    for b in s.blocks { card(ops, s, theme, fills, g, f, b, false) }
     if let Some(b) = s.running_block {
       card(
         ops,
         s,
         theme,
+        fills,
         g,
         f,
         Block { b | end: f.grid_lines + s.shown.absolute(0) },
@@ -193,11 +195,11 @@ pub let paint_tab = pure (
   if boxed { ops.push(PaintDraw(PopClip)) }
   match f.prompt {
     Some((i, prompt_end)) =>
-      prompt_box(ops, s, f, g, theme, input_theme, i, prompt_end, focused),
+      prompt_box(ops, s, f, g, theme, fills, input_theme, i, prompt_end, focused),
     None => {
       if f.running_box {
         // The command running, greyed, its first line, as wide as the box.
-        frame_box(ops, theme, g, cols, f.box_top, f.view_bottom)
+        frame_box(ops, theme, fills, g, cols, f.box_top, f.view_bottom)
         let lines = s.running.split("\n")
         let head = if lines.len() > 1 { "${lines[0]} ⏎ …" } else { lines[0] }
         let runes = head.to_runes()
@@ -372,6 +374,7 @@ let card = (
   ops: mut []PaintOp,
   s: Session,
   theme: Theme,
+  fills: Fills,
   g: Grid,
   f: FrameLayout,
   b: Block,
@@ -397,14 +400,18 @@ let card = (
       Rect { x: x0, y: top, w: w, h: input_foot - top },
       Radii { top_left: BLOCK_ROUNDING, top_right: BLOCK_ROUNDING },
       theme.input,
-      theme.input_blur
+      theme.input_blur,
+      fills.input,
+      fills
     )
     section(
       ops,
       Rect { x: x0, y: input_foot, w: w, h: foot - input_foot },
       Radii { bottom_left: BLOCK_ROUNDING, bottom_right: BLOCK_ROUNDING },
       theme.output,
-      theme.output_blur
+      theme.output_blur,
+      fills.output,
+      fills
     )
   } else {
     section(
@@ -412,7 +419,9 @@ let card = (
       Rect { x: x0, y: top, w: w, h: input_foot - top },
       radius(BLOCK_ROUNDING),
       theme.input,
-      theme.input_blur
+      theme.input_blur,
+      fills.input,
+      fills
     )
   }
   if b.status > 0 {
@@ -461,7 +470,8 @@ let note = (
   }
 }
 
-/// A section's background — a card's band, the box — in `abgr`: translucent, over what is behind
+/// A section's background — a card's band, the box — in `abgr`, filled by `fill` (`fill_ops`:
+/// its color, a gradient, an image, at the color's opacity): translucent, over what is behind
 /// it blurred by `blur` (`ui`'s backdrop: the window's drawing on the GPU, the desktop through a
 /// see-through window).
 let section = (
@@ -469,10 +479,12 @@ let section = (
   at: Rect,
   radii: Radii,
   abgr: u32,
-  blur: f32
+  blur: f32,
+  fill: Backing,
+  fills: Fills
 ) -> void => {
   if (abgr >> 24) != 0xFF && blur > 0.0 { ops.push(PaintDraw(Backdrop(at, radii, blur))) }
-  ops.push(PaintDraw(Fill(at, radii, color(abgr))))
+  for op in fill_ops(fill, abgr, at, radii, fills.images, fills.scale) { ops.push(op) }
 }
 
 /// The box's frame from `box_top` to the view's foot, tinted, a rule along its top between its
@@ -481,6 +493,7 @@ let section = (
 let frame_box = (
   ops: mut []PaintOp,
   theme: Theme,
+  fills: Fills,
   g: Grid,
   cols: i64,
   box_top: f32,
@@ -492,7 +505,15 @@ let frame_box = (
     w: f32(cols) * g.cell_x + 2.0 * BOX_MARGIN,
     h: view_bottom - box_top,
   }
-  section(ops, at, radius(BOX_ROUNDING), theme.input, theme.input_blur)
+  section(
+    ops,
+    at,
+    radius(BOX_ROUNDING),
+    theme.input,
+    theme.input_blur,
+    fills.input,
+    fills
+  )
   ops.push(PaintDraw(Fill(
     Rect { x: at.x + BOX_ROUNDING, y: at.y, w: at.w - 2.0 * BOX_ROUNDING, h: 1.0 },
     radius(0.0),
@@ -508,13 +529,14 @@ let prompt_box = (
   f: FrameLayout,
   g: Grid,
   theme: Theme,
+  fills: Fills,
   input_theme: Theme,
   i: i64,
   prompt_end: i64,
   focused: bool
 ) -> void => {
   let cols = s.shown.cols
-  frame_box(ops, theme, g, cols, f.box_top, f.view_bottom)
+  frame_box(ops, theme, fills, g, cols, f.box_top, f.view_bottom)
   let row_y = (r: i64) -> f32 => f.box_top + BOX_PADDING + f32(r) * g.cell_y
   for r in 0..<f.prompt_rows {
     let l = f.first + r

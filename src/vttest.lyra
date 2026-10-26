@@ -45,6 +45,19 @@ import settings.{
   saved_colors,
   blur_named,
   with_blur,
+  Backing,
+  PlainBacking,
+  GradientBacking,
+  ImageBacking,
+  BackingGradient,
+  BackingStop,
+  BackingImage,
+  StretchImage,
+  backing_kind,
+  with_backing,
+  with_backing_kind,
+  settled_gradient,
+  fit_name,
 }
 import term.{ abgr, dark_theme, Theme, typed_lines, command_line }
 import session.{
@@ -104,6 +117,7 @@ let main = () -> u8 => {
   failed += check_window_place()
   failed += check_color_alpha()
   failed += check_saved_themes()
+  failed += check_fills()
   failed += check_theme()
   failed += check_typeahead_lines()
   failed += check_sessions()
@@ -1647,6 +1661,71 @@ let check_saved_themes = () -> i64 => {
     "true"
   )
   failed
+}
+
+// The backgrounds' fills (settings/backing.lyra): each kind written and read back; a gradient
+// kept to 2 to 8 stops, each place within 0 to 1; switching kinds keeping a fill of the kind
+// and starting a gradient from the color; and an image with no file read back as the color
+// alone.
+let check_fills = () -> i64 => {
+  var failed = 0
+  let stops = [i in 0..<10 | BackingStop { color: 0x102030, at: f32(i) / 5.0 }]
+  let kept = settled_gradient(BackingGradient {
+    radial: true,
+    circle: true,
+    stops: stops
+  })
+  failed += check(
+    "fills: a gradient's stops kept to 8, each place within 0 to 1",
+    "${kept.stops.len()} ${kept.stops[7].at}",
+    "8 1"
+  )
+  failed += check(
+    "fills: a gradient of one stop given a second",
+    "${settled_gradient(BackingGradient { stops: [stops[0]] }).stops.len()}",
+    "2"
+  )
+  var s = defaults()
+  s.colors = with_backing(s.colors, "bg", GradientBacking(kept))
+  s.colors = with_backing(
+    s.colors,
+    "output",
+    ImageBacking(BackingImage { path: "/tmp/a.png", fit: StretchImage })
+  )
+  let back = settings_from_json(settings_to_json(s))
+  failed += check(
+    "fills: a gradient and an image written and read back",
+    "${describe_fill(back.colors.bg_fill)} | ${describe_fill(back.colors.output_fill)} | ${describe_fill(back.colors.input_fill)}",
+    "radial circle 8 stops | image a.png stretch | color"
+  )
+  let unchosen = with_backing(
+    defaults().colors,
+    "input",
+    ImageBacking(BackingImage { path: "" })
+  )
+  let none = settings_from_json(settings_to_json(Settings { defaults() | colors: unchosen }))
+  failed += check(
+    "fills: an image not chosen read back as the color",
+    describe_fill(none.colors.input_fill),
+    "color"
+  )
+  let switched = with_backing_kind(defaults().colors, "input", 1)
+  failed += check(
+    "fills: a gradient begun from the color, kept when chosen again",
+    "${describe_fill(switched.input_fill)} ${backing_kind(with_backing_kind(switched, "input", 1).input_fill)}",
+    "linear 180 2 stops 1"
+  )
+  failed
+}
+
+/// A fill as a check compares it.
+let describe_fill = pure (b: Backing) -> string => match b {
+  PlainBacking => "color",
+  GradientBacking(g) =>
+    if g.radial { "radial${if g.circle { " circle" } else { "" }} ${g.stops.len()} stops" } else {
+      "linear ${g.angle.round()} ${g.stops.len()} stops"
+    },
+  ImageBacking(i) => "image ${i.path.base()} ${fit_name(i.fit)}",
 }
 
 /// The option and the place, as a check compares them.

@@ -95,11 +95,13 @@ jobs:
 
       # FreeType and HarfBuzz, static, so the program carries them (`ui` draws text with them);
       # first on PKG_CONFIG_PATH, ahead of any the runner has.
-      - name: Build SDL3, FreeType and HarfBuzz
+      - name: Build SDL3, SDL3_image, FreeType and HarfBuzz
         run: |
           termina/tools/sdl3.sh "$RUNNER_TEMP/sdl3"
+          # SDL3_image against that SDL3, static, its own decoders only (PNG, JPEG, SVG…).
+          PKG_CONFIG_PATH="$RUNNER_TEMP/sdl3/lib/pkgconfig" termina/tools/sdl3_image.sh "$RUNNER_TEMP/image"
           termina/tools/textlibs.sh "$RUNNER_TEMP/text"
-          echo "PKG_CONFIG_PATH=$RUNNER_TEMP/text/lib/pkgconfig:$RUNNER_TEMP/sdl3/lib/pkgconfig" >> "$GITHUB_ENV"
+          echo "PKG_CONFIG_PATH=$RUNNER_TEMP/image/lib/pkgconfig:$RUNNER_TEMP/text/lib/pkgconfig:$RUNNER_TEMP/sdl3/lib/pkgconfig" >> "$GITHUB_ENV"
           # The checks run the programs as built, before package.sh points them at their
           # own copy; a Mac's SDL3 is named by its full path, Linux's needs telling.
           echo "LD_LIBRARY_PATH=$RUNNER_TEMP/sdl3/lib" >> "$GITHUB_ENV"

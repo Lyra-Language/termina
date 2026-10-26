@@ -1,0 +1,186 @@
+module settings
+//! What fills a background — the window's, the input sections', the output sections' — beyond
+//! its color: a gradient, or an image, which take the color's opacity. Part of the colors, so a
+//! saved theme keeps them; `background_fill`, `input_fill` and `output_fill` in the file's
+//! colors, written only where they are not the color alone.
+
+/// A background's fill: its color alone, a gradient, or an image — either drawn at the
+/// color's opacity, over what is behind it as the color would be.
+pub data Backing = PlainBacking | GradientBacking(BackingGradient) | ImageBacking(BackingImage)
+
+/// A gradient: linear at an `angle` (CSS's degrees: 0 up, 90 to the right), or `radial` from
+/// the middle — a `circle`, else an ellipse the background's shape — through 2 to 8 `stops`.
+pub struct BackingGradient {
+  radial: bool = false,
+  circle: bool = false,
+  angle: f32 = 180.0,
+  stops: []BackingStop,
+}
+
+/// A gradient's stop: its color (`0xRRGGBB`, how transparent in the top byte, as the colors
+/// are) and where it is along the gradient, 0 to 1.
+pub struct BackingStop {
+  color: u32,
+  at: f32,
+}
+
+/// How an image fills its background: repeated at its own size, stretched to the background,
+/// or stretched until it covers it and cut to its shape.
+pub data ImageFit = TileImage | StretchImage | CoverImage
+
+/// An image file — PNG, JPEG or SVG — and how it fills its background.
+pub struct BackingImage {
+  path: string,
+  fit: ImageFit = CoverImage,
+}
+
+/// The fewest and most stops a gradient has.
+pub const GRADIENT_STOPS: (i64, i64) = (2, 8)
+
+/// A gradient to begin with: from `from` at the top to `to` at the foot.
+pub let gradient_between = pure (from: u32, to: u32) -> BackingGradient =>
+  BackingGradient { stops: [
+    BackingStop { color: from, at: 0.0 },
+    BackingStop { color: to, at: 1.0 }
+  ] }
+
+/// The fill of the background `field` names (`bg`, `input`, `output`); the color alone for any
+/// other.
+pub let backing_named = pure (c: Colors, field: string) -> Backing => match field {
+  "bg" => c.bg_fill,
+  "input" => c.input_fill,
+  "output" => c.output_fill,
+  _ => PlainBacking,
+}
+
+/// `c` with the background `field` names filled by `b`; `c` for any other field.
+pub let with_backing = pure (c: Colors, field: string, b: Backing) -> Colors =>
+  match field {
+    "bg" => Colors { c | bg_fill: b },
+    "input" => Colors { c | input_fill: b },
+    "output" => Colors { c | output_fill: b },
+    _ => c,
+  }
+
+/// `g`'s stops kept to [GRADIENT_STOPS] — the last ones dropped past the most, a stop added
+/// where there are too few — each place within 0 to 1.
+pub let settled_gradient = pure (g: BackingGradient) -> BackingGradient => {
+  var stops = [s in g.stops | BackingStop { s | at: s.at.clamp(0.0, 1.0) }]
+  if stops.len() > GRADIENT_STOPS.1 { stops = stops.slice(0, GRADIENT_STOPS.1) }
+  while stops.len() < GRADIENT_STOPS.0 {
+    let last = if stops.len() > 0 { stops[stops.len() - 1].color } else { 0x000000 }
+    stops.push(BackingStop { color: last, at: 1.0 })
+  }
+  BackingGradient { g | stops: stops, angle: g.angle %% 360.0 }
+}
+
+/// A fill as the file writes it: `kind` `gradient` or `image` and its settings; `None` for the
+/// color alone, which the file leaves out.
+let backing_to_json = pure (b: Backing) -> Maybe<JsonValue> => match b {
+  PlainBacking => None,
+  GradientBacking(g) => Some(JsonObject([
+    member("kind", JsonString("gradient")),
+    member("radial", JsonBool(g.radial)),
+    member("circle", JsonBool(g.circle)),
+    member("angle", JsonNumber(f64(g.angle))),
+    member("stops", JsonArray([s in g.stops | JsonObject([
+      member("color", JsonString(hex_of(s.color))),
+      member("at", JsonNumber(f64(s.at))),
+    ])])),
+  ])),
+  ImageBacking(i) => Some(JsonObject([
+    member("kind", JsonString("image")),
+    member("path", JsonString(i.path)),
+    member("fit", JsonString(fit_name(i.fit))),
+  ])),
+}
+
+/// The file's fill at `v`, leniently: a gradient with its stops kept to [GRADIENT_STOPS], an
+/// image with a path; the color alone for anything else.
+let backing_from_json = pure (v: Maybe<JsonValue>) -> Backing => {
+  let Some(doc) = v else { return PlainBacking }
+  match text_field(doc, "kind") ?? "" {
+    "gradient" => {
+      var stops: []BackingStop = []
+      for s in (doc.field("stops") ?? JsonArray([])).elements() {
+        if let Some(color) = color_field(s, "color") {
+          stops.push(BackingStop { color: color, at: f32(number_field(s, "at") ?? 0.0) })
+        }
+      }
+      GradientBacking(settled_gradient(BackingGradient {
+        radial: (doc.field("radial") ?? JsonBool(false)).as_bool() ?? false,
+        circle: (doc.field("circle") ?? JsonBool(false)).as_bool() ?? false,
+        angle: f32(number_field(doc, "angle") ?? 180.0),
+        stops: stops,
+      }))
+    },
+    "image" => {
+      let path = text_field(doc, "path") ?? ""
+      if path == "" { PlainBacking } else {
+        ImageBacking(BackingImage {
+          path: path,
+          fit: fit_named(text_field(doc, "fit") ?? "")
+        })
+      }
+    },
+    _ => PlainBacking,
+  }
+}
+
+/// A fit's name in the file, and back (cover for one it does not know).
+pub let fit_name = pure (f: ImageFit) -> string => match f {
+  TileImage => "tile",
+  StretchImage => "stretch",
+  CoverImage => "cover",
+}
+
+pub let fit_named = pure (name: string) -> ImageFit => match name {
+  "tile" => TileImage,
+  "stretch" => StretchImage,
+  _ => CoverImage,
+}
+
+/// Which kind of fill `b` is, as the Settings tab's list has them: 0 the color alone, 1 a
+/// gradient, 2 an image.
+pub let backing_kind = pure (b: Backing) -> i64 => match b {
+  PlainBacking => 0,
+  GradientBacking(_) => 1,
+  ImageBacking(_) => 2,
+}
+
+/// `c` with the background `field` names filled by kind `kind` ([backing_kind]): its fill kept
+/// where it is that kind already; else the color alone, a gradient from its color down to it
+/// darkened by half, or an image not chosen yet.
+pub let with_backing_kind = pure (c: Colors, field: string, kind: i64) -> Colors => {
+  let now = backing_named(c, field)
+  if backing_kind(now) == kind { return c }
+  let base = color_named(c, field)
+  let fill = match kind {
+    1 => GradientBacking(gradient_between(base, mix(base & 0xFFFFFF, 0x000000, 0.5) | (base & 0xFF000000))),
+    2 => ImageBacking(BackingImage { path: "" }),
+    _ => PlainBacking,
+  }
+  with_backing(c, field, fill)
+}
+
+/// The gradient filling the background `field` names, if one does.
+pub let gradient_named = pure (c: Colors, field: string) -> Maybe<BackingGradient> =>
+  match backing_named(c, field) {
+    GradientBacking(g) => Some(g),
+    _ => None,
+  }
+
+/// The image filling the background `field` names, if one does.
+pub let image_named = pure (c: Colors, field: string) -> Maybe<BackingImage> =>
+  match backing_named(c, field) {
+    ImageBacking(i) => Some(i),
+    _ => None,
+  }
+
+/// A gradient's shape as the Settings tab's list has them: 0 linear, 1 radial (an ellipse the
+/// background's shape), 2 a circle; and the gradient with shape `shape`.
+pub let gradient_shape = pure (g: BackingGradient) -> i64 =>
+  if !g.radial { 0 } else if g.circle { 2 } else { 1 }
+
+pub let with_gradient_shape = pure (g: BackingGradient, shape: i64) -> BackingGradient =>
+  BackingGradient { g | radial: shape != 0, circle: shape == 2 }

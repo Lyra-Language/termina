@@ -6,6 +6,7 @@ import ui.draw.{ Color }
 
 // settings_page.lui:8
 import ui.draw.{ Color }
+import std.path
 import settings.{
   Settings,
   FontFamily,
@@ -16,6 +17,16 @@ import settings.{
   saved_colors,
   color_named,
   blur_named,
+  BackingGradient,
+  BackingImage,
+  backing_named,
+  backing_kind,
+  gradient_named,
+  image_named,
+  gradient_between,
+  gradient_shape,
+  fit_name,
+  GRADIENT_STOPS,
   may_be_clear,
   THEME_NAMES,
   FONT_SIZE_RANGE,
@@ -26,7 +37,20 @@ import settings.{
 
 /// What the settings can be asked to do; the Settings tab carries it out.
 pub data SettingsEvent =
-  UseFamily(string)
+  /// A background's fill, by its color's field: its kind (0 the color, 1 a gradient, 2 an
+  /// image); a gradient's shape (0 linear, 1 radial, 2 a circle), angle, and a stop's color,
+  /// place, removal or one added; an image file asked for, and how it fits (0 tiled, 1
+  /// stretched, 2 stretched and cropped).
+  SetFill(string, i64)
+  | SetGradientShape(string, i64)
+  | SetGradientAngle(string, f32)
+  | SetStopColor(string, i64, u32)
+  | SetStopAt(string, i64, f32)
+  | AddStop(string)
+  | RemoveStop(string, i64)
+  | ChooseFillImage(string)
+  | SetImageFit(string, i64)
+  | UseFamily(string)
   | ChooseFontFile
   /// The font's size or the line spacing, as the slider is dragged.
   | SetFontSize(f32)
@@ -136,6 +160,29 @@ let swatch_color = pure (v: u32) -> Color => Color {
 
 /// The size, in whole points; the spacing to two places.
 let points = pure (size: f32) -> string => "${i64(size.round())} pt"
+
+/// The fills' kinds, a gradient's shapes and an image's fits, as their lists show them.
+const FILL_KINDS: []string = ["Color", "Gradient", "Image"]
+const GRADIENT_SHAPES: []string = ["Linear", "Radial", "Circle"]
+const IMAGE_FITS: []string = ["Tile", "Stretch", "Stretch and crop"]
+
+/// Where an image's fit is in [IMAGE_FITS].
+let fit_index = pure (i: BackingImage) -> i64 => match fit_name(i.fit) {
+  "tile" => 0,
+  "stretch" => 1,
+  _ => 2,
+}
+
+/// An image's file name, or that none is chosen yet.
+let image_label = pure (i: BackingImage) -> string =>
+  if i.path == "" { "No image chosen" } else { i.path.base() }
+
+/// The swatch key of a gradient's stop `k`, for the background `field` names.
+let stop_key = pure (field: string, k: i64) -> string => "stop ${field} ${k}"
+
+/// An angle in whole degrees, and a place along a gradient in whole percent.
+let degrees = pure (a: f32) -> string => "${i64(a.round())}°"
+let percent = pure (x: f32) -> string => "${i64((x * 100.0).round())}%"
 let spacing_text = pure (x: f32) -> string => {
   let hundredths = i64((x * 100.0).round())
   "${hundredths / 100}.${if hundredths % 100 < 10 { "0" } else { "" }}${hundredths % 100}"
@@ -155,145 +202,235 @@ const COLOR_GROUPS = [
   ColorGroup { heading: "Command line", colors: [("Text", "editor_text"), ("Completion menu", "menu"), ("Chosen completion", "menu_chosen")] },
 ]
 
-/// From settings_page.lui, line 161.
+/// From settings_page.lui, line 208.
 pub let settings_page = pure (s: Settings, families: []FontFamily, typed: string, open: string) -> Node<SettingsEvent> =>
   component_of("settings_page", settings_page_sheet, [
-    column([ // settings_page.lui:180
-      expanded(column([ // settings_page.lui:181
-        column([ // settings_page.lui:183
-          text("Font").with_class("heading"), // settings_page.lui:184
-          grid([ // settings_page.lui:185
-            text("Family"), // settings_page.lui:186
-            row([ // settings_page.lui:187
-              select(SelectSpec { options: family_options(s, families), selected: family_shown(s, families), on_change: (k: i64) -> SettingsEvent => family_picked(s, families, k), separators: if s.font_file != "" { [1] } else { [] }, option_families: family_fonts(s, families) }), // settings_page.lui:188
-              button("Other Font File…", ChooseFontFile).keyed("other font"), // settings_page.lui:195
+    column([ // settings_page.lui:227
+      expanded(column([ // settings_page.lui:228
+        column([ // settings_page.lui:230
+          text("Font").with_class("heading"), // settings_page.lui:231
+          grid([ // settings_page.lui:232
+            text("Family"), // settings_page.lui:233
+            row([ // settings_page.lui:234
+              select(SelectSpec { options: family_options(s, families), selected: family_shown(s, families), on_change: (k: i64) -> SettingsEvent => family_picked(s, families, k), separators: if s.font_file != "" { [1] } else { [] }, option_families: family_fonts(s, families) }), // settings_page.lui:235
+              button("Other Font File…", ChooseFontFile).keyed("other font"), // settings_page.lui:242
             ]).with_class("field"),
-            text("Size"), // settings_page.lui:197
-            row([ // settings_page.lui:198
-              slider(SliderSpec { value: s.font_size, min: FONT_SIZE_RANGE.0, max: FONT_SIZE_RANGE.1, step: 1.0, on_change: (value: f32) -> SettingsEvent => SetFontSize(value) }).keyed("size"), // settings_page.lui:199
-              text("${points(s.font_size)}"), // settings_page.lui:200
+            text("Size"), // settings_page.lui:244
+            row([ // settings_page.lui:245
+              slider(SliderSpec { value: s.font_size, min: FONT_SIZE_RANGE.0, max: FONT_SIZE_RANGE.1, step: 1.0, on_change: (value: f32) -> SettingsEvent => SetFontSize(value) }).keyed("size"), // settings_page.lui:246
+              text("${points(s.font_size)}"), // settings_page.lui:247
             ]).with_class("field"),
-            text("Line spacing"), // settings_page.lui:202
-            row([ // settings_page.lui:203
-              slider(SliderSpec { value: s.line_spacing, min: LINE_SPACING_RANGE.0, max: LINE_SPACING_RANGE.1, step: 0.05, on_change: (value: f32) -> SettingsEvent => SetLineSpacing(value) }).keyed("spacing"), // settings_page.lui:204
-              text("${spacing_text(s.line_spacing)}"), // settings_page.lui:205
+            text("Line spacing"), // settings_page.lui:249
+            row([ // settings_page.lui:250
+              slider(SliderSpec { value: s.line_spacing, min: LINE_SPACING_RANGE.0, max: LINE_SPACING_RANGE.1, step: 0.05, on_change: (value: f32) -> SettingsEvent => SetLineSpacing(value) }).keyed("spacing"), // settings_page.lui:251
+              text("${spacing_text(s.line_spacing)}"), // settings_page.lui:252
             ]).with_class("field"),
           ]).with_class("form"),
         ]).with_class("section"),
-        column([ // settings_page.lui:210
-          text("Colors").with_class("heading"), // settings_page.lui:211
-          grid([ // settings_page.lui:212
-            text("Theme"), // settings_page.lui:213
-            row([ // settings_page.lui:214
-              select(SelectSpec { options: theme_options(s), selected: theme_shown(s), on_change: (k: i64) -> SettingsEvent => theme_picked(s, k), separators: theme_rules(s) }), // settings_page.lui:215
+        column([ // settings_page.lui:257
+          text("Colors").with_class("heading"), // settings_page.lui:258
+          grid([ // settings_page.lui:259
+            text("Theme"), // settings_page.lui:260
+            row([ // settings_page.lui:261
+              select(SelectSpec { options: theme_options(s), selected: theme_shown(s), on_change: (k: i64) -> SettingsEvent => theme_picked(s, k), separators: theme_rules(s) }), // settings_page.lui:262
             ]).with_class("field"),
-            text("Theme name"), // settings_page.lui:222
-            row([ // settings_page.lui:223
-              text_input(FieldSpec { value: typed, placeholder: "Theme name", on_edit: (value: string) -> SettingsEvent => NameTheme(value) }).keyed("theme name"), // settings_page.lui:224
-              ...(if can_save(s) { // settings_page.lui:226
+            text("Theme name"), // settings_page.lui:269
+            row([ // settings_page.lui:270
+              text_input(FieldSpec { value: typed, placeholder: "Theme name", on_edit: (value: string) -> SettingsEvent => NameTheme(value) }).keyed("theme name"), // settings_page.lui:271
+              ...(if can_save(s) { // settings_page.lui:273
                 [
-                  button("Save", SaveTheme).keyed("save"), // settings_page.lui:227
+                  button("Save", SaveTheme).keyed("save"), // settings_page.lui:274
                 ]
               } else {
                 []
               }),
-              button("Save Theme As…", SaveThemeAs).disabled_if(!can_save_as(typed)).keyed("save theme"), // settings_page.lui:229
-              ...(if is_saved(s) { // settings_page.lui:230
+              button("Save Theme As…", SaveThemeAs).disabled_if(!can_save_as(typed)).keyed("save theme"), // settings_page.lui:276
+              ...(if is_saved(s) { // settings_page.lui:277
                 [
-                  button("Delete", DeleteSavedTheme).keyed("delete theme"), // settings_page.lui:231
+                  button("Delete", DeleteSavedTheme).keyed("delete theme"), // settings_page.lui:278
                 ]
               } else {
                 []
               }),
             ]).with_class("field"),
           ]).with_class("form"),
-          flex([ // settings_page.lui:239
-            ...[g in COLOR_GROUPS | column([ // settings_page.lui:240
-                text("${g.heading}").with_class("heading"), // settings_page.lui:242
-                ...[c in g.colors | color_field(s, c.0, c.1, open)], // settings_page.lui:243
+          flex([ // settings_page.lui:286
+            ...[g in COLOR_GROUPS | column([ // settings_page.lui:287
+                text("${g.heading}").with_class("heading"), // settings_page.lui:289
+                ...[c in g.colors | color_field(s, c.0, c.1, open)], // settings_page.lui:290
               ]).with_class("group")],
-            column([ // settings_page.lui:248
-              text("ANSI colors").with_class("heading"), // settings_page.lui:249
-              row([ // settings_page.lui:250
-                ...[k in 0..<8 | ansi_field(s, k, open)], // settings_page.lui:251
+            column([ // settings_page.lui:295
+              text("ANSI colors").with_class("heading"), // settings_page.lui:296
+              row([ // settings_page.lui:297
+                ...[k in 0..<8 | ansi_field(s, k, open)], // settings_page.lui:298
               ]).with_class("ansi"),
-              row([ // settings_page.lui:255
-                ...[k in 8..<16 | ansi_field(s, k, open)], // settings_page.lui:256
+              row([ // settings_page.lui:302
+                ...[k in 8..<16 | ansi_field(s, k, open)], // settings_page.lui:303
               ]).with_class("ansi"),
-              checkbox("Draw bold text in bright colors", s.bold_is_bright, ToggleBoldBright), // settings_page.lui:260
+              checkbox("Draw bold text in bright colors", s.bold_is_bright, ToggleBoldBright), // settings_page.lui:307
             ]).with_class("group"),
           ]).with_style(Style { flex_wrap: Some(Wrap) }).with_class("groups"),
         ]).with_class("section"),
-        column([ // settings_page.lui:265
-          text("Window").with_class("heading"), // settings_page.lui:266
-          checkbox("Open the window where it was last closed, at its size", s.remember_window, ToggleRememberWindow), // settings_page.lui:267
-          text("The window shows what is behind it while the Background's opacity is below full, and the Input and Output sections may be translucent over it, each blurring what is behind it as its color's picker says (macOS).").with_class("note"), // settings_page.lui:268
+        column([ // settings_page.lui:314
+          text("Backgrounds").with_class("heading"), // settings_page.lui:315
+          ...[b in [("Window", "bg"), ("Input", "input"), ("Output", "output")] | fill_editor(s, b.0, b.1, open)], // settings_page.lui:316
+          text("A gradient or an image fills a background over its color, at its color's opacity, and is blurred behind as the color would be. Images may be PNG, JPEG or SVG.").with_class("note"), // settings_page.lui:319
         ]).with_class("section"),
-        row([ // settings_page.lui:271
-          button("Reset to Defaults", ResetSettings).keyed("reset"), // settings_page.lui:272
+        column([ // settings_page.lui:322
+          text("Window").with_class("heading"), // settings_page.lui:323
+          checkbox("Open the window where it was last closed, at its size", s.remember_window, ToggleRememberWindow), // settings_page.lui:324
+          text("The window shows what is behind it while the Background's opacity is below full, and the Input and Output sections may be translucent over it, each blurring what is behind it as its color's picker says (macOS).").with_class("note"), // settings_page.lui:325
+        ]).with_class("section"),
+        row([ // settings_page.lui:328
+          button("Reset to Defaults", ResetSettings).keyed("reset"), // settings_page.lui:329
         ]),
       ]).aligned(MainStart, CrossStretch).with_class("panel")),
     ]).aligned(MainStart, CrossStretch).with_class("page"),
   ])
 
-/// From settings_page.lui, line 280.
+/// From settings_page.lui, line 337.
 pub let color_field = pure (s: Settings, label: string, field: string, open: string) -> Node<SettingsEvent> =>
   component_of("color_field", color_field_sheet, [
-    row([ // settings_page.lui:286
-      swatch(swatch_color(color_named(s.colors, field)), open == field, OpenSwatch(field), (c: Color) -> SettingsEvent => SetColor(field, rgb_of_color(c)), CloseSwatch, !(!may_be_clear(field)), [ // settings_page.lui:287
-        ...(if may_be_clear(field) { // settings_page.lui:296
+    row([ // settings_page.lui:343
+      swatch(swatch_color(color_named(s.colors, field)), open == field, OpenSwatch(field), (c: Color) -> SettingsEvent => SetColor(field, rgb_of_color(c)), CloseSwatch, !(!may_be_clear(field)), [ // settings_page.lui:344
+        ...(if may_be_clear(field) { // settings_page.lui:353
           [
-            row([ // settings_page.lui:297
-              text("Blur"), // settings_page.lui:298
-              expanded(slider(SliderSpec { value: blur_named(s, field), min: BLUR_RANGE.0, max: BLUR_RANGE.1, step: 1.0, on_change: (v: f32) -> SettingsEvent => SetBlur(field, v) })), // settings_page.lui:299
-              text("${points(blur_named(s, field))}"), // settings_page.lui:302
+            row([ // settings_page.lui:354
+              text("Blur"), // settings_page.lui:355
+              expanded(slider(SliderSpec { value: blur_named(s, field), min: BLUR_RANGE.0, max: BLUR_RANGE.1, step: 1.0, on_change: (v: f32) -> SettingsEvent => SetBlur(field, v) })), // settings_page.lui:356
+              text("${points(blur_named(s, field))}"), // settings_page.lui:359
             ]).with_class("blur").keyed("blur"),
           ]
         } else {
           []
         }),
-        ...(if field == "tab_rule" { // settings_page.lui:306
+        ...(if field == "tab_rule" { // settings_page.lui:363
           [
-            row([ // settings_page.lui:307
-              text("Thickness"), // settings_page.lui:308
-              expanded(slider(SliderSpec { value: s.tab_rule_width, min: RULE_WIDTH_RANGE.0, max: RULE_WIDTH_RANGE.1, step: 1.0, on_change: (value: f32) -> SettingsEvent => SetTabRuleWidth(value) })), // settings_page.lui:309
-              text("${points(s.tab_rule_width)}"), // settings_page.lui:312
+            row([ // settings_page.lui:364
+              text("Thickness"), // settings_page.lui:365
+              expanded(slider(SliderSpec { value: s.tab_rule_width, min: RULE_WIDTH_RANGE.0, max: RULE_WIDTH_RANGE.1, step: 1.0, on_change: (value: f32) -> SettingsEvent => SetTabRuleWidth(value) })), // settings_page.lui:366
+              text("${points(s.tab_rule_width)}"), // settings_page.lui:369
             ]).with_class("blur").keyed("thickness"),
           ]
         } else {
           []
         }),
       ]),
-      text("${label}"), // settings_page.lui:316
+      text("${label}"), // settings_page.lui:373
     ]).with_class("swatch-row").keyed(field),
   ])
 
-/// From settings_page.lui, line 321.
+/// From settings_page.lui, line 378.
 pub let ansi_field = pure (s: Settings, k: i64, open: string) -> Node<SettingsEvent> =>
   component("ansi_field", Sheet {}, [
-    swatch(swatch_color(s.colors.ansi[k]), open == "ansi ${k}", OpenSwatch("ansi ${k}"), (c: Color) -> SettingsEvent => SetAnsi(k, rgb_of_color(c)), CloseSwatch, false), // settings_page.lui:322
+    swatch(swatch_color(s.colors.ansi[k]), open == "ansi ${k}", OpenSwatch("ansi ${k}"), (c: Color) -> SettingsEvent => SetAnsi(k, rgb_of_color(c)), CloseSwatch, false), // settings_page.lui:379
   ])
 
-let settings_page_sheet = pure (t: Theme) -> Sheet => Sheet { // settings_page.lui:162
+/// From settings_page.lui, line 391.
+pub let fill_editor = pure (s: Settings, label: string, field: string, open: string) -> Node<SettingsEvent> =>
+  component_of("fill_editor", fill_editor_sheet, [
+    column([ // settings_page.lui:397
+      row([ // settings_page.lui:398
+        text("${label}").with_class("fill-label"), // settings_page.lui:399
+        select(SelectSpec { options: FILL_KINDS, selected: backing_kind(backing_named(s.colors, field)), on_change: (k: i64) -> SettingsEvent => SetFill(field, k) }), // settings_page.lui:400
+      ]).with_class("fill-row"),
+      ...(if gradient_named(s.colors, field).is_some() { // settings_page.lui:402
+        [
+          gradient_editor(gradient_named(s.colors, field) ?? gradient_between(0, 0), field, open), // settings_page.lui:403
+        ]
+      } else {
+        []
+      }),
+      ...(if image_named(s.colors, field).is_some() { // settings_page.lui:405
+        [
+          row([ // settings_page.lui:406
+            button("Choose Image…", ChooseFillImage(field)), // settings_page.lui:407
+            text("${image_label(image_named(s.colors, field) ?? BackingImage { path: "" })}"), // settings_page.lui:408
+            select(SelectSpec { options: IMAGE_FITS, selected: fit_index(image_named(s.colors, field) ?? BackingImage { path: "" }), on_change: (k: i64) -> SettingsEvent => SetImageFit(field, k) }), // settings_page.lui:409
+          ]).with_class("fill-row"),
+        ]
+      } else {
+        []
+      }),
+    ]).with_class("fill").keyed(field),
+  ])
+
+/// From settings_page.lui, line 417.
+pub let gradient_editor = pure (g: BackingGradient, field: string, open: string) -> Node<SettingsEvent> =>
+  component_of("gradient_editor", gradient_editor_sheet, [
+    column([ // settings_page.lui:423
+      row([ // settings_page.lui:424
+        select(SelectSpec { options: GRADIENT_SHAPES, selected: gradient_shape(g), on_change: (k: i64) -> SettingsEvent => SetGradientShape(field, k) }), // settings_page.lui:425
+        ...(if !g.radial { // settings_page.lui:426
+          [
+            text("Angle"), // settings_page.lui:427
+            slider(SliderSpec { value: g.angle, min: 0.0, max: 360.0, step: 1.0, on_change: (v: f32) -> SettingsEvent => SetGradientAngle(field, v) }), // settings_page.lui:428
+            text("${degrees(g.angle)}"), // settings_page.lui:429
+          ]
+        } else {
+          []
+        }),
+      ]).with_class("stop"),
+      ...[k in 0..<g.stops.len() | row([ // settings_page.lui:432
+          swatch(swatch_color(g.stops[k].color), open == stop_key(field, k), OpenSwatch(stop_key(field, k)), (c: Color) -> SettingsEvent => SetStopColor(field, k, rgb_of_color(c)), CloseSwatch), // settings_page.lui:434
+          slider(SliderSpec { value: g.stops[k].at, min: 0.0, max: 1.0, step: 0.01, on_change: (v: f32) -> SettingsEvent => SetStopAt(field, k, v) }), // settings_page.lui:441
+          text("${percent(g.stops[k].at)}"), // settings_page.lui:442
+          ...(if g.stops.len() > GRADIENT_STOPS.0 { // settings_page.lui:443
+            [
+              button("Remove", RemoveStop(field, k)), // settings_page.lui:444
+            ]
+          } else {
+            []
+          }),
+        ]).with_class("stop").keyed("stop ${k}")],
+      ...(if g.stops.len() < GRADIENT_STOPS.1 { // settings_page.lui:448
+        [
+          row([ // settings_page.lui:449
+            button("Add Stop", AddStop(field)), // settings_page.lui:450
+          ]),
+        ]
+      } else {
+        []
+      }),
+    ]).with_class("gradient"),
+  ])
+
+let settings_page_sheet = pure (t: Theme) -> Sheet => Sheet { // settings_page.lui:209
   rules: [
-    Rule { selector: ".page", style: Style { padding: Some(insets(10.0)) } }, // settings_page.lui:163
-    Rule { selector: ".panel", style: Style { gap: Some(22.0), padding: Some(insets(24.0)), overflow_y: Some(OverflowAuto) } }, // settings_page.lui:164
-    Rule { selector: ".section", style: Style { gap: Some(12.0) } }, // settings_page.lui:165
-    Rule { selector: "Text.heading", style: Style { font_size: Some(15.0), color: Some(t.colors.muted) } }, // settings_page.lui:166
-    Rule { selector: ".form", style: Style { grid_columns: Some([auto_track(), fr(1.0)]), column_gap: Some(16.0), row_gap: Some(12.0), align_items: Some(AlignCenter) } }, // settings_page.lui:167
-    Rule { selector: ".field", style: Style { gap: Some(8.0) } }, // settings_page.lui:168
-    Rule { selector: "Slider", style: Style { width: Some(240.0) } }, // settings_page.lui:169
-    Rule { selector: "TextInput", style: Style { width: Some(220.0) } }, // settings_page.lui:170
-    Rule { selector: ".groups", style: Style { gap: Some(32.0), row_gap: Some(20.0) } }, // settings_page.lui:171
-    Rule { selector: ".group", style: Style { gap: Some(10.0) } }, // settings_page.lui:172
-    Rule { selector: ".swatch-row", style: Style { gap: Some(8.0) } }, // settings_page.lui:173
-    Rule { selector: ".ansi", style: Style { gap: Some(6.0) } }, // settings_page.lui:174
-    Rule { selector: "Text.note", style: Style { color: Some(t.colors.muted), font_size: Some(12.0) } }, // settings_page.lui:175
+    Rule { selector: ".page", style: Style { padding: Some(insets(10.0)) } }, // settings_page.lui:210
+    Rule { selector: ".panel", style: Style { gap: Some(22.0), padding: Some(insets(24.0)), overflow_y: Some(OverflowAuto) } }, // settings_page.lui:211
+    Rule { selector: ".section", style: Style { gap: Some(12.0) } }, // settings_page.lui:212
+    Rule { selector: "Text.heading", style: Style { font_size: Some(15.0), color: Some(t.colors.muted) } }, // settings_page.lui:213
+    Rule { selector: ".form", style: Style { grid_columns: Some([auto_track(), fr(1.0)]), column_gap: Some(16.0), row_gap: Some(12.0), align_items: Some(AlignCenter) } }, // settings_page.lui:214
+    Rule { selector: ".field", style: Style { gap: Some(8.0) } }, // settings_page.lui:215
+    Rule { selector: "Slider", style: Style { width: Some(240.0) } }, // settings_page.lui:216
+    Rule { selector: "TextInput", style: Style { width: Some(220.0) } }, // settings_page.lui:217
+    Rule { selector: ".groups", style: Style { gap: Some(32.0), row_gap: Some(20.0) } }, // settings_page.lui:218
+    Rule { selector: ".group", style: Style { gap: Some(10.0) } }, // settings_page.lui:219
+    Rule { selector: ".swatch-row", style: Style { gap: Some(8.0) } }, // settings_page.lui:220
+    Rule { selector: ".ansi", style: Style { gap: Some(6.0) } }, // settings_page.lui:221
+    Rule { selector: "Text.note", style: Style { color: Some(t.colors.muted), font_size: Some(12.0) } }, // settings_page.lui:222
   ],
 }
 
-let color_field_sheet = pure (_: Theme) -> Sheet => Sheet { // settings_page.lui:283
+let color_field_sheet = pure (_: Theme) -> Sheet => Sheet { // settings_page.lui:340
   rules: [
-    Rule { selector: ".blur", style: Style { gap: Some(12.0) } }, // settings_page.lui:284
+    Rule { selector: ".blur", style: Style { gap: Some(12.0) } }, // settings_page.lui:341
+  ],
+}
+
+let fill_editor_sheet = pure (_: Theme) -> Sheet => Sheet { // settings_page.lui:392
+  rules: [
+    Rule { selector: ".fill", style: Style { gap: Some(10.0) } }, // settings_page.lui:393
+    Rule { selector: ".fill-row", style: Style { gap: Some(12.0) } }, // settings_page.lui:394
+    Rule { selector: ".fill-label", style: Style { width: Some(70.0) } }, // settings_page.lui:395
+  ],
+}
+
+let gradient_editor_sheet = pure (_: Theme) -> Sheet => Sheet { // settings_page.lui:418
+  rules: [
+    Rule { selector: ".gradient", style: Style { gap: Some(8.0) } }, // settings_page.lui:419
+    Rule { selector: ".stop", style: Style { gap: Some(12.0) } }, // settings_page.lui:420
+    Rule { selector: "Slider", style: Style { width: Some(200.0) } }, // settings_page.lui:421
   ],
 }

@@ -57,6 +57,7 @@ import term.{ Theme, theme_of }
 import desktop.{ APP_ID, install_desktop_entry }
 import face.{
   Term,
+  fill_images,
   TermEvent,
   term_of,
   screen_text,
@@ -321,14 +322,17 @@ let started = (
     return None
   }
   // The settings, which the Settings tab edits and keeps in their file.
-  Some(Term {
+  var made = Term {
     term_of([s], theme, grid, settings.line_spacing, lookup("HOME") ?? "") |
     mac: mac,
     settings: settings,
     settings_file: settings_path(),
     saved: settings_to_json(settings),
     families: font_families(),
-  })
+  }
+  // The backgrounds' images, decoded before the first frame draws them.
+  fill_images(made.settings.colors, made.images, made.image_revision)
+  Some(made)
 }
 
 /// A window of no tabs, for a status returned before any opened: nothing is drawn in it, so

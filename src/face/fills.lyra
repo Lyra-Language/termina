@@ -1,0 +1,123 @@
+module face
+//! The backgrounds' fills drawn: the window's, the input sections' and the output sections'
+//! (`settings.Backing`) — a color, a gradient or an image — at their colors' opacity. Images
+//! are decoded once a file, as the settings name them (`fill_images`), and drawn as `ui`'s
+//! pictures, which the host keeps as textures.
+
+import ui.draw.{
+  Rect,
+  Radii,
+  Color,
+  Fill,
+  GradientFill,
+  Gradient,
+  ColorStop,
+  LinearGradient,
+  RadialGradient,
+  PictureSource,
+  Image
+}
+import ui.layout.{ PaintOp, PaintDraw, picture_fill, Fit, FitTile, FitStretch, FitCover }
+import settings.{
+  Backing,
+  PlainBacking,
+  GradientBacking,
+  ImageBacking,
+  BackingGradient,
+  ImageFit,
+  TileImage,
+  StretchImage,
+  CoverImage,
+  Colors
+}
+import bindings.sdl3_image.{ load_pixels, load_svg_pixels }
+import std.collections.{ HashMap }
+
+/// The fills a tab's sections are drawn with, the images they name, by path, and the display's
+/// pixels a point (a tiled image's tiles are its own pixels).
+pub struct Fills {
+  input: Backing = PlainBacking,
+  output: Backing = PlainBacking,
+  images: HashMap<string, PictureSource>,
+  scale: f32 = 1.0,
+}
+
+/// A background in `abgr` (a theme's color, its alpha the opacity) filled by `fill` into `box`,
+/// rounded by `corners`: a painter's ops. An image not decoded — a file that would not read —
+/// is the color alone.
+pub let fill_ops = pure (
+  fill: Backing,
+  abgr: u32,
+  box: Rect,
+  corners: Radii,
+  images: HashMap<string, PictureSource>,
+  scale: f32
+) -> []PaintOp => {
+  let opacity = f32((abgr >> 24) & 0xFF) / 255.0
+  match fill {
+    PlainBacking => [PaintDraw(Fill(box, corners, color(abgr)))],
+    GradientBacking(g) =>
+      [PaintDraw(GradientFill(box, corners, ui_gradient(g, opacity)))],
+    ImageBacking(i) => match images.get(i.path) {
+      Some(source) => picture_fill(source, ui_fit(i.fit), box, corners, opacity, scale),
+      None => [PaintDraw(Fill(box, corners, color(abgr)))],
+    },
+  }
+}
+
+/// A setting's gradient as `ui`'s, each stop's opacity times `opacity`.
+let ui_gradient = pure (g: BackingGradient, opacity: f32) -> Gradient => Gradient {
+  kind: if g.radial { RadialGradient(g.circle) } else { LinearGradient(g.angle) },
+  stops: [s in g.stops | ColorStop { color: stop_color(s.color, opacity), at: Some(s.at) }],
+}
+
+/// A setting's color (`0xRRGGBB`, how transparent in the top byte) as `ui`'s, at `opacity`.
+let stop_color = pure (rgb: u32, opacity: f32) -> Color => Color {
+  r: u8((rgb >> 16) & 0xFF),
+  g: u8((rgb >> 8) & 0xFF),
+  b: u8(rgb & 0xFF),
+  a: u8((f32(255 - ((rgb >> 24) & 0xFF)) * opacity.clamp(0.0, 1.0)).round()),
+}
+
+/// A setting's fit as `ui`'s.
+let ui_fit = pure (f: ImageFit) -> Fit => match f {
+  TileImage => FitTile,
+  StretchImage => FitStretch,
+  CoverImage => FitCover,
+}
+
+/// The images `colors`' fills name, decoded into `images` — each file once, again only where
+/// it is not there yet — and the ones no fill names now let go. A file that will not decode is
+/// left out, its fill the color alone. `revision` counts the decodes, each a new picture's.
+pub let fill_images = (
+  colors: Colors,
+  images: mut HashMap<string, PictureSource>,
+  revision: mut i64
+) -> void => {
+  var named: []string = []
+  for f in [colors.bg_fill, colors.input_fill, colors.output_fill] {
+    if let ImageBacking(i) = f { named.push(i.path) }
+  }
+  for key in images.keys() {
+    if !named.contains(key) { let _ = images.remove(key) }
+  }
+  for path in named {
+    if images.contains_key(path) { continue }
+    let decoded = if path.to_ascii_lower().ends_with(".svg") {
+      // Drawn wide enough to cover a window sharply, its height its shape's.
+      load_svg_pixels(path, SVG_SIDE, 0)
+    } else {
+      load_pixels(path)
+    }
+    let Some(p) = decoded else { continue }
+    revision += 1
+    images.insert(path, PictureSource {
+      key: "fill ${path}",
+      image: Image { width: p.width, height: p.height, argb: p.argb },
+      revision: revision,
+    })
+  }
+}
+
+/// How many pixels wide an SVG fill is drawn.
+const SVG_SIDE: i64 = 2048

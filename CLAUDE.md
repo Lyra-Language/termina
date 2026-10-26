@@ -34,6 +34,8 @@ build/vttest                # parser, screen, editor, PTY, zsh and bash checks, 
                             #    TERMINA_APPIMAGE=1 on Linux, Termina-0.3.0-linux-<arch>.AppImage
 tools/textlibs.sh build/deps/text   # static FreeType and HarfBuzz, for a release's build
                             #    (PKG_CONFIG_PATH=build/deps/text/lib/pkgconfig:… ./build.sh)
+tools/sdl3_image.sh build/deps/image  # static SDL3_image (PNG, JPEG, SVG…), likewise, against
+                            #    the SDL3 pkg-config finds
 git tag v0.3.0 && git push origin v0.3.0   # a release: built, checked and published by
                             #    .github/workflows/release.yml (macOS arm64, Linux x86_64
                             #    and arm64); Actions ▸ Release ▸ Run workflow is a dry run
@@ -47,12 +49,15 @@ git tag v0.3.0 && git push origin v0.3.0   # a release: built, checked and publi
   builds lyra with the old grammar) and Termina, runs
   vttest and `tools/check.sh`, packages, and publishes the archives with the commits each
   was built from in the notes — a tag of Termina pins nothing of the compiler's.
-- **FreeType and HarfBuzz are built static** (`tools/textlibs.sh`, pinned and SHA-256
-  checked, no optional dependencies, HarfBuzz from its one amalgamated source without a C++
-  runtime) and come first on `PKG_CONFIG_PATH`, so the program carries them: `ui` draws its
-  text with them, and a machine may have neither (Homebrew's are built for the macOS they
-  run on). `package.sh` refuses a Linux program linking either as a shared library, and a
-  Mac's linking anything outside the system and the bundle. On Linux lyrac links a program's
+- **FreeType, HarfBuzz and SDL3_image are built static** (`tools/textlibs.sh`,
+  `tools/sdl3_image.sh`, pinned and SHA-256 checked, no optional dependencies — HarfBuzz from
+  its one amalgamated source without a C++ runtime, SDL3_image with its own decoders only:
+  stb_image's PNG and JPEG, nanosvg's SVG, no libpng, libavif, libwebp, libjxl, libtiff or
+  ImageIO) and come first on `PKG_CONFIG_PATH`, so the program carries them: `ui` draws its
+  text with the first two, the backgrounds' images are decoded by the last, and a machine may
+  have none (Homebrew's are built for the macOS they run on). SDL3_image is built against the
+  release's own SDL3. `package.sh` refuses a Linux program linking any of them as a shared
+  library, and a Mac's linking anything outside the system and the bundle. On Linux lyrac links a program's
   libraries as one group, since two static archives depend on each other in an order the
   linker would otherwise need given.
 - **SDL3 is built from source** (`tools/sdl3.sh`, lyra's pin — move the two together) and
@@ -115,7 +120,7 @@ each tab a painter taking input raw, under `ui`'s tab bar, menus and Settings ta
 | file | what |
 |---|---|
 | `src/termina.lyra` | `main`: the fonts (the settings' family as `mono`, the fallbacks), the window on the GPU — at its remembered place, see-through if the background is — or played headless by `--script` through SDL's 2D renderer, a `wait:` taking real time in slices so the shell is heard; `--print`, `--png`, `--header`; on Linux the window's id and an AppImage's desktop entry |
-| `package.sh`, `tools/sdl3.sh`, `tools/textlibs.sh`, `tools/appimagetool.sh` | a release archive with SDL3 inside — the Mac app signed and notarized when given an identity and key, an AppImage on Linux — SDL3, and static FreeType and HarfBuzz, built from source for it, and the pinned appimagetool (Releases, above) |
+| `package.sh`, `tools/sdl3.sh`, `tools/sdl3_image.sh`, `tools/textlibs.sh`, `tools/appimagetool.sh` | a release archive with SDL3 inside — the Mac app signed and notarized when given an identity and key, an AppImage on Linux — SDL3, and static SDL3_image, FreeType and HarfBuzz, built from source for it, and the pinned appimagetool (Releases, above) |
 | `tools/check.sh` | the window's checks: scripted runs, each in a `HOME` of its own, their screens or settings compared — tabs, menus, the Settings tab, and the command line at zsh's prompt |
 | `assets/` | the icon: `termina.svg` the source; `Termina.icns` (the app's) and `termina.png` made from it (`assets/README.md`); `Termina.entitlements`, what the signed app's commands may ask for (Releases, above) |
 | `src/desktop/desktop.lyra` | Termina on a Linux desktop: the id its windows go by (`APP_ID`), and, run as an AppImage, the desktop entry and icon it installs for the launcher and the dock |
@@ -128,6 +133,7 @@ each tab a painter taking input raw, under `ui`'s tab bar, menus and Settings ta
 | `src/face/settings.lyra` | the Settings tab on `ui`: its events carried out on the window's settings — the theme, the font (a family loaded through `LoadFonts`), the file written a moment after the last change |
 | `src/settings_page.lui` | the Settings tab as `ui`-target markup — font family or file, size, spacing, theme (saved ones too), every color, bold as bright, the window; `settings_page.lyra` is generated from it (edit the `.lui`) |
 | `src/face/window.lyra` | the chrome on `ui`: the tab bar, the header bar off a Mac, the menus as data (`menus_of` for the Mac's bar, `header_entries` for ☰), all in `ui`'s theme made from Termina's |
+| `src/face/fills.lyra` | the backgrounds' fills drawn (`fill_ops`: a color, `ui`'s gradient, or `ui`'s `picture_fill`, at the color's opacity), and their images decoded once a file (`fill_images`, `bindings.sdl3_image`) |
 | `src/face/paint.lyra` | a tab painted (`paint_tab`): the grid as `PaintCells`, the cards, the box, the command line and its menu, the scrollbar — from `session.frame_layout` |
 | `src/face/input.lyra` | keys, typed text and the pointer as the painter hears them: to the command line at a prompt, else encoded for the program; the mouse selecting, editing or reported |
 | `src/shell/shell.lyra` | shell integration (zsh's `.zshenv` through `ZDOTDIR`, bash's rc file through `--rcfile`): the marks, Tab's completion widget and its request file, the history files, what Return sends |
@@ -138,6 +144,7 @@ each tab a painter taking input raw, under `ui`'s tab bar, menus and Settings ta
 | `src/vt/width.lyra` | how many cells a rune takes: 2 wide (CJK, emoji), 0 combining, 1 the rest |
 | `src/vt/selection.lyra` | a selection on the screen and scrollback: its text, a word's span; **pure** |
 | `src/vt/style.lyra` | a `Cell`'s colors and attributes, and SGR on the `Pen` that writes them; **pure** |
+| `src/settings/backing.lyra` | a background's fill (`Backing`): its color alone, a gradient (linear or radial, 2 to 8 stops) or an image and how it fits — part of the colors, so a saved theme keeps them |
 | `src/settings/settings.lyra` | the user's settings, the themes offered, the file (read leniently), the monospaced families found |
 | `src/vttest.lyra` | the checks: byte strings against actions and screens, the editor on text, real programs, zsh and bash on a PTY (each skipped, and said so, where not installed), and the window's logic — the theme, sessions, mouse reports, the settings file |
 
@@ -187,6 +194,15 @@ each tab a painter taking input raw, under `ui`'s tab bar, menus and Settings ta
   through `bindings.gpu`'s shim, the header bar's own background elsewhere), with what is
   behind it blurred by `background_blur` (its picker, macOS only). On Linux the window
   is see-through only if it opened so: a change takes effect at the next start.
+- **A background may be filled beyond its color** — a gradient (linear at an angle, or
+  radial, 2 to 8 stops each with its own opacity) or an image file and how it fits (tiled at
+  its own pixels, stretched, or stretched and cropped) — `Colors.bg_fill`, `input_fill`,
+  `output_fill` (`settings/backing.lyra`), set in Settings ▸ Backgrounds. **The color still
+  sets the opacity, and is what shows** until an image decodes, or where one will not.
+  Images decode once a path (`fill_images`, at start and each change), are kept by path with a
+  revision, and are `ui` pictures the host keeps as textures. The window's own is a painted
+  layer under everything; without a fill, the root's color as before. An SVG is drawn 2048
+  pixels wide.
 - **Termina reopens the window where it was last closed** (Settings ▸ Window,
   `Settings.remember_window`, on by default): as the window closes, `place_of` keeps its place,
   size and whether it is maximized in the settings file (`window`) — while maximized or

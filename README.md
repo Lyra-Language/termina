@@ -15,8 +15,8 @@ see-through background, blurred behind on a Mac — and whether the window reope
 was. It is drawn with Lyra's own GUI framework (`ui`). Blocks come next (`CLAUDE.md` § Plan).
 
 ```bash
-../lyra/build.sh     # the compiler, with std/, bindings/ and ui/ beside it (SDL3, FreeType
-                     #   and HarfBuzz needed)
+../lyra/build.sh     # the compiler, with std/, bindings/ and ui/ beside it (SDL3, SDL3_image,
+                     #   FreeType and HarfBuzz needed)
 ./build.sh           # build/termina (and build/Termina.app on macOS), and vttest
 build/termina
 tools/check.sh       # the window played headless, its checks
@@ -25,6 +25,7 @@ tools/check.sh       # the window played headless, its checks
 Releases (`git tag vX.Y.Z` and push it) carry Termina.app for Apple silicon, signed with a
 Developer ID and notarized, and for Linux on x86_64 and arm64 an AppImage (make it
 executable and run it once: it adds itself to your desktop's launcher) and an archive
-(unpack and run `./termina`). Each has SDL3 inside, and FreeType and HarfBuzz built in.
+(unpack and run `./termina`). Each has SDL3 inside, and SDL3_image, FreeType and HarfBuzz
+built in.
 
 MIT licensed (`LICENSE`).

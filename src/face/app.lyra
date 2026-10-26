@@ -34,7 +34,7 @@ import ui.interact.{
   FieldPaste,
   FieldUndo
 }
-import ui.draw.{ Size, Rect }
+import ui.draw.{ Size, Rect, radius }
 import ui.backend.{ Modifiers, Character, PageUp, PageDown, WindowState }
 import ui.text.{ FontSpec, FontMetrics }
 import ui.layout.{
@@ -50,6 +50,7 @@ import ui.layout.{
   column,
   expanded,
   painted,
+  stack,
   themed,
 }
 import session.{
@@ -78,9 +79,10 @@ import term.{
   Paste,
 }
 import editor.{ position }
-import settings.{ Settings, FontFamily, defaults }
+import settings.{ Settings, FontFamily, defaults, PlainBacking }
 import settings_page.{ SettingsEvent, settings_page }
 import ui.style.{ Style }
+import std.collections.{ HashMap, hashmap_new }
 
 /// The window: its tabs and each one's view, the one shown, the next tab's identity, the home
 /// directory (a tab's name for it), the theme and the grid's font, the painter's size, the
@@ -126,6 +128,10 @@ pub struct Term {
   loaded: []string = [],
   /// Whether the Family list's fonts are loaded (`settings_opened`).
   previews_loaded: bool = false,
+  /// The images the backgrounds' fills name, decoded, by path, and how many decodes there have
+  /// been — each a new picture's revision (`fill_images`).
+  images: HashMap<string, PictureSource>,
+  image_revision: i64 = 0,
 }
 
 /// A tab's view: how far it is scrolled down, and whether it sticks to the bottom as output
@@ -168,6 +174,8 @@ pub data TermEvent =
   | CloseSettings
   /// A font file chosen in the system's dialog, or none.
   | FontFileChosen(Maybe<string>)
+  /// The image file chosen for a background's fill, by its color's field.
+  | FillImageChosen(string, Maybe<string>)
   /// A family's faces loaded under this name.
   | FontsLoaded(string)
   /// Save `n` due ([SettingsEvent]s ask one each).
@@ -194,6 +202,7 @@ pub let term_of = (
     views: [s in tabs | View {}],
     next_id: tabs.len(),
     home: home,
+    images: hashmap_new(),
     theme: theme,
     grid: grid,
     default_size: grid.font.size,
@@ -229,7 +238,20 @@ pub let view = pure (t: Term) -> Node<TermEvent> => {
   }
   let terminal = expanded(painted(
     (area: PaintArea) -> []PaintOp =>
-      paint_tab(t.tabs[t.active], layout_at(t, area.size), t.grid, t.theme, t.focused, area),
+      paint_tab(
+        t.tabs[t.active],
+        layout_at(t, area.size),
+        t.grid,
+        t.theme,
+        Fills {
+          input: t.settings.colors.input_fill,
+          output: t.settings.colors.output_fill,
+          images: t.images,
+          scale: area.scale,
+        },
+        t.focused,
+        area
+      ),
     Some(ViewSized)
   ).takes_input(raw).keyed("term"))
   let strip = [tab_strip(t), tab_rule(t.theme)]
@@ -244,10 +266,18 @@ pub let view = pure (t: Term) -> Node<TermEvent> => {
       t.swatch
     ).map(SettingsAsked).keyed("settings"))
   } else { terminal }
-  // The window cleared to the theme's background, which `App.background` keeps as it opened.
-  themed(chrome_theme(t.theme), chrome_sheet(t.theme), [
-    column([...bars, body]).aligned(MainStart, CrossStretch).with_style(Style { background: Some(color(t.theme.bg)) }),
-  ])
+  // The window cleared to the theme's background, which `App.background` keeps as it opened:
+  // the root's color, or — filled with a gradient or an image — a layer under everything.
+  let root = column([...bars, body]).aligned(MainStart, CrossStretch)
+  let window = match t.settings.colors.bg_fill {
+    PlainBacking => root.with_style(Style { background: Some(color(t.theme.bg)) }),
+    fill => stack([
+      painted::<TermEvent>((area: PaintArea) -> []PaintOp =>
+        fill_ops(fill, t.theme.bg, Rect { w: area.size.w, h: area.size.h }, radius(0.0), t.images, area.scale)),
+      root,
+    ]),
+  }
+  themed(chrome_theme(t.theme), chrome_sheet(t.theme), [window])
 }
 
 /// Where typed text goes — the command line's caret at a prompt, the cursor otherwise — for the
@@ -373,6 +403,7 @@ pub let update = (t: Term, e: TermEvent) -> (Term, []Command<TermEvent>) => {
     ShowSettings => { commands = settings_opened(n) },
     CloseSettings => { commands = settings_closed(n) },
     FontFileChosen(path) => { commands = font_file_chosen(n, path) },
+    FillImageChosen(field, path) => { commands = fill_image_chosen(n, field, path) },
     FontsLoaded(_) => {},
     SaveDue(k) => save_due(n, k),
     FontMeasured(m) => { n.grid = grid_of(n.grid.font, m, n.spacing) },
