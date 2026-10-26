@@ -40,6 +40,7 @@ import ui.layout.{
   text as words,
   button,
   row,
+  sized,
   expanded,
   align,
   CENTER,
@@ -88,10 +89,11 @@ pub let chrome_sheet = pure (theme: Theme) -> Sheet => {
   Sheet {
     rules: [
       // The tabs stand on the terminal below them, rounded only above, and set in from the
-      // window's sides as the sections are ([PAD]).
+      // window's sides as the sections are ([PAD]); 6 apart, as close as 2 where they crowd
+      // (`ui`'s strip narrows its gap before it shrinks a tab).
       Rule {
         selector: "TabBar",
-        style: Style { gap: Some(2.0), padding: Some(Insets { top: 4.0, left: PAD, right: PAD }) },
+        style: Style { gap: Some(6.0), padding: Some(Insets { top: 8.0, left: PAD, right: PAD }) },
       },
       Rule {
         selector: "Tab",
@@ -128,6 +130,8 @@ pub let chrome_sheet = pure (theme: Theme) -> Sheet => {
         },
       },
       Rule { selector: ".title", style: Style { color: Some(fg) } },
+      // Under the tabs, the window's width: the box's rule's colour.
+      Rule { selector: ".tab-rule", style: Style { background: Some(color(theme.rule)) } },
       // The Settings tab's controls on a panel of the output section's colour, rounded as a
       // block's card: over a background clear enough to show the desktop, they are hard to read.
       Rule {
@@ -173,6 +177,11 @@ pub let tab_strip = pure (t: Term) -> Node<TermEvent> => {
     after: if t.mac { [button("+", TabAsked(NewTab)).with_class("chrome").keyed("new")] } else { [] },
   })
 }
+
+/// A rule under the tab bar, a point high, across the whole window — past the tabs' margins —
+/// the column it stands in stretching it.
+pub let tab_rule = pure () -> Node<TermEvent> =>
+  sized::<TermEvent>(None, Some(1.0)).with_class("tab-rule")
 
 /// The header bar, off a Mac: `+`, the shown tab's title in the middle, ☰ and the window's
 /// buttons; its empty stretch moves the window.

@@ -221,7 +221,8 @@ pub let view = pure (t: Term) -> Node<TermEvent> => {
       paint_tab(t.tabs[t.active], layout_at(t, area.size), t.grid, t.theme, t.focused, area),
     Some(ViewSized)
   ).takes_input(raw).keyed("term"))
-  let bars = if t.mac { [tab_strip(t)] } else { [header_bar(t), tab_strip(t)] }
+  let strip = [tab_strip(t), tab_rule()]
+  let bars = if t.mac { strip } else { [header_bar(t), ...strip] }
   // The Settings tab in place of the terminal while it is shown; the terminals go on being
   // read behind it.
   let body = if t.on_settings {

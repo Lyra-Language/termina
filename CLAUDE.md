@@ -193,7 +193,8 @@ each tab a painter taking input raw, under `ui`'s tab bar, menus and Settings ta
   text is set `INSET` (`PAD + BOX_MARGIN`) in across, the cards and the box reaching
   `BOX_MARGIN` out from it, and the box ends `PAD` above the window's foot. Every place a
   column turns into an x, or back (the pointer, the caret), goes through `INSET`. The tabs
-  are rounded above only (`Style.corners`) and stand on the terminal.
+  are rounded above only (`Style.corners`), 8 points below the title bar, and stand on a
+  rule across the whole window (`tab_rule`, the box's rule's colour), past their margins.
 - **The terminal takes the keyboard when its painter is first laid out** (`ViewSized` asks
   `FocusKeyed("term")`): `ui` focuses nothing by itself. The painter takes input raw
   (`RawInput`): the arrows and Tab are the shell's, ⌘ (Ctrl+Shift off macOS) is the
@@ -219,7 +220,8 @@ each tab a painter taking input raw, under `ui`'s tab bar, menus and Settings ta
   order** (`ui`'s tab bar raising `TabMoved`, `face/app.lyra`'s `tab_moved`), the window's
   list put in it — one order for the bar, ⌘1–9 and ⌘⇧[ ⌘⇧], the shown tab followed. A tab
   is keyed by its session's id (`tab <id>`), which a changing title must not move. Past the
-  strip's width the tabs shrink, then the rest go into the strip's more-tabs menu.
+  strip's width the gap between tabs narrows from 6 to 2, then the tabs shrink, then the rest go
+  into the strip's more-tabs menu.
 - **Edit's items are one path with their keys** (`EditAction`): `CommandLine.edit_action` at a
   prompt, and while a program runs only Paste, sent bracketed when the program set
   `?2004` (`session.pasted`). The Mac's bar holds ⌘Z/⌘X/⌘C/⌘V/⌘A and sends Edit's item
