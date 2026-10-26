@@ -40,6 +40,9 @@ pub struct Theme {
   tab: u32,
   tab_hovered: u32,
   tab_selected: u32,
+  /// The rule under the tab bar, and how thick it is in points (0 for none).
+  tab_rule: u32,
+  tab_rule_width: f32 = 1.0,
   editor_text: u32,
   menu: u32,
   menu_chosen: u32,
@@ -47,9 +50,10 @@ pub struct Theme {
   /// Draw bold text in colors 0–7 as their bright versions (8–15), as older programs that
   /// used bold *for* brightness expect. Off: bold is a heavier face, the color as asked.
   bold_is_bright: bool,
-  /// What is drawn under the command line's box — the transcript scrolled behind it — blurred
-  /// by, in points, where the box is not opaque.
-  box_blur: f32 = 0.0,
+  /// What is behind the input and the output sections blurred by, in points, where each is not
+  /// opaque: the desktop through a see-through window, and the transcript under the box.
+  input_blur: f32 = 0.0,
+  output_blur: f32 = 0.0,
 }
 
 /// The theme the settings describe.
@@ -65,12 +69,15 @@ pub let theme_of = pure (s: Settings) -> Theme => Theme {
   tab: abgr(s.colors.tab),
   tab_hovered: abgr(s.colors.tab_hovered),
   tab_selected: abgr(s.colors.tab_selected),
+  tab_rule: abgr(s.colors.tab_rule),
+  tab_rule_width: s.tab_rule_width,
   editor_text: abgr(s.colors.editor_text),
   menu: abgr(s.colors.menu),
   menu_chosen: abgr(s.colors.menu_chosen),
   palette: palette_256(s.colors.ansi),
   bold_is_bright: s.bold_is_bright,
-  box_blur: s.box_blur,
+  input_blur: s.input_blur,
+  output_blur: s.output_blur,
 }
 
 /// Termina's own theme, before any settings: Termina Dark.

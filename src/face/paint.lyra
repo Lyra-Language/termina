@@ -392,22 +392,28 @@ let card = (
   let w = f32(s.shown.cols) * g.cell_x + 2.0 * BOX_MARGIN
   if foot > input_foot + 0.5 {
     // Side by side, not the input over the output: either may be translucent.
-    ops.push(PaintDraw(Fill(
+    section(
+      ops,
       Rect { x: x0, y: top, w: w, h: input_foot - top },
       Radii { top_left: BLOCK_ROUNDING, top_right: BLOCK_ROUNDING },
-      color(theme.input)
-    )))
-    ops.push(PaintDraw(Fill(
+      theme.input,
+      theme.input_blur
+    )
+    section(
+      ops,
       Rect { x: x0, y: input_foot, w: w, h: foot - input_foot },
       Radii { bottom_left: BLOCK_ROUNDING, bottom_right: BLOCK_ROUNDING },
-      color(theme.output)
-    )))
+      theme.output,
+      theme.output_blur
+    )
   } else {
-    ops.push(PaintDraw(Fill(
+    section(
+      ops,
       Rect { x: x0, y: top, w: w, h: input_foot - top },
       radius(BLOCK_ROUNDING),
-      color(theme.input)
-    )))
+      theme.input,
+      theme.input_blur
+    )
   }
   if b.status > 0 {
     let bar_foot = foot.max(input_foot) - 4.0
@@ -455,9 +461,23 @@ let note = (
   }
 }
 
+/// A section's background — a card's band, the box — in `abgr`: translucent, over what is behind
+/// it blurred by `blur` (`ui`'s backdrop: the window's drawing on the GPU, the desktop through a
+/// see-through window).
+let section = (
+  ops: mut []PaintOp,
+  at: Rect,
+  radii: Radii,
+  abgr: u32,
+  blur: f32
+) -> void => {
+  if (abgr >> 24) != 0xFF && blur > 0.0 { ops.push(PaintDraw(Backdrop(at, radii, blur))) }
+  ops.push(PaintDraw(Fill(at, radii, color(abgr))))
+}
+
 /// The box's frame from `box_top` to the view's foot, tinted, a rule along its top between its
 /// rounded corners. Translucent, the transcript scrolled under it shows through, blurred by the
-/// theme's `box_blur` (`ui`'s backdrop, on the GPU); opaque, `paint_tab` has drawn none there.
+/// theme's `input_blur` ([section]); opaque, `paint_tab` has drawn none there.
 let frame_box = (
   ops: mut []PaintOp,
   theme: Theme,
@@ -472,10 +492,7 @@ let frame_box = (
     w: f32(cols) * g.cell_x + 2.0 * BOX_MARGIN,
     h: view_bottom - box_top,
   }
-  if (theme.input >> 24) != 0xFF && theme.box_blur > 0.0 {
-    ops.push(PaintDraw(Backdrop(at, radius(BOX_ROUNDING), theme.box_blur)))
-  }
-  ops.push(PaintDraw(Fill(at, radius(BOX_ROUNDING), color(theme.input))))
+  section(ops, at, radius(BOX_ROUNDING), theme.input, theme.input_blur)
   ops.push(PaintDraw(Fill(
     Rect { x: at.x + BOX_ROUNDING, y: at.y, w: at.w - 2.0 * BOX_ROUNDING, h: 1.0 },
     radius(0.0),

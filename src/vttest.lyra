@@ -38,6 +38,13 @@ import settings.{
   color_of,
   sections_of,
   with_color,
+  save_theme,
+  delete_theme,
+  edit_colors,
+  can_save,
+  saved_colors,
+  blur_named,
+  with_blur,
 }
 import term.{ abgr, dark_theme, Theme, typed_lines, command_line }
 import session.{
@@ -96,6 +103,7 @@ let main = () -> u8 => {
   failed += check_desktop_entry()
   failed += check_window_place()
   failed += check_color_alpha()
+  failed += check_saved_themes()
   failed += check_theme()
   failed += check_typeahead_lines()
   failed += check_sessions()
@@ -825,8 +833,8 @@ let check_shell = (shell: string) -> i64 => {
   }
   close(pty)
   var output: []string = []
-  for i in 0..<(s.scrollback_len() + s.rows) {
-    let t = line_text(s.line(i)).trim()
+  for row in 0..<(s.scrollback_len() + s.rows) {
+    let t = line_text(s.line(row)).trim()
     if t == "one" || t == "two" { output.push(t) }
   }
   var failed = check("${name} marks", seen.join(" "), "B C D1 B")
@@ -1504,7 +1512,7 @@ let check_window_place = () -> i64 => {
 // A colour's alpha (Settings ▸ Colors, a background swatch's opacity): `#rrggbbaa` read as how
 // transparent it is in the top byte and written back so, an opaque one as `#rrggbb`; a theme's
 // alpha from it; only the backgrounds' kept, from a file or a swatch; the sections made from
-// a translucent background opaque; and the box's blur kept, within its range.
+// a translucent background opaque; and each background's blur kept, within its range.
 let check_color_alpha = () -> i64 => {
   var failed = 0
   let half = color_of("#1b1d2280") ?? 0
@@ -1535,20 +1543,38 @@ let check_color_alpha = () -> i64 => {
     "${hex_of(picked.output)} ${hex_of(picked.tab)}",
     "#1b1d2280 #1b1d22"
   )
+  // Each background's blur by its color's field, written and read, within its range.
+  var blurred = defaults()
+  with_blur(blurred, "bg", 8.4)
+  with_blur(blurred, "input", 12.0)
+  with_blur(blurred, "output", 500.0)
+  with_blur(blurred, "tab", 30.0)
+  let back = settings_from_json(settings_to_json(blurred))
   failed += check(
-    "box blur: written and read",
-    "${settings_from_json(settings_to_json(Settings { defaults() | box_blur: 12.0 })).box_blur}",
-    "12"
+    "blurs: set by field, whole points, within the range, written and read",
+    "${blur_named(back, "bg")} ${blur_named(back, "input")} ${blur_named(back, "output")} ${blur_named(back, "tab")}",
+    "8 12 64 0"
+  )
+  // The tab bar's underline: its color one of the theme's, opaque, and its thickness.
+  var ruled = defaults()
+  ruled.colors = with_color(ruled.colors, "tab_rule", half)
+  ruled.tab_rule_width = 3.0
+  let ruled_back = settings_from_json(settings_to_json(ruled))
+  failed += check(
+    "tab rule: its color, opaque, and thickness written and read",
+    "${hex_of(ruled_back.colors.tab_rule)} ${ruled_back.tab_rule_width}",
+    "#1b1d22 3"
   )
   failed += check(
-    "box blur: 16 where a file has none",
-    "${settings_from_json("{}").box_blur}",
-    "16"
+    "tab rule: 1 where a file has none, kept within its range",
+    "${settings_from_json("{}").tab_rule_width} ${settings_from_json("{\"tab_rule_width\": 40}").tab_rule_width}",
+    "1 6"
   )
+  let fresh = settings_from_json("{}")
   failed += check(
-    "box blur: kept within its range",
-    "${settings_from_json("{\"box_blur\": 500}").box_blur}",
-    "64"
+    "blurs: the sections' 16 where a file has none",
+    "${fresh.input_blur} ${fresh.output_blur}",
+    "16 16"
   )
   let (input, output) = sections_of(half)
   failed += check(
@@ -1559,6 +1585,65 @@ let check_color_alpha = () -> i64 => {
   failed += check(
     "color alpha: none of 7 digits",
     "${color_of("#1b1d228") == None}",
+    "true"
+  )
+  failed
+}
+
+// A saved theme edited by hand: the colors Custom, the theme they came from kept for Save
+// (`edited_from`) through another change, and Save putting the colors over it — still one
+// theme of that name, and the current one again. One of Termina's own themes edited has no
+// Save; the file keeps where an edit came from, and drops it where that theme is gone.
+let check_saved_themes = () -> i64 => {
+  var failed = 0
+  var s = defaults()
+  save_theme(s, "Mine")
+  s.colors = with_color(s.colors, "fg", 0x112233)
+  edit_colors(s)
+  failed += check(
+    "saved theme: an edit",
+    "${s.theme_name} ${s.edited_from} ${can_save(s)}",
+    "Custom Mine true"
+  )
+  s.colors = with_color(s.colors, "cursor", 0x445566)
+  edit_colors(s)
+  failed += check(
+    "saved theme: a second edit",
+    "${s.edited_from} ${can_save(s)}",
+    "Mine true"
+  )
+  let reread = settings_from_json(settings_to_json(s))
+  failed += check(
+    "saved theme: the edit's source kept in the file",
+    reread.edited_from,
+    "Mine"
+  )
+  save_theme(s, s.edited_from)
+  let colors = saved_colors(s.themes, "Mine") ?? defaults().colors
+  failed += check(
+    "saved theme: Save overwrites it",
+    "${s.themes.len()} ${s.theme_name} ${s.edited_from == ""} ${hex_of(colors.fg)} ${hex_of(colors.cursor)}",
+    "1 Mine true #112233 #445566"
+  )
+  var own = defaults()
+  edit_colors(own)
+  failed += check(
+    "saved theme: none to Save from Termina's own",
+    "${own.edited_from == ""} ${can_save(own)}",
+    "true false"
+  )
+  s.colors = with_color(s.colors, "fg", 0x778899)
+  edit_colors(s)
+  delete_theme(s, "Mine")
+  failed += check(
+    "saved theme: deleted, nothing to Save",
+    "${s.edited_from == ""} ${can_save(s)}",
+    "true false"
+  )
+  let stale = settings_from_json("{\"theme\": \"Custom\", \"edited_from\": \"Gone\"}")
+  failed += check(
+    "saved theme: a source no longer saved dropped",
+    "${stale.edited_from == ""}",
     "true"
   )
   failed

@@ -10,14 +10,18 @@
     Settings,
     FontFamily,
     file_family,
+    preview_name,
     can_save_as,
+    can_save,
     saved_colors,
     color_named,
+    blur_named,
     may_be_clear,
     THEME_NAMES,
     FONT_SIZE_RANGE,
     LINE_SPACING_RANGE,
     BLUR_RANGE,
+    RULE_WIDTH_RANGE,
   }
 
   /// What the settings can be asked to do; the Settings tab carries it out.
@@ -35,14 +39,17 @@
     | UseSavedTheme(string)
     | NameTheme(string)
     | SaveThemeAs
+    /// The colors over the saved theme they were changed from (`Settings.edited_from`).
+    | SaveTheme
     | DeleteSavedTheme
     | ToggleBoldBright
     /// Whether the window opens where it was last closed.
     | ToggleRememberWindow
-    /// What is behind a see-through window blurred by, as the slider is dragged.
-    | SetBlur(f32)
-    /// What scrolls under a translucent command line box blurred by, likewise.
-    | SetBoxBlur(f32)
+    /// What is behind a background — the window's (`bg`), the input's, the output's — blurred
+    /// by, by its color's field, as its picker's slider is dragged.
+    | SetBlur(string, f32)
+    /// How thick the rule under the tab bar is, as its picker's slider is dragged.
+    | SetTabRuleWidth(f32)
     | ResetSettings
     /// A swatch's picker opened, by its color's field (`ansi 3` for an ANSI color), or closed.
     | OpenSwatch(string)
@@ -54,6 +61,12 @@
   let family_options = pure (s: Settings, families: []FontFamily) -> []string => [
     ...(if s.font_file != "" { [file_family(s.font_file).name] } else { [] }),
     ...[f in families | f.name],
+  ]
+
+  /// Each option's font: a family in itself, the chosen file's name in the select's own.
+  let family_fonts = pure (s: Settings, families: []FontFamily) -> []string => [
+    ...(if s.font_file != "" { [""] } else { [] }),
+    ...[f in families | preview_name(f)],
   ]
 
   /// Where the list shows the font in use: the file's own name, else its family.
@@ -138,7 +151,7 @@
   const COLOR_GROUPS = [
     ColorGroup { heading: "Terminal", colors: [("Text", "fg"), ("Background", "bg"), ("Cursor", "cursor"), ("Selection", "selection")] },
     ColorGroup { heading: "Sections", colors: [("Input", "input"), ("Output", "output"), ("Input text", "input_text")] },
-    ColorGroup { heading: "Tabs", colors: [("Tab", "tab"), ("Under the pointer", "tab_hovered"), ("Shown", "tab_selected")] },
+    ColorGroup { heading: "Tabs", colors: [("Tab", "tab"), ("Under the pointer", "tab_hovered"), ("Shown", "tab_selected"), ("Underline", "tab_rule")] },
     ColorGroup { heading: "Command line", colors: [("Text", "editor_text"), ("Completion menu", "menu"), ("Chosen completion", "menu_chosen")] },
   ]
 </script>
@@ -174,6 +187,7 @@
             <Row class="field">
               <Select
                 options={family_options(s, families)}
+                option_families={family_fonts(s, families)}
                 selected={family_shown(s, families)}
                 separators={if s.font_file != "" { [1] } else { [] }}
                 on_change={(k: i64) -> SettingsEvent => family_picked(s, families, k)}
@@ -208,6 +222,10 @@
             <Text>Theme name</Text>
             <Row class="field">
               <TextInput value={typed} placeholder="Theme name" on_edit={NameTheme} key="theme name"/>
+              <!-- A saved theme being edited: overwritten as it is now. -->
+              <if test={can_save(s)}>
+                <Button on_click={SaveTheme} key="save">Save</Button>
+              </if>
               <Button on_click={SaveThemeAs} disabled={!can_save_as(typed)} key="save theme">Save Theme As…</Button>
               <if test={is_saved(s)}>
                 <Button on_click={DeleteSavedTheme} key="delete theme">Delete</Button>
@@ -247,19 +265,7 @@
         <Column class="section">
           <Text class="heading">Window</Text>
           <Checkbox checked={s.remember_window} on_toggle={ToggleRememberWindow}>Open the window where it was last closed, at its size</Checkbox>
-          <Grid class="form">
-            <Text>Blur behind</Text>
-            <Row class="field">
-              <Slider value={s.background_blur} min={BLUR_RANGE.0} max={BLUR_RANGE.1} step="1" on_change={SetBlur} key="blur"/>
-              <Text>{points(s.background_blur)}</Text>
-            </Row>
-            <Text>Blur under the box</Text>
-            <Row class="field">
-              <Slider value={s.box_blur} min={BLUR_RANGE.0} max={BLUR_RANGE.1} step="1" on_change={SetBoxBlur} key="box-blur"/>
-              <Text>{points(s.box_blur)}</Text>
-            </Row>
-          </Grid>
-          <Text class="note">The window shows what is behind it while the Background's opacity is below full (its swatch's opacity strip), blurred by Blur behind. The Input and Output sections may be translucent too: the command line's box then shows the transcript scrolled under it, blurred by Blur under the box. Both blurs are macOS's.</Text>
+          <Text class="note">The window shows what is behind it while the Background's opacity is below full, and the Input and Output sections may be translucent over it, each blurring what is behind it as its color's picker says (macOS).</Text>
         </Column>
 
         <Row>
@@ -272,6 +278,11 @@
 
 <!-- A color's swatch, its label to its right. -->
 <component name="color_field" props={{ s: Settings, label: string, field: string, open: string }} event={SettingsEvent}>
+  <!-- Here, not in the page's sheet, which reaches only this component's root, not into the
+       picker it opens. -->
+  <style>
+    .blur { gap: 12 }
+  </style>
   <Row class="swatch-row" key={field}>
     <Swatch
       color={swatch_color(color_named(s.colors, field))}
@@ -280,7 +291,28 @@
       on_change={(c: Color) -> SettingsEvent => SetColor(field, rgb_of_color(c))}
       on_dismiss={CloseSwatch}
       opaque={!may_be_clear(field)}
-    />
+    >
+      <!-- A background's picker: how much what is behind it is blurred, under the opacity. -->
+      <if test={may_be_clear(field)}>
+        <Row class="blur" key="blur">
+          <Text>Blur</Text>
+          <Expanded>
+            <Slider value={blur_named(s, field)} min={BLUR_RANGE.0} max={BLUR_RANGE.1} step="1" on_change={(v: f32) -> SettingsEvent => SetBlur(field, v)}/>
+          </Expanded>
+          <Text>{points(blur_named(s, field))}</Text>
+        </Row>
+      </if>
+      <!-- The tab bar's underline's picker: how thick it is. -->
+      <if test={field == "tab_rule"}>
+        <Row class="blur" key="thickness">
+          <Text>Thickness</Text>
+          <Expanded>
+            <Slider value={s.tab_rule_width} min={RULE_WIDTH_RANGE.0} max={RULE_WIDTH_RANGE.1} step="1" on_change={SetTabRuleWidth}/>
+          </Expanded>
+          <Text>{points(s.tab_rule_width)}</Text>
+        </Row>
+      </if>
+    </Swatch>
     <Text>{label}</Text>
   </Row>
 </component>

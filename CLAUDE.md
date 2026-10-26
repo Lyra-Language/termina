@@ -170,9 +170,14 @@ each tab a painter taking input raw, under `ui`'s tab bar, menus and Settings ta
   that is not (`hex_of`, `color_of`), and every other colour is made opaque wherever it comes
   from (`backgrounds_alone_clear`, `with_color`, `with_ansi`; their swatches are `opaque`, no
   opacity strip). A card's input and output bands are painted side by side, never one over
-  the other. **A translucent box shows the transcript scrolled under it**, blurred by
-  `box_blur` (Settings ▸ Window, 16 points to begin with: unblurred, the transcript's text
-  runs through the prompt's), `ui`'s backdrop — the GPU's, so macOS only. **The transcript is
+  the other. **Each translucent section blurs what is behind it** (`paint.lyra`'s `section`, a
+  `ui` backdrop under its fill) by its own blur — `input_blur` (the box, a block's prompt and
+  command) and `output_blur`, 16 points to begin with — the desktop through a see-through
+  window, and under the box the transcript scrolled behind it (unblurred, its text runs
+  through the prompt's). macOS only, as `ui`'s backdrops are. **A translucent box shows the
+  transcript scrolled under it.** The three blurs — those two and `background_blur` — are
+  set in their colours' pickers, under the opacity strip (`blur_named`, `with_blur`,
+  `SetBlur(field, …)`). **The transcript is
   clipped at the box, never covered** (`paint_tab`'s `PushClip`: at its top while it is opaque,
   at its foot while not), and the rule along its top stops at its rounded corners: anything
   drawn behind them — a rectangle of the window's background, doubling a see-through one —
@@ -180,7 +185,7 @@ each tab a painter taking input raw, under `ui`'s tab bar, menus and Settings ta
   opaque makes the window see-through** (`ui`'s `set_see_through`; Termina clears to
   nothing and its view's root paints the background), its title bar staying opaque (a Mac's
   through `bindings.gpu`'s shim, the header bar's own background elsewhere), with what is
-  behind it blurred by `background_blur` (Settings ▸ Window, macOS only). On Linux the window
+  behind it blurred by `background_blur` (its picker, macOS only). On Linux the window
   is see-through only if it opened so: a change takes effect at the next start.
 - **Termina reopens the window where it was last closed** (Settings ▸ Window,
   `Settings.remember_window`, on by default): as the window closes, `place_of` keeps its place,
@@ -194,7 +199,10 @@ each tab a painter taking input raw, under `ui`'s tab bar, menus and Settings ta
   `BOX_MARGIN` out from it, and the box ends `PAD` above the window's foot. Every place a
   column turns into an x, or back (the pointer, the caret), goes through `INSET`. The tabs
   are rounded above only (`Style.corners`), 8 points below the title bar, and stand on a
-  rule across the whole window (`tab_rule`, the box's rule's colour), past their margins.
+  rule across the whole window (`tab_rule`), past their margins: a theme's color
+  (`Colors.tab_rule`, the text faint over the background to begin with) and
+  `Settings.tab_rule_width` thick (1 point to begin with, 0 for none), both set in its
+  picker (Tabs ▸ Underline).
 - **The terminal takes the keyboard when its painter is first laid out** (`ViewSized` asks
   `FocusKeyed("term")`): `ui` focuses nothing by itself. The painter takes input raw
   (`RawInput`): the arrows and Tab are the shell's, ⌘ (Ctrl+Shift off macOS) is the
@@ -225,7 +233,9 @@ each tab a painter taking input raw, under `ui`'s tab bar, menus and Settings ta
 - **Edit's items are one path with their keys** (`EditAction`): `CommandLine.edit_action` at a
   prompt, and while a program runs only Paste, sent bracketed when the program set
   `?2004` (`session.pasted`). The Mac's bar holds ⌘Z/⌘X/⌘C/⌘V/⌘A and sends Edit's item
-  (`EditAsked`); each item is greyed where it would do nothing (`Session.can`).
+  (`EditAsked`); each item is greyed where it would do nothing (`Session.can`). **On the
+  Settings tab they are its focused field's** (`field_edit`, `ui`'s `Command.EditField`) — a
+  colour's hex, a theme's name — which never hears the keys the bar holds; Redo greyed.
 - **The screen answers questions through `replies`** (DA1, DA2, XTVERSION, DSR, DECRQM, the
   color queries OSC 10/11/12), which a session writes to the program each frame; a check
   running a program on a PTY must answer them too (`vttest`'s `full_screen`).
@@ -311,7 +321,14 @@ each tab a painter taking input raw, under `ui`'s tab bar, menus and Settings ta
 - **The user's themes are saved in the settings file** (`Settings.themes`, `SavedTheme`):
   the colors under a name not Termina's own nor `Custom` (`can_save_as`; a saved one of
   that name replaced), listed after Termina's, deleted to `Custom` with the colors kept.
-  A theme named in the file is looked for among them before Termina's.
+  A theme named in the file is looked for among them before Termina's. **A saved theme
+  edited by hand is remembered** (`Settings.edited_from`, `edit_colors`, kept in the file
+  while the theme is `Custom` and it is still saved): Save (`can_save`) puts the colors back
+  over it and makes it current again.
+- **The Family list shows each family in itself** (`option_families`): each one's regular face
+  loaded under `preview_name` — not the name the grid loads the whole family under, which would
+  then count as loaded with no bold or italic — the first time the Settings tab opens
+  (`settings_opened`).
 - **Font families are found by file name** (`Mono`, `Code`, `Courier`, `Consol`, as
   capitalised; faces by `-Bold`/` Bold`/`Bold` suffixes), after the ones Termina knows by path
   (SF Mono, Menlo, DejaVu Sans Mono), whose files are not offered twice.

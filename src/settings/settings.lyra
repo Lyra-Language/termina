@@ -38,14 +38,23 @@ pub struct Settings {
   colors: Colors,
   /// The themes the user saved, in the order saved.
   themes: []SavedTheme,
+  /// The saved theme the colors were changed from by hand, while the theme is `Custom` (`""`
+  /// for none): what Save overwrites ([edit_colors], [can_save]).
+  edited_from: string = "",
   bold_is_bright: bool,
   /// What is behind a see-through window — one whose background is not opaque — blurred by,
   /// in points (0 for none; macOS only).
   background_blur: f32 = 0.0,
-  /// The transcript scrolled under the command line's box blurred by, in points, where the
-  /// box's colour is not opaque (0 for none; macOS only). Not 0 to begin with: unblurred,
-  /// the transcript's text runs through the prompt's.
-  box_blur: f32 = 16.0,
+  /// What is behind the input sections — the command line's box, each block's prompt and
+  /// command — and the output sections blurred by, each where its colour is not opaque: the
+  /// desktop through a see-through window, and the transcript scrolled under the box (0 for
+  /// none; macOS only). Not 0 to begin with: unblurred, the transcript's text runs through the
+  /// prompt's.
+  input_blur: f32 = 16.0,
+  output_blur: f32 = 16.0,
+  /// How thick the rule under the tab bar is, in points (0 for none); its color
+  /// `Colors.tab_rule`.
+  tab_rule_width: f32 = 1.0,
   /// Whether the window opens where it was last closed, at its size, maximized if it was; and
   /// where that was (`None` before it was ever closed so).
   remember_window: bool = true,
@@ -91,6 +100,8 @@ pub struct Colors {
   tab: u32,
   tab_hovered: u32,
   tab_selected: u32,
+  /// The rule under the tab bar, across the window (its thickness `Settings.tab_rule_width`).
+  tab_rule: u32,
   /// The command line's own: its text, and its completion menu's background and chosen row.
   editor_text: u32,
   menu: u32,
@@ -115,7 +126,9 @@ pub let defaults = pure () -> Settings => Settings {
 /// The sizes and spacings the window offers.
 pub const FONT_SIZE_RANGE: (f32, f32) = (9.0, 32.0)
 pub const LINE_SPACING_RANGE: (f32, f32) = (1.0, 2.0)
-/// The blurs, behind a see-through window and under the command line's box, in points.
+/// How thick the rule under the tab bar may be, in points.
+pub const RULE_WIDTH_RANGE: (f32, f32) = (0.0, 6.0)
+/// The blurs, behind a see-through window and behind its sections, in points.
 pub const BLUR_RANGE: (f32, f32) = (0.0, 64.0)
 
 // ── Themes ───────────────────────────────────────────────────────────────────
@@ -248,6 +261,8 @@ let colors_of = pure (
   tab: sections.0,
   tab_hovered: mix(sections.0, fg, 0.12),
   tab_selected: mix(bg, selection, 0.7),
+  // The text faint over the background.
+  tab_rule: mix(bg, fg, 0.19),
   editor_text: fg,
   menu: mix(bg, fg, 0.07),
   menu_chosen: mix(bg, selection, 0.5),
@@ -258,6 +273,23 @@ let colors_of = pure (
 /// `Custom` — a saved theme of that name is replaced.
 pub let can_save_as = pure (name: string) -> bool =>
   name.trim() != "" && name.trim() != "Custom" && !THEME_NAMES.contains(name.trim())
+
+/// The colors changed by hand: the theme made the user's own (`Custom`), and where it was one
+/// of their saved ones, that one kept as what Save overwrites ([can_save]) — through every
+/// change after, until another theme is chosen or saved.
+pub let edit_colors = (s: mut Settings) -> void => {
+  if saved_colors(s.themes, s.theme_name) != None {
+    s.edited_from = s.theme_name
+  } else if s.theme_name != "Custom" {
+    s.edited_from = ""
+  }
+  s.theme_name = "Custom"
+}
+
+/// Whether Save has a theme to overwrite: the colors changed from one of the user's saved
+/// themes, still there.
+pub let can_save = pure (s: Settings) -> bool =>
+  s.theme_name == "Custom" && saved_colors(s.themes, s.edited_from) != None
 
 /// The current colors saved as theme `name` (one of that name replaced), and made the
 /// current theme. Nothing for a name [can_save_as] refuses.
@@ -274,6 +306,7 @@ pub let save_theme = (s: mut Settings, name: string) -> void => {
   }
   if !replaced { s.themes.push(saved) }
   s.theme_name = n
+  s.edited_from = ""
 }
 
 /// Saved theme `name` gone; the colors stay, a theme of their own now (`Custom`) if it was
@@ -281,6 +314,7 @@ pub let save_theme = (s: mut Settings, name: string) -> void => {
 pub let delete_theme = (s: mut Settings, name: string) -> void => {
   s.themes = [t in s.themes | t.name != name | t]
   if s.theme_name == name { s.theme_name = "Custom" }
+  if s.edited_from == name { s.edited_from = "" }
 }
 
 /// Saved theme `name`'s colors, if there is one.
@@ -302,6 +336,7 @@ pub let color_named = pure (c: Colors, field: string) -> u32 => match field {
   "tab" => c.tab,
   "tab_hovered" => c.tab_hovered,
   "tab_selected" => c.tab_selected,
+  "tab_rule" => c.tab_rule,
   "editor_text" => c.editor_text,
   "menu" => c.menu,
   "menu_chosen" => c.menu_chosen,
@@ -323,6 +358,7 @@ pub let with_color = pure (c: Colors, field: string, given: u32) -> Colors => {
     "tab" => Colors { c | tab: rgb },
     "tab_hovered" => Colors { c | tab_hovered: rgb },
     "tab_selected" => Colors { c | tab_selected: rgb },
+    "tab_rule" => Colors { c | tab_rule: rgb },
     "editor_text" => Colors { c | editor_text: rgb },
     "menu" => Colors { c | menu: rgb },
     "menu_chosen" => Colors { c | menu_chosen: rgb },
@@ -417,6 +453,7 @@ pub let settings_to_json = pure (s: Settings) -> string => JsonObject([
   member("font_size", JsonNumber(f64(s.font_size))),
   member("line_spacing", JsonNumber(f64(s.line_spacing))),
   member("theme", JsonString(s.theme_name)),
+  ...(if s.edited_from == "" { [] } else { [member("edited_from", JsonString(s.edited_from))] }),
   member("bold_is_bright", JsonBool(s.bold_is_bright)),
   member("colors", colors_to_json(s.colors)),
   member("themes", JsonArray([t in s.themes | JsonObject([
@@ -424,7 +461,9 @@ pub let settings_to_json = pure (s: Settings) -> string => JsonObject([
     member("colors", colors_to_json(t.colors)),
   ])])),
   member("background_blur", JsonNumber(f64(s.background_blur))),
-  member("box_blur", JsonNumber(f64(s.box_blur))),
+  member("input_blur", JsonNumber(f64(s.input_blur))),
+  member("output_blur", JsonNumber(f64(s.output_blur))),
+  member("tab_rule_width", JsonNumber(f64(s.tab_rule_width))),
   member("remember_window", JsonBool(s.remember_window)),
   ...(match s.window {
     Some(w) => [member("window", JsonObject([
@@ -457,6 +496,7 @@ pub let settings_from_json = pure (text: string) -> Settings => {
     }
   }
   let theme = text_field(doc, "theme") ?? d.theme_name
+  let rule_width = f32(number_field(doc, "tab_rule_width") ?? f64(d.tab_rule_width))
   // The theme's colors first — a saved one's or one of Termina's — then any written out
   // over them.
   let base = if theme == "Custom" { d.colors } else { saved_colors(
@@ -472,11 +512,19 @@ pub let settings_from_json = pure (text: string) -> Settings => {
       LINE_SPACING_RANGE.1
     ),
     theme_name: theme,
+    // Kept only while the colors are Custom and the theme they came from is still saved.
+    edited_from: match text_field(doc, "edited_from") {
+      Some(name) =>
+        if theme == "Custom" && saved_colors(themes, name) != None { name } else { "" },
+      None => "",
+    },
     colors: colors_from_json(colors_in(doc), base),
     themes: themes,
     bold_is_bright: (doc.field("bold_is_bright") ?? JsonBool(d.bold_is_bright)).as_bool() ?? d.bold_is_bright,
     background_blur: f32(number_field(doc, "background_blur") ?? 0.0).clamp(BLUR_RANGE.0, BLUR_RANGE.1),
-    box_blur: f32(number_field(doc, "box_blur") ?? f64(d.box_blur)).clamp(BLUR_RANGE.0, BLUR_RANGE.1),
+    input_blur: f32(number_field(doc, "input_blur") ?? f64(d.input_blur)).clamp(BLUR_RANGE.0, BLUR_RANGE.1),
+    output_blur: f32(number_field(doc, "output_blur") ?? f64(d.output_blur)).clamp(BLUR_RANGE.0, BLUR_RANGE.1),
+    tab_rule_width: rule_width.clamp(RULE_WIDTH_RANGE.0, RULE_WIDTH_RANGE.1),
     remember_window: (doc.field("remember_window") ?? JsonBool(d.remember_window)).as_bool() ?? d.remember_window,
     window: window_from_json(doc.field("window")),
   }
@@ -513,6 +561,7 @@ let colors_to_json = pure (c: Colors) -> JsonValue => JsonObject([
   member("tab", JsonString(hex_of(c.tab))),
   member("tab_hovered", JsonString(hex_of(c.tab_hovered))),
   member("tab_selected", JsonString(hex_of(c.tab_selected))),
+  member("tab_rule", JsonString(hex_of(c.tab_rule))),
   member("command_text", JsonString(hex_of(c.editor_text))),
   member("menu", JsonString(hex_of(c.menu))),
   member("menu_chosen", JsonString(hex_of(c.menu_chosen))),
@@ -546,11 +595,32 @@ let colors_from_json = pure (c: JsonValue, base: Colors) -> Colors => {
     tab: color_field(c, "tab") ?? base.tab,
     tab_hovered: color_field(c, "tab_hovered") ?? base.tab_hovered,
     tab_selected: color_field(c, "tab_selected") ?? base.tab_selected,
+    tab_rule: color_field(c, "tab_rule") ?? base.tab_rule,
     editor_text: color_field(c, "command_text") ?? base.editor_text,
     menu: color_field(c, "menu") ?? base.menu,
     menu_chosen: color_field(c, "menu_chosen") ?? base.menu_chosen,
     ansi: ansi,
   })
+}
+
+/// How much what is behind the background `field` names is blurred, in points: the window's
+/// (`bg`), the input sections' or the output sections' ([may_be_clear]); 0 for any other.
+pub let blur_named = pure (s: Settings, field: string) -> f32 => match field {
+  "bg" => s.background_blur,
+  "input" => s.input_blur,
+  "output" => s.output_blur,
+  _ => 0.0,
+}
+
+/// `s` with the blur behind the background `field` names set to `radius`, whole points.
+pub let with_blur = (s: mut Settings, field: string, radius: f32) -> void => {
+  let r = f32(radius.round()).clamp(BLUR_RANGE.0, BLUR_RANGE.1)
+  match field {
+    "bg" => { s.background_blur = r },
+    "input" => { s.input_blur = r },
+    "output" => { s.output_blur = r },
+    _ => {},
+  }
 }
 
 /// Whether the colour `field` names may be translucent: the backgrounds — the window's, which
@@ -570,6 +640,7 @@ let backgrounds_alone_clear = pure (c: Colors) -> Colors => Colors {
   tab: c.tab & 0xFFFFFF,
   tab_hovered: c.tab_hovered & 0xFFFFFF,
   tab_selected: c.tab_selected & 0xFFFFFF,
+  tab_rule: c.tab_rule & 0xFFFFFF,
   editor_text: c.editor_text & 0xFFFFFF,
   menu: c.menu & 0xFFFFFF,
   menu_chosen: c.menu_chosen & 0xFFFFFF,
@@ -636,6 +707,11 @@ pub struct FontFamily {
   italic: string,
   bold_italic: string,
 }
+
+/// The name `f`'s regular face is loaded under for the Family list, which shows each family in
+/// itself: its own, apart from the one the grid loads the whole family under, which would
+/// otherwise be taken as loaded with no bold or italic.
+pub let preview_name = pure (f: FontFamily) -> string => "preview ${f.regular}"
 
 /// The monospaced families on this machine: the ones Termina knows by name (SF Mono,
 /// Menlo, DejaVu Sans Mono) that are installed, then any others found in the font

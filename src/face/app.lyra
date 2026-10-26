@@ -24,6 +24,15 @@ import ui.app.{
   WindowMinimize,
   WindowMaximize,
   WindowRestore,
+  EditField,
+}
+import ui.interact.{
+  FieldEdit,
+  FieldSelectAll,
+  FieldCopy,
+  FieldCut,
+  FieldPaste,
+  FieldUndo
 }
 import ui.draw.{ Size, Rect }
 import ui.backend.{ Modifiers, Character, PageUp, PageDown, WindowState }
@@ -115,6 +124,8 @@ pub struct Term {
   saves: i64 = 0,
   /// The families loaded into the window's fonts, by the name each was loaded as.
   loaded: []string = [],
+  /// Whether the Family list's fonts are loaded (`settings_opened`).
+  previews_loaded: bool = false,
 }
 
 /// A tab's view: how far it is scrolled down, and whether it sticks to the bottom as output
@@ -221,7 +232,7 @@ pub let view = pure (t: Term) -> Node<TermEvent> => {
       paint_tab(t.tabs[t.active], layout_at(t, area.size), t.grid, t.theme, t.focused, area),
     Some(ViewSized)
   ).takes_input(raw).keyed("term"))
-  let strip = [tab_strip(t), tab_rule()]
+  let strip = [tab_strip(t), tab_rule(t.theme)]
   let bars = if t.mac { strip } else { [header_bar(t), ...strip] }
   // The Settings tab in place of the terminal while it is shown; the terminals go on being
   // read behind it.
@@ -359,10 +370,7 @@ pub let update = (t: Term, e: TermEvent) -> (Term, []Command<TermEvent>) => {
     ToggleMaximize => { commands = [if n.maximized { WindowRestore } else { WindowMaximize }] },
     WindowChanged(w) => { n.maximized = w.maximized },
     SettingsAsked(s) => { commands = settings_asked(n, s) },
-    ShowSettings => {
-      n.settings_open = true
-      n.on_settings = true
-    },
+    ShowSettings => { commands = settings_opened(n) },
     CloseSettings => { commands = settings_closed(n) },
     FontFileChosen(path) => { commands = font_file_chosen(n, path) },
     FontsLoaded(_) => {},
@@ -413,11 +421,7 @@ let tab_asked = (t: mut Term, c: TabCommand) -> []Command<TermEvent> => match c 
   FontBigger => font_stepped(t, 1.0),
   FontSmaller => font_stepped(t, -1.0),
   FontDefault => font_stepped(t, 0.0),
-  OpenSettings => {
-    t.settings_open = true
-    t.on_settings = true
-    []
-  },
+  OpenSettings => settings_opened(t),
   NoCommand => [],
 }
 
@@ -441,6 +445,14 @@ let tab_moved = (t: mut Term, from: i64, to: i64) -> void => {
 /// An Edit menu item on the shown tab, as its key would do it: a copy or cut put on the
 /// clipboard, a paste asked of it.
 let edit_asked = (t: mut Term, a: EditAction) -> []Command<TermEvent> => {
+  // The Settings tab's: its focused field's — a colour's text, a theme's name — which never
+  // hears the keys the Mac's bar holds.
+  if t.on_settings {
+    return match field_edit(a) {
+      Some(edit) => [EditField(edit)],
+      None => [],
+    }
+  }
   if t.tabs.len() == 0 { return [] }
   let i = t.active
   t.views[i].sticking = true
@@ -453,6 +465,16 @@ let edit_asked = (t: mut Term, a: EditAction) -> []Command<TermEvent> => {
       []
     },
   }
+}
+
+/// What Edit's item `a` is to a text field; `None` for Redo, which a field has not.
+pub let field_edit = pure (a: EditAction) -> Maybe<FieldEdit> => match a {
+  SelectAll => Some(FieldSelectAll),
+  Copy => Some(FieldCopy),
+  Cut => Some(FieldCut),
+  Paste => Some(FieldPaste),
+  Undo => Some(FieldUndo),
+  Redo => None,
 }
 
 /// The Settings tab closed, the terminal shown again.

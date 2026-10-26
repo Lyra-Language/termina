@@ -13,10 +13,15 @@ import settings.{
   theme_colors,
   save_theme,
   delete_theme,
+  edit_colors,
+  can_save,
   saved_colors,
   with_color,
   with_ansi,
   family_for,
+  preview_name,
+  with_blur,
+  RULE_WIDTH_RANGE,
   save_settings,
   settings_to_json,
   FONT_SIZE_RANGE,
@@ -33,11 +38,12 @@ import settings_page.{
   UseSavedTheme,
   NameTheme,
   SaveThemeAs,
+  SaveTheme,
   DeleteSavedTheme,
   ToggleBoldBright,
   ToggleRememberWindow,
   SetBlur,
-  SetBoxBlur,
+  SetTabRuleWidth,
   ResetSettings,
   OpenSwatch,
   CloseSwatch,
@@ -66,23 +72,25 @@ pub let settings_asked = (t: mut Term, e: SettingsEvent) -> []Command<TermEvent>
     // Whole points: a fractional size blurs every glyph.
     SetFontSize(size) => { t.settings.font_size = f32(size.round()) },
     SetLineSpacing(spacing) => { t.settings.line_spacing = spacing },
-    // A color changed by hand makes the theme the user's own.
+    // A color changed by hand makes the theme the user's own (`edit_colors`).
     SetColor(field, rgb) => {
       t.settings.colors = with_color(t.settings.colors, field, rgb)
-      t.settings.theme_name = "Custom"
+      edit_colors(t.settings)
     },
     SetAnsi(k, rgb) => {
       t.settings.colors = with_ansi(t.settings.colors, k, rgb)
-      t.settings.theme_name = "Custom"
+      edit_colors(t.settings)
     },
     UseTheme(name) => {
       t.settings.theme_name = name
       t.settings.colors = theme_colors(name)
+      t.settings.edited_from = ""
     },
     UseSavedTheme(name) => {
       let Some(saved) = saved_colors(t.settings.themes, name) else { return [] }
       t.settings.theme_name = name
       t.settings.colors = saved
+      t.settings.edited_from = ""
     },
     NameTheme(text) => {
       t.typed = text
@@ -94,12 +102,21 @@ pub let settings_asked = (t: mut Term, e: SettingsEvent) -> []Command<TermEvent>
       save_theme(t.settings, t.typed)
       t.typed = ""
     },
+    // The colors over the saved theme they were changed from.
+    SaveTheme =>
+      if can_save(t.settings) { save_theme(t.settings, t.settings.edited_from) },
     DeleteSavedTheme => delete_theme(t.settings, t.settings.theme_name),
     ToggleBoldBright => { t.settings.bold_is_bright = !t.settings.bold_is_bright },
     // Kept as it closes: the place itself is taken then (termina.lyra's `place_of`).
     ToggleRememberWindow => { t.settings.remember_window = !t.settings.remember_window },
-    SetBlur(radius) => { t.settings.background_blur = f32(radius.round()) },
-    SetBoxBlur(radius) => { t.settings.box_blur = f32(radius.round()) },
+    SetBlur(field, radius) => with_blur(t.settings, field, radius),
+    // Whole points, as a cell is.
+    SetTabRuleWidth(width) => {
+      t.settings.tab_rule_width = f32(width.round()).clamp(
+        RULE_WIDTH_RANGE.0,
+        RULE_WIDTH_RANGE.1
+      )
+    },
     ResetSettings => { t.settings = defaults() },
     OpenSwatch(key) => {
       t.swatch = key
@@ -177,6 +194,20 @@ let applied = (t: mut Term, faces_were: string) -> []Command<TermEvent> => {
 pub let see_through = pure (t: Term) -> []Command<TermEvent> => {
   let on = (t.theme.bg >> 24) != 0xFF
   [WindowSeeThrough(on), WindowBlur(if on { t.settings.background_blur } else { 0.0 })]
+}
+
+/// The Settings tab opened: the Family list's fonts loaded, the first time, so each family is
+/// shown in itself (`preview_name`, a family's regular face alone).
+pub let settings_opened = (t: mut Term) -> []Command<TermEvent> => {
+  t.settings_open = true
+  t.on_settings = true
+  if t.previews_loaded { return [] }
+  t.previews_loaded = true
+  let files = [
+    f in t.families |
+      FontFile { family: preview_name(f), path: f.regular, weight: 400, italic: false }
+  ]
+  [LoadFonts(files, (_: bool) -> TermEvent => FontsLoaded("previews"))]
 }
 
 /// The name the settings' faces are loaded as: the family's, or the file's.

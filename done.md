@@ -61,5 +61,8 @@ Finished work, moved from `todo.md` with its section; the rules it left behind a
 ## The window on `ui` (10/23)
 
 - **[DONE 10/23] Termina on lyra's `ui`** — the tab bar, the menus (the Mac's own bar, a header bar's ☰ elsewhere), the Settings tab in markup, a see-through background; the Dear ImGui front end, uitest and menutest gone (lyra's `ui/WINDOW.md` step 9).
+- **[DONE 10/26] The tab bar's underline's color and thickness** — Tabs ▸ Underline, the thickness in its picker.
+- **[DONE 10/26] Each background blurred on its own** — the window's, the input's and the output's, each by a slider in its colour's picker; a section frosts the desktop behind it (macOS).
+- **[DONE 10/26] A Save button for an edited saved theme; the hex in the pickers copied and pasted; each font family listed in itself.**
 - **[DONE 10/26] Translucent sections** — the input and output colours take an opacity, as the background's does; a translucent command line box shows the transcript scrolled under it, blurred (Settings ▸ Window, macOS); the transcript clipped at the box rather than covered, so nothing shows behind its rounded corners; the Settings controls on a panel of the output's colour.
 - **[DONE 10/23] Characters past the BMP** — arrived as U+FFFD through ImGui's 16-bit `ImWchar`; `ui` takes typed text as UTF-8.

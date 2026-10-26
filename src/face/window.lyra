@@ -130,8 +130,8 @@ pub let chrome_sheet = pure (theme: Theme) -> Sheet => {
         },
       },
       Rule { selector: ".title", style: Style { color: Some(fg) } },
-      // Under the tabs, the window's width: the box's rule's colour.
-      Rule { selector: ".tab-rule", style: Style { background: Some(color(theme.rule)) } },
+      // Under the tabs, the window's width (`tab_rule`).
+      Rule { selector: ".tab-rule", style: Style { background: Some(color(theme.tab_rule)) } },
       // The Settings tab's controls on a panel of the output section's colour, rounded as a
       // block's card: over a background clear enough to show the desktop, they are hard to read.
       Rule {
@@ -178,10 +178,11 @@ pub let tab_strip = pure (t: Term) -> Node<TermEvent> => {
   })
 }
 
-/// A rule under the tab bar, a point high, across the whole window — past the tabs' margins —
-/// the column it stands in stretching it.
-pub let tab_rule = pure () -> Node<TermEvent> =>
-  sized::<TermEvent>(None, Some(1.0)).with_class("tab-rule")
+/// A rule under the tab bar, as thick as the theme says (none at 0), across the whole window —
+/// past the tabs' margins — the column it stands in stretching it; its color the theme's
+/// `tab_rule`.
+pub let tab_rule = pure (theme: Theme) -> Node<TermEvent> =>
+  sized::<TermEvent>(None, Some(theme.tab_rule_width)).with_class("tab-rule")
 
 /// The header bar, off a Mac: `+`, the shown tab's title in the middle, ☰ and the window's
 /// buttons; its empty stretch moves the window.
@@ -249,7 +250,9 @@ let shell_items = pure (t: Term) -> []MenuEntry<TermEvent> => {
 /// Edit's items, greyed where the shown tab would do nothing. Off a Mac, Undo and Redo show no
 /// key: Ctrl+Z is the command line's own, and a running program's.
 let edit_items = pure (t: Term) -> []MenuEntry<TermEvent> => {
-  let can = (a: EditAction) -> bool => t.tabs.len() > 0 && t.tabs[t.active].can(a)
+  // On the Settings tab, a text field's (`field_edit`), whichever has the focus.
+  let can = (a: EditAction) -> bool =>
+    if t.on_settings { field_edit(a).is_some() } else { t.tabs.len() > 0 && t.tabs[t.active].can(a) }
   let editing = (
     label: string,
     a: EditAction,
