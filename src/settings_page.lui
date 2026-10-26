@@ -13,6 +13,7 @@
     can_save_as,
     saved_colors,
     color_named,
+    may_be_clear,
     THEME_NAMES,
     FONT_SIZE_RANGE,
     LINE_SPACING_RANGE,
@@ -40,6 +41,8 @@
     | ToggleRememberWindow
     /// What is behind a see-through window blurred by, as the slider is dragged.
     | SetBlur(f32)
+    /// What scrolls under a translucent command line box blurred by, likewise.
+    | SetBoxBlur(f32)
     | ResetSettings
     /// A swatch's picker opened, by its color's field (`ansi 3` for an ANSI color), or closed.
     | OpenSwatch(string)
@@ -144,7 +147,8 @@
      name typed to save a theme as, and the swatch whose picker is open (`""` for none). -->
 <component name="settings_page" props={{ s: Settings, families: []FontFamily, typed: string, open: string }} event={SettingsEvent}>
   <style>
-    .page { gap: 22; padding: 24; overflow-y: auto }
+    .page { padding: 10 }
+    .panel { gap: 22; padding: 24; overflow-y: auto }
     .section { gap: 12 }
     Text.heading { font-size: 15; color: $colors.muted }
     .form { grid-template-columns: auto 1fr; column-gap: 16; row-gap: 12; align-items: center }
@@ -158,100 +162,111 @@
     Text.note { color: $colors.muted; font-size: 12 }
   </style>
 
+  <!-- The controls on a panel of the Output section's colour, the window's background a band
+       round it: a background clear enough to see the desktop through is hard to read on. -->
   <Column class="page" cross="stretch">
-    <Column class="section">
-      <Text class="heading">Font</Text>
-      <Grid class="form">
-        <Text>Family</Text>
-        <Row class="field">
-          <Select
-            options={family_options(s, families)}
-            selected={family_shown(s, families)}
-            separators={if s.font_file != "" { [1] } else { [] }}
-            on_change={(k: i64) -> SettingsEvent => family_picked(s, families, k)}
-          />
-          <Button on_click={ChooseFontFile} key="other font">Other Font File…</Button>
-        </Row>
-        <Text>Size</Text>
-        <Row class="field">
-          <Slider value={s.font_size} min={FONT_SIZE_RANGE.0} max={FONT_SIZE_RANGE.1} step="1" on_change={SetFontSize} key="size"/>
-          <Text>{points(s.font_size)}</Text>
-        </Row>
-        <Text>Line spacing</Text>
-        <Row class="field">
-          <Slider value={s.line_spacing} min={LINE_SPACING_RANGE.0} max={LINE_SPACING_RANGE.1} step="0.05" on_change={SetLineSpacing} key="spacing"/>
-          <Text>{spacing_text(s.line_spacing)}</Text>
-        </Row>
-      </Grid>
-    </Column>
-
-    <Column class="section">
-      <Text class="heading">Colors</Text>
-      <Grid class="form">
-        <Text>Theme</Text>
-        <Row class="field">
-          <Select
-            options={theme_options(s)}
-            selected={theme_shown(s)}
-            separators={theme_rules(s)}
-            on_change={(k: i64) -> SettingsEvent => theme_picked(s, k)}
-          />
-        </Row>
-        <Text>Theme name</Text>
-        <Row class="field">
-          <TextInput value={typed} placeholder="Theme name" on_edit={NameTheme} key="theme name"/>
-          <Button on_click={SaveThemeAs} disabled={!can_save_as(typed)} key="save theme">Save Theme As…</Button>
-          <if test={is_saved(s)}>
-            <Button on_click={DeleteSavedTheme} key="delete theme">Delete</Button>
-          </if>
-        </Row>
-      </Grid>
-
-      <!-- The colors in their groups, side by side as the window's width allows, wrapping to a
-           new line when it does not: each its heading over its swatches, labelled on their
-           right. -->
-      <Flex class="groups" wrap="wrap">
-        <for each={g in COLOR_GROUPS}>
-          <Column class="group">
-            <Text class="heading">{g.heading}</Text>
-            <for each={c in g.colors}>
-              <color_field s={s} label={c.0} field={c.1} open={open}/>
-            </for>
-          </Column>
-        </for>
-        <Column class="group">
-          <Text class="heading">ANSI colors</Text>
-          <Row class="ansi">
-            <for each={k in 0..<8}>
-              <ansi_field s={s} k={k} open={open}/>
-            </for>
-          </Row>
-          <Row class="ansi">
-            <for each={k in 8..<16}>
-              <ansi_field s={s} k={k} open={open}/>
-            </for>
-          </Row>
-          <Checkbox checked={s.bold_is_bright} on_toggle={ToggleBoldBright}>Draw bold text in bright colors</Checkbox>
+    <Expanded>
+      <Column class="panel" cross="stretch">
+        <Column class="section">
+          <Text class="heading">Font</Text>
+          <Grid class="form">
+            <Text>Family</Text>
+            <Row class="field">
+              <Select
+                options={family_options(s, families)}
+                selected={family_shown(s, families)}
+                separators={if s.font_file != "" { [1] } else { [] }}
+                on_change={(k: i64) -> SettingsEvent => family_picked(s, families, k)}
+              />
+              <Button on_click={ChooseFontFile} key="other font">Other Font File…</Button>
+            </Row>
+            <Text>Size</Text>
+            <Row class="field">
+              <Slider value={s.font_size} min={FONT_SIZE_RANGE.0} max={FONT_SIZE_RANGE.1} step="1" on_change={SetFontSize} key="size"/>
+              <Text>{points(s.font_size)}</Text>
+            </Row>
+            <Text>Line spacing</Text>
+            <Row class="field">
+              <Slider value={s.line_spacing} min={LINE_SPACING_RANGE.0} max={LINE_SPACING_RANGE.1} step="0.05" on_change={SetLineSpacing} key="spacing"/>
+              <Text>{spacing_text(s.line_spacing)}</Text>
+            </Row>
+          </Grid>
         </Column>
-      </Flex>
-    </Column>
 
-    <Column class="section">
-      <Text class="heading">Window</Text>
-      <Checkbox checked={s.remember_window} on_toggle={ToggleRememberWindow}>Open the window where it was last closed, at its size</Checkbox>
-      <Grid class="form">
-        <Text>Blur behind</Text>
-        <Row class="field">
-          <Slider value={s.background_blur} min={BLUR_RANGE.0} max={BLUR_RANGE.1} step="1" on_change={SetBlur} key="blur"/>
-          <Text>{points(s.background_blur)}</Text>
+        <Column class="section">
+          <Text class="heading">Colors</Text>
+          <Grid class="form">
+            <Text>Theme</Text>
+            <Row class="field">
+              <Select
+                options={theme_options(s)}
+                selected={theme_shown(s)}
+                separators={theme_rules(s)}
+                on_change={(k: i64) -> SettingsEvent => theme_picked(s, k)}
+              />
+            </Row>
+            <Text>Theme name</Text>
+            <Row class="field">
+              <TextInput value={typed} placeholder="Theme name" on_edit={NameTheme} key="theme name"/>
+              <Button on_click={SaveThemeAs} disabled={!can_save_as(typed)} key="save theme">Save Theme As…</Button>
+              <if test={is_saved(s)}>
+                <Button on_click={DeleteSavedTheme} key="delete theme">Delete</Button>
+              </if>
+            </Row>
+          </Grid>
+
+          <!-- The colors in their groups, side by side as the window's width allows, wrapping to a
+               new line when it does not: each its heading over its swatches, labelled on their
+               right. -->
+          <Flex class="groups" wrap="wrap">
+            <for each={g in COLOR_GROUPS}>
+              <Column class="group">
+                <Text class="heading">{g.heading}</Text>
+                <for each={c in g.colors}>
+                  <color_field s={s} label={c.0} field={c.1} open={open}/>
+                </for>
+              </Column>
+            </for>
+            <Column class="group">
+              <Text class="heading">ANSI colors</Text>
+              <Row class="ansi">
+                <for each={k in 0..<8}>
+                  <ansi_field s={s} k={k} open={open}/>
+                </for>
+              </Row>
+              <Row class="ansi">
+                <for each={k in 8..<16}>
+                  <ansi_field s={s} k={k} open={open}/>
+                </for>
+              </Row>
+              <Checkbox checked={s.bold_is_bright} on_toggle={ToggleBoldBright}>Draw bold text in bright colors</Checkbox>
+            </Column>
+          </Flex>
+        </Column>
+
+        <Column class="section">
+          <Text class="heading">Window</Text>
+          <Checkbox checked={s.remember_window} on_toggle={ToggleRememberWindow}>Open the window where it was last closed, at its size</Checkbox>
+          <Grid class="form">
+            <Text>Blur behind</Text>
+            <Row class="field">
+              <Slider value={s.background_blur} min={BLUR_RANGE.0} max={BLUR_RANGE.1} step="1" on_change={SetBlur} key="blur"/>
+              <Text>{points(s.background_blur)}</Text>
+            </Row>
+            <Text>Blur under the box</Text>
+            <Row class="field">
+              <Slider value={s.box_blur} min={BLUR_RANGE.0} max={BLUR_RANGE.1} step="1" on_change={SetBoxBlur} key="box-blur"/>
+              <Text>{points(s.box_blur)}</Text>
+            </Row>
+          </Grid>
+          <Text class="note">The window shows what is behind it while the Background's opacity is below full (its swatch's opacity strip), blurred by Blur behind. The Input and Output sections may be translucent too: the command line's box then shows the transcript scrolled under it, blurred by Blur under the box. Both blurs are macOS's.</Text>
+        </Column>
+
+        <Row>
+          <Button on_click={ResetSettings} key="reset">Reset to Defaults</Button>
         </Row>
-      </Grid>
-      <Text class="note">The window shows what is behind it while the Background's opacity is below full (its swatch's opacity strip); the blur is macOS's.</Text>
-    </Column>
-
-    <Row>
-      <Button on_click={ResetSettings} key="reset">Reset to Defaults</Button>
-    </Row>
+      </Column>
+    </Expanded>
   </Column>
 </component>
 
@@ -264,7 +279,7 @@
       on_open={OpenSwatch(field)}
       on_change={(c: Color) -> SettingsEvent => SetColor(field, rgb_of_color(c))}
       on_dismiss={CloseSwatch}
-      opaque={field != "bg"}
+      opaque={!may_be_clear(field)}
     />
     <Text>{label}</Text>
   </Row>

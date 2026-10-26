@@ -42,6 +42,10 @@ pub struct Settings {
   /// What is behind a see-through window — one whose background is not opaque — blurred by,
   /// in points (0 for none; macOS only).
   background_blur: f32 = 0.0,
+  /// The transcript scrolled under the command line's box blurred by, in points, where the
+  /// box's colour is not opaque (0 for none; macOS only). Not 0 to begin with: unblurred,
+  /// the transcript's text runs through the prompt's.
+  box_blur: f32 = 16.0,
   /// Whether the window opens where it was last closed, at its size, maximized if it was; and
   /// where that was (`None` before it was ever closed so).
   remember_window: bool = true,
@@ -67,9 +71,9 @@ pub struct SavedTheme {
 }
 
 /// A theme's colors, each `0xRRGGBB` with how transparent it is in the top byte — 0, as every
-/// theme's own are, opaque. Only the background may be other than opaque
-/// (`background_alone_clear`), which makes the window see-through; the file writes it
-/// `#rrggbbaa` then (`hex_of`).
+/// theme's own are, opaque. Only the backgrounds may be other than opaque — the window's and
+/// the sections' (`may_be_clear`, `backgrounds_alone_clear`); a window background that is
+/// not makes the window see-through. The file writes such a colour `#rrggbbaa` (`hex_of`).
 pub struct Colors {
   fg: u32,
   bg: u32,
@@ -111,7 +115,7 @@ pub let defaults = pure () -> Settings => Settings {
 /// The sizes and spacings the window offers.
 pub const FONT_SIZE_RANGE: (f32, f32) = (9.0, 32.0)
 pub const LINE_SPACING_RANGE: (f32, f32) = (1.0, 2.0)
-/// The blur behind a see-through window, in points.
+/// The blurs, behind a see-through window and under the command line's box, in points.
 pub const BLUR_RANGE: (f32, f32) = (0.0, 64.0)
 
 // ── Themes ───────────────────────────────────────────────────────────────────
@@ -307,8 +311,7 @@ pub let color_named = pure (c: Colors, field: string) -> u32 => match field {
 /// `c` with the field named `field` (as [color_named] names them) set to `given` — opaque but
 /// for the background, the one colour that may be translucent; `c` itself for any other name.
 pub let with_color = pure (c: Colors, field: string, given: u32) -> Colors => {
-  // Only the background may be translucent.
-  let rgb = if field == "bg" { given } else { given & 0xFFFFFF }
+  let rgb = if may_be_clear(field) { given } else { given & 0xFFFFFF }
   match field {
     "fg" => Colors { c | fg: rgb },
     "bg" => Colors { c | bg: rgb },
@@ -421,6 +424,7 @@ pub let settings_to_json = pure (s: Settings) -> string => JsonObject([
     member("colors", colors_to_json(t.colors)),
   ])])),
   member("background_blur", JsonNumber(f64(s.background_blur))),
+  member("box_blur", JsonNumber(f64(s.box_blur))),
   member("remember_window", JsonBool(s.remember_window)),
   ...(match s.window {
     Some(w) => [member("window", JsonObject([
@@ -472,6 +476,7 @@ pub let settings_from_json = pure (text: string) -> Settings => {
     themes: themes,
     bold_is_bright: (doc.field("bold_is_bright") ?? JsonBool(d.bold_is_bright)).as_bool() ?? d.bold_is_bright,
     background_blur: f32(number_field(doc, "background_blur") ?? 0.0).clamp(BLUR_RANGE.0, BLUR_RANGE.1),
+    box_blur: f32(number_field(doc, "box_blur") ?? f64(d.box_blur)).clamp(BLUR_RANGE.0, BLUR_RANGE.1),
     remember_window: (doc.field("remember_window") ?? JsonBool(d.remember_window)).as_bool() ?? d.remember_window,
     window: window_from_json(doc.field("window")),
   }
@@ -530,7 +535,7 @@ let colors_from_json = pure (c: JsonValue, base: Colors) -> Colors => {
     }
     if whole { ansi = read }
   }
-  background_alone_clear(Colors {
+  backgrounds_alone_clear(Colors {
     fg: color_field(c, "foreground") ?? base.fg,
     bg: color_field(c, "background") ?? base.bg,
     cursor: color_field(c, "cursor") ?? base.cursor,
@@ -548,15 +553,19 @@ let colors_from_json = pure (c: JsonValue, base: Colors) -> Colors => {
   })
 }
 
-/// `c` with every colour but the background made opaque: only the window's background may be
-/// translucent (it makes the window see-through); a file's other `#rrggbbaa` is read opaque.
-let background_alone_clear = pure (c: Colors) -> Colors => Colors {
+/// Whether the colour `field` names may be translucent: the backgrounds — the window's, which
+/// makes the window see-through, and the sections' (input and output), drawn over it. Text,
+/// the tabs and the menus are opaque.
+pub let may_be_clear = pure (field: string) -> bool =>
+  field == "bg" || field == "input" || field == "output"
+
+/// `c` with every colour but the backgrounds ([may_be_clear]) made opaque; a file's other
+/// `#rrggbbaa` is read opaque.
+let backgrounds_alone_clear = pure (c: Colors) -> Colors => Colors {
   c |
   fg: c.fg & 0xFFFFFF,
   cursor: c.cursor & 0xFFFFFF,
   selection: c.selection & 0xFFFFFF,
-  input: c.input & 0xFFFFFF,
-  output: c.output & 0xFFFFFF,
   input_text: c.input_text & 0xFFFFFF,
   tab: c.tab & 0xFFFFFF,
   tab_hovered: c.tab_hovered & 0xFFFFFF,

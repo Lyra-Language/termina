@@ -151,6 +151,10 @@ each tab a painter taking input raw, under `ui`'s tab bar, menus and Settings ta
   the drawn menus' keys. Off a Mac, Edit's Undo and Redo show no key: Ctrl+Z is a running
   program's. The chrome is `themed` in a `ui` theme made from Termina's (`chrome_theme`,
   `chrome_sheet`): the tab colours, the completion menu's for a menu.
+- **The Settings tab's controls are on a panel** (`.panel`, `chrome_sheet`: the output
+  section's colour, rounded as a card) set `PAD` in, the window's background a band round
+  it: over a background clear enough to show the desktop, controls are hard to read. The
+  panel scrolls, not the page.
 - **The Settings tab** is the last of the tab bar's, out of the tabs' order, shown in
   place of the terminal (which goes on being read); ⌘W while it is shown closes it. A change
   takes at once: the theme is rebuilt and told to every tab — the window's root takes its
@@ -160,11 +164,19 @@ each tab a painter taking input raw, under `ui`'s tab bar, menus and Settings ta
   `SAVE_DELAY_MS` after the last change (a save a change, only the last carried out) and as
   the window closes (`save_now`). Buttons and the chosen option take the text's colour
   (`chrome_sheet`): a light theme's chosen row is light.
-- **The background alone may be translucent**: a settings colour is `0xRRGGBB` with how
-  transparent it is in the top byte, so every theme's own `0xRRGGBB` is opaque; the file
-  writes `#rrggbbaa` for a background that is not (`hex_of`, `color_of`), and every other
-  colour is made opaque wherever it comes from (`background_alone_clear`, `with_color`,
-  `with_ansi`; their swatches are `opaque`, no opacity strip). **A background that is not
+- **The backgrounds alone may be translucent** — the window's and the sections' (input and
+  output, `may_be_clear`): a settings colour is `0xRRGGBB` with how transparent it is in the
+  top byte, so every theme's own `0xRRGGBB` is opaque; the file writes `#rrggbbaa` for one
+  that is not (`hex_of`, `color_of`), and every other colour is made opaque wherever it comes
+  from (`backgrounds_alone_clear`, `with_color`, `with_ansi`; their swatches are `opaque`, no
+  opacity strip). A card's input and output bands are painted side by side, never one over
+  the other. **A translucent box shows the transcript scrolled under it**, blurred by
+  `box_blur` (Settings ▸ Window, 16 points to begin with: unblurred, the transcript's text
+  runs through the prompt's), `ui`'s backdrop — the GPU's, so macOS only. **The transcript is
+  clipped at the box, never covered** (`paint_tab`'s `PushClip`: at its top while it is opaque,
+  at its foot while not), and the rule along its top stops at its rounded corners: anything
+  drawn behind them — a rectangle of the window's background, doubling a see-through one —
+  shows round the corners. **A background that is not
   opaque makes the window see-through** (`ui`'s `set_see_through`; Termina clears to
   nothing and its view's root paints the background), its title bar staying opaque (a Mac's
   through `bindings.gpu`'s shim, the header bar's own background elsewhere), with what is
@@ -317,7 +329,7 @@ each tab a painter taking input raw, under `ui`'s tab bar, menus and Settings ta
   foot `Place.lift` points over the text: just above the box). Both rows are set in
   `BOX_INSET` from the grid's sides, so the command wraps a few columns before the grid
   does. The grid draws only the lines above the prompt's, and the page counts the box's height so the
-  last line rests on it at the bottom; the box is drawn opaque at the view's foot
+  last line rests on it at the bottom; the box is drawn at the view's foot
   (`origin.y + scroll + avail.y`), wherever the view is scrolled, and grid clicks stop at
   its top. **While a command sent from it runs, the box stays, greyed**, showing the
   command's first line — the keys are the program's, as in any terminal — but not on the

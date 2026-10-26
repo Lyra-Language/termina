@@ -46,7 +46,7 @@ import ui.layout.{
   MainStart,
   CrossCenter,
 }
-import session.{ tab_title }
+import session.{ tab_title, BLOCK_ROUNDING }
 import term.{
   Theme,
   NewTab,
@@ -128,6 +128,12 @@ pub let chrome_sheet = pure (theme: Theme) -> Sheet => {
         },
       },
       Rule { selector: ".title", style: Style { color: Some(fg) } },
+      // The Settings tab's controls on a panel of the output section's colour, rounded as a
+      // block's card: over a background clear enough to show the desktop, they are hard to read.
+      Rule {
+        selector: ".panel",
+        style: Style { background: Some(color(theme.output)), radius: Some(BLOCK_ROUNDING) },
+      },
       Rule {
         selector: "Button.chrome, MenuButton",
         style: Style { background: Some(clear), color: Some(fg), padding: Some(insets_xy(10.0, 4.0)), radius: Some(6.0) },

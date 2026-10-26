@@ -47,6 +47,9 @@ pub struct Theme {
   /// Draw bold text in colors 0–7 as their bright versions (8–15), as older programs that
   /// used bold *for* brightness expect. Off: bold is a heavier face, the color as asked.
   bold_is_bright: bool,
+  /// What is drawn under the command line's box — the transcript scrolled behind it — blurred
+  /// by, in points, where the box is not opaque.
+  box_blur: f32 = 0.0,
 }
 
 /// The theme the settings describe.
@@ -67,6 +70,7 @@ pub let theme_of = pure (s: Settings) -> Theme => Theme {
   menu_chosen: abgr(s.colors.menu_chosen),
   palette: palette_256(s.colors.ansi),
   bold_is_bright: s.bold_is_bright,
+  box_blur: s.box_blur,
 }
 
 /// Termina's own theme, before any settings: Termina Dark.

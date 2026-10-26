@@ -10,7 +10,18 @@ module face
 //! of the size, and **bold is a face** — the family's, a
 //! variable font's instance or one made bold — never the text drawn twice.
 
-import ui.draw.{ Point, Rect, Radii, Color, Fill, Border, radius }
+import ui.draw.{
+  Point,
+  Rect,
+  Radii,
+  Color,
+  Fill,
+  Border,
+  Backdrop,
+  PushClip,
+  PopClip,
+  radius
+}
 import ui.text.{ FontSpec, FontMetrics, Cell as TextCell }
 import ui.layout.{ PaintArea, PaintOp, PaintDraw, PaintText, PaintCells, PaintWave }
 import vt.{
@@ -111,6 +122,17 @@ pub let paint_tab = pure (
   var ops: []PaintOp = []
   let rows = f.rows
   let cols = s.shown.cols
+  // The transcript stops at the box — at its top while it is opaque, at its foot while the
+  // transcript shows through it — clipped rather than covered, so that nothing is drawn behind
+  // the box's rounded corners but the window's background.
+  let boxed = f.prompt.is_some() || f.running_box
+  if boxed {
+    let foot = if (theme.input >> 24) == 0xFF { f.box_top } else { f.view_bottom }
+    ops.push(PaintDraw(PushClip(
+      Rect { x: 0.0, y: 0.0, w: area.size.w, h: foot },
+      radius(0.0)
+    )))
+  }
   // The commands' blocks under the text: the input's band, the output's below it.
   if !s.shown.alt {
     for b in s.blocks { card(ops, s, theme, g, f, b, false) }
@@ -168,6 +190,7 @@ pub let paint_tab = pure (
       }
     }
   }
+  if boxed { ops.push(PaintDraw(PopClip)) }
   match f.prompt {
     Some((i, prompt_end)) =>
       prompt_box(ops, s, f, g, theme, input_theme, i, prompt_end, focused),
@@ -368,16 +391,16 @@ let card = (
   let x0 = INSET - BOX_MARGIN
   let w = f32(s.shown.cols) * g.cell_x + 2.0 * BOX_MARGIN
   if foot > input_foot + 0.5 {
-    ops.push(PaintDraw(Fill(
-      Rect { x: x0, y: top, w: w, h: foot - top },
-      radius(BLOCK_ROUNDING),
-      color(theme.output)
-    )))
-    let corners = Radii { top_left: BLOCK_ROUNDING, top_right: BLOCK_ROUNDING }
+    // Side by side, not the input over the output: either may be translucent.
     ops.push(PaintDraw(Fill(
       Rect { x: x0, y: top, w: w, h: input_foot - top },
-      corners,
+      Radii { top_left: BLOCK_ROUNDING, top_right: BLOCK_ROUNDING },
       color(theme.input)
+    )))
+    ops.push(PaintDraw(Fill(
+      Rect { x: x0, y: input_foot, w: w, h: foot - input_foot },
+      Radii { bottom_left: BLOCK_ROUNDING, bottom_right: BLOCK_ROUNDING },
+      color(theme.output)
     )))
   } else {
     ops.push(PaintDraw(Fill(
@@ -432,8 +455,9 @@ let note = (
   }
 }
 
-/// The box's frame from `box_top` to the view's foot: opaque, so the scrolled-back grid never
-/// shows through it, tinted, a rule along its top.
+/// The box's frame from `box_top` to the view's foot, tinted, a rule along its top between its
+/// rounded corners. Translucent, the transcript scrolled under it shows through, blurred by the
+/// theme's `box_blur` (`ui`'s backdrop, on the GPU); opaque, `paint_tab` has drawn none there.
 let frame_box = (
   ops: mut []PaintOp,
   theme: Theme,
@@ -448,14 +472,15 @@ let frame_box = (
     w: f32(cols) * g.cell_x + 2.0 * BOX_MARGIN,
     h: view_bottom - box_top,
   }
-  // The window's background under it and down to the edge, past its margin.
-  ops.push(PaintDraw(Fill(
-    Rect { at | h: view_bottom + PAD - box_top },
-    radius(0.0),
-    color(theme.bg)
-  )))
+  if (theme.input >> 24) != 0xFF && theme.box_blur > 0.0 {
+    ops.push(PaintDraw(Backdrop(at, radius(BOX_ROUNDING), theme.box_blur)))
+  }
   ops.push(PaintDraw(Fill(at, radius(BOX_ROUNDING), color(theme.input))))
-  ops.push(PaintDraw(Fill(Rect { at | h: 1.0 }, radius(0.0), color(theme.rule))))
+  ops.push(PaintDraw(Fill(
+    Rect { x: at.x + BOX_ROUNDING, y: at.y, w: at.w - 2.0 * BOX_ROUNDING, h: 1.0 },
+    radius(0.0),
+    color(theme.rule)
+  )))
 }
 
 /// At a prompt: the box, the prompt's rows in it — each line's cells from where the prompt

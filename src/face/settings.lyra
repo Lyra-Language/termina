@@ -37,6 +37,7 @@ import settings_page.{
   ToggleBoldBright,
   ToggleRememberWindow,
   SetBlur,
+  SetBoxBlur,
   ResetSettings,
   OpenSwatch,
   CloseSwatch,
@@ -98,6 +99,7 @@ pub let settings_asked = (t: mut Term, e: SettingsEvent) -> []Command<TermEvent>
     // Kept as it closes: the place itself is taken then (termina.lyra's `place_of`).
     ToggleRememberWindow => { t.settings.remember_window = !t.settings.remember_window },
     SetBlur(radius) => { t.settings.background_blur = f32(radius.round()) },
+    SetBoxBlur(radius) => { t.settings.box_blur = f32(radius.round()) },
     ResetSettings => { t.settings = defaults() },
     OpenSwatch(key) => {
       t.swatch = key

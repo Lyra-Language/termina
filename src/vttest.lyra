@@ -36,7 +36,8 @@ import settings.{
   settings_from_json,
   hex_of,
   color_of,
-  sections_of
+  sections_of,
+  with_color,
 }
 import term.{ abgr, dark_theme, Theme, typed_lines, command_line }
 import session.{
@@ -1500,10 +1501,10 @@ let check_window_place = () -> i64 => {
   failed
 }
 
-// A colour's alpha (Settings ▸ Colors, the Background swatch's opacity): `#rrggbbaa` read as how
+// A colour's alpha (Settings ▸ Colors, a background swatch's opacity): `#rrggbbaa` read as how
 // transparent it is in the top byte and written back so, an opaque one as `#rrggbb`; a theme's
-// alpha from it; only the background's kept from a file; and the sections made from a
-// translucent background opaque.
+// alpha from it; only the backgrounds' kept, from a file or a swatch; the sections made from
+// a translucent background opaque; and the box's blur kept, within its range.
 let check_color_alpha = () -> i64 => {
   var failed = 0
   let half = color_of("#1b1d2280") ?? 0
@@ -1520,12 +1521,34 @@ let check_color_alpha = () -> i64 => {
     abgr(0x1b1d22).to_hex(8),
     "ff221d1b"
   )
-  // Only the background may be translucent: the file's other #rrggbbaa read opaque.
-  let read = settings_from_json("{\"theme\": \"Custom\", \"colors\": {\"background\": \"#1b1d2280\", \"input\": \"#3a4a6080\"}}")
+  // Only the backgrounds — the window's and the sections' — may be translucent: the file's
+  // other #rrggbbaa read opaque.
+  let read = settings_from_json("{\"theme\": \"Custom\", \"colors\": {\"background\": \"#1b1d2280\", \"input\": \"#3a4a6080\", \"output\": \"#2a2e36c0\", \"foreground\": \"#e6e6e680\"}}")
   failed += check(
-    "color alpha: the background's kept, another's dropped",
-    "${hex_of(read.colors.bg)} ${hex_of(read.colors.input)}",
-    "#1b1d2280 #3a4a60"
+    "color alpha: the backgrounds' kept, the text's dropped",
+    "${hex_of(read.colors.bg)} ${hex_of(read.colors.input)} ${hex_of(read.colors.output)} ${hex_of(read.colors.fg)}",
+    "#1b1d2280 #3a4a6080 #2a2e36c0 #e6e6e6"
+  )
+  let picked = with_color(with_color(read.colors, "output", half), "tab", half)
+  failed += check(
+    "color alpha: a section's swatch keeps it, a tab's does not",
+    "${hex_of(picked.output)} ${hex_of(picked.tab)}",
+    "#1b1d2280 #1b1d22"
+  )
+  failed += check(
+    "box blur: written and read",
+    "${settings_from_json(settings_to_json(Settings { defaults() | box_blur: 12.0 })).box_blur}",
+    "12"
+  )
+  failed += check(
+    "box blur: 16 where a file has none",
+    "${settings_from_json("{}").box_blur}",
+    "16"
+  )
+  failed += check(
+    "box blur: kept within its range",
+    "${settings_from_json("{\"box_blur\": 500}").box_blur}",
+    "64"
   )
   let (input, output) = sections_of(half)
   failed += check(
