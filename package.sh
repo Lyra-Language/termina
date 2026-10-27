@@ -106,7 +106,13 @@ case "$(uname -s)" in
         [ -n "$id" ] && xcrun notarytool log "$id" "${notary[@]}" >&2
         die "notarization did not accept the app"
       fi
-      xcrun stapler staple "$STAGE/Termina.app"
+      # Stapling fetches the ticket from Apple's CDN, which a runner's network has dropped
+      # mid-request (stapler's error 68): tried again a few times before giving up.
+      for attempt in 1 2 3 4; do
+        if xcrun stapler staple "$STAGE/Termina.app"; then break; fi
+        [ "$attempt" = 4 ] && die "the ticket could not be stapled"
+        sleep $((attempt * 15))
+      done
       spctl --assess --type execute --verbose=2 "$STAGE/Termina.app"
       rm -f "$OUT/$NAME.zip"
       (cd "$STAGE" && ditto -c -k --keepParent Termina.app "$OUT/$NAME.zip")

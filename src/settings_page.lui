@@ -106,22 +106,26 @@
     if k < first || k - first >= families.len() { KeepSetting } else { UseFamily(families[k - first].name) }
   }
 
-  /// The Theme list: Termina's themes, then the user's after a rule — and a theme that is
-  /// neither (`Custom`) first, set off by a rule of its own.
+  /// The Theme list: Termina's themes, then the user's after a rule — the one being edited
+  /// marked `*` until Save ([edited_name]) — and a theme that is neither (`Custom`) first, set
+  /// off by a rule of its own.
   let theme_options = pure (s: Settings) -> []string => [
     ...(if theme_listed(s) { [] } else { [s.theme_name] }),
     ...THEME_NAMES,
-    ...[t in s.themes | t.name],
+    ...[t in s.themes | if t.name == edited_name(s) { "${t.name}*" } else { t.name }],
   ]
 
-  /// Whether the theme in use is one of the list's.
-  let theme_listed = pure (s: Settings) -> bool =>
-    THEME_NAMES.contains(s.theme_name) || is_saved(s)
+  /// The saved theme whose colors are being edited, which Save overwrites; `""` for none.
+  let edited_name = pure (s: Settings) -> string => if can_save(s) { s.edited_from } else { "" }
 
-  /// Where the list shows the theme in use.
+  /// Whether the theme in use is one of the list's — a saved one being edited among them.
+  let theme_listed = pure (s: Settings) -> bool =>
+    THEME_NAMES.contains(s.theme_name) || is_saved(s) || edited_name(s) != ""
+
+  /// Where the list shows the theme in use: a saved one being edited at its own place, marked.
   let theme_shown = pure (s: Settings) -> i64 => {
-    let options = theme_options(s)
-    for k, name in options { if name == s.theme_name { return k } }
+    let shown = if edited_name(s) != "" { "${edited_name(s)}*" } else { s.theme_name }
+    for k, name in theme_options(s) { if name == shown { return k } }
     -1
   }
 
@@ -220,6 +224,7 @@
     .swatch-row { gap: 8 }
     .ansi { gap: 6 }
     Text.note { color: $colors.muted; font-size: 12 }
+    .fill-rule { background: $colors.border }
   </style>
 
   <!-- The controls on a panel of the Output section's colour, the window's background a band
@@ -310,10 +315,13 @@
         </Column>
 
         <!-- Each background's fill beyond its color: a gradient or an image, at its color's
-             opacity. -->
-        <Column class="section">
+             opacity — a rule between one and the next, stretched across the section. -->
+        <Column class="section" cross="stretch">
           <Text class="heading">Backgrounds</Text>
-          <for each={b in [("Window", "bg"), ("Input", "input"), ("Output", "output")]}>
+          <for each={b in [("Window", "bg", false), ("Input", "input", true), ("Output", "output", true)]}>
+            <if test={b.2}>
+              <SizedBox class="fill-rule" height="1" key="rule {b.1}"/>
+            </if>
             <fill_editor s={s} label={b.0} field={b.1} open={open}/>
           </for>
           <Text class="note">A gradient or an image fills a background over its color, at its color's opacity, and is blurred behind as the color would be. Images may be PNG, JPEG or SVG.</Text>

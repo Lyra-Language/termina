@@ -339,8 +339,10 @@ each tab a painter taking input raw, under `ui`'s tab bar, menus and Settings ta
   that name replaced), listed after Termina's, deleted to `Custom` with the colors kept.
   A theme named in the file is looked for among them before Termina's. **A saved theme
   edited by hand is remembered** (`Settings.edited_from`, `edit_colors`, kept in the file
-  while the theme is `Custom` and it is still saved): Save (`can_save`) puts the colors back
-  over it and makes it current again.
+  while the theme is `Custom` and it is still saved): the Theme list shows it at its own place,
+  marked `*` (`edited_name`), not as `Custom`, and Save (`can_save`) puts the colors back over
+  it and makes it current again, unmarked. Choosing the marked entry keeps the edits: a select
+  raises nothing for the option already chosen.
 - **The Family list shows each family in itself** (`option_families`): each one's regular face
   loaded under `preview_name` — not the name the grid loads the whole family under, which would
   then count as loaded with no bold or italic — the first time the Settings tab opens
