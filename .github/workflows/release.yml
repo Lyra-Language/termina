@@ -1,6 +1,6 @@
 name: Release
 
-# A release is a tag: pushing `v0.3.0` builds Termina on each platform, runs its checks, and
+# A release is a tag: pushing `v0.4.0` builds Termina on each platform, runs its checks, and
 # publishes a GitHub release of that name with an archive per platform (package.sh). Run by
 # hand (Actions ▸ Release ▸ Run workflow), it builds and keeps the archives as the run's
 # artifacts, publishing nothing — a dry run before tagging.
