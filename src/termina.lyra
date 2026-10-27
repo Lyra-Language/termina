@@ -33,7 +33,7 @@ import ui.app.{
 }
 import ui.script.{ ScriptPlatform, timed_platform, parse_steps, Step, Waited }
 import ui.draw.{ Point, Size, Color }
-import ui.backend.{ Platform, ToMaximized }
+import ui.backend.{ Platform, ToMaximized, MAIN_WINDOW }
 import ui.text.{ Fonts, FontSpec, FontMetrics, fonts_new, glyph_atlas }
 import ui.style.{ OverflowVisible }
 import ui.layout.{ paint }
@@ -167,12 +167,22 @@ let windowed = (
   }
   var platform_ = window.platform
   var renderer = window.renderer
-  if see_through { let _ = platform_.set_backdrop_blur(settings.background_blur) }
+  if see_through { let _ = platform_.set_backdrop_blur(
+    MAIN_WINDOW,
+    settings.background_blur
+  ) }
   if let Some(p) = place {
-    if p.placed { platform_.set_window_position(Point { x: p.x, y: p.y }) }
-    if p.maximized { platform_.change_window(ToMaximized) }
+    if p.placed { platform_.set_window_position(MAIN_WINDOW, Point { x: p.x, y: p.y }) }
+    if p.maximized { platform_.change_window(MAIN_WINDOW, ToMaximized) }
   }
-  let Some(start) = started(args, settings, theme, fonts, platform_.scale(), mac) else {
+  let Some(start) = started(
+    args,
+    settings,
+    theme,
+    fonts,
+    platform_.scale(MAIN_WINDOW),
+    mac
+  ) else {
     gpu.close(platform_, renderer)
     fonts.close()
     return (1, empty_term(theme, settings))
@@ -196,9 +206,9 @@ let place_of<p> where p: Platform = (
   platform: p,
   before: Maybe<WindowPlace>
 ) -> WindowPlace => {
-  let state = platform.window_state()
-  let size = platform.window_size()
-  let at = platform.window_position()
+  let state = platform.window_state(MAIN_WINDOW)
+  let size = platform.window_size(MAIN_WINDOW)
+  let at = platform.window_position(MAIN_WINDOW)
   if state.maximized || state.minimized {
     let kept = before ?? WindowPlace { width: WIDTH, height: HEIGHT }
     return WindowPlace { kept | maximized: state.maximized }
@@ -356,7 +366,7 @@ let save = (
   var atlas = glyph_atlas()
   var f = played.fonts
   var r = played.renderer
-  let ops = paint(played.host.shown[0], Point {}, 1.0, f, atlas, r)
+  let ops = paint(played.host.main_laid(), Point {}, 1.0, f, atlas, r)
   let Some(frame) = capture(
     r,
     color(played.host.state.theme.bg),
