@@ -47,6 +47,11 @@ pub const STRIKE: u32 = 512
 /// reached it — a soft wrap, which a copy joins rather than breaks
 /// (`selection.lyra`). A cell written or erased loses it.
 pub const WRAPPED: u32 = 1024
+/// Not a style, and not written by the program: the screen filled this cell's column blank
+/// when a wide rune left one column and wrapped on to the next line (`screen.lyra`). A copy
+/// joining the wrapped line drops it alone — a line's own trailing blanks are kept. A cell
+/// written or erased loses it.
+pub const FILLER: u32 = 2048
 
 /// The bits of `attrs` from here up are not attributes but the combining marks after the
 /// cell's rune: an index into the screen's [Screen.combining], 0 for none ([marks_of]).

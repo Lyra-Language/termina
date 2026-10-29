@@ -412,13 +412,20 @@ pub let update = (t: Term, e: TermEvent) -> (Term, []Command<TermEvent>) => {
   (n, commands)
 }
 
+/// How many whole cells a painter of `size` holds — the shown tab's fit, and the first
+/// tab's start, measured before its program can read the size it was given.
+pub let cells_in = pure (size: Size, cell_x: f32, cell_y: f32) -> (i64, i64) => {
+  let cols = i64(((size.w - 2.0 * INSET) / cell_x).floor()).max(2)
+  let rows = i64(((size.h - 2.0 * PAD) / cell_y).floor()).max(1)
+  (cols, rows)
+}
+
 /// The shown tab fitted to the painter — as many whole cells as it holds — and its view kept to
 /// the page: at the bottom while it sticks there, never past either end.
 let settle = (t: mut Term) -> void => {
   if t.tabs.len() == 0 || t.size.w <= 0.0 { return }
   let i = t.active
-  let cols = i64(((t.size.w - 2.0 * INSET) / t.grid.cell_x).floor())
-  let rows = i64(((t.size.h - 2.0 * PAD) / t.grid.cell_y).floor())
+  let (cols, rows) = cells_in(t.size, t.grid.cell_x, t.grid.cell_y)
   t.tabs[i].fit(cols, rows)
   let f = layout_at(t, t.size)
   let most = (f.page - (t.size.h - 2.0 * PAD)).max(0.0)

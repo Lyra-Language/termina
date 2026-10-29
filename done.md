@@ -11,6 +11,7 @@ Finished work, moved from `todo.md` with its section; the rules it left behind a
 - **[DONE 10/19] Saved themes** — the colours under a name, in the Theme list after Termina's; replaced by saving again, deleted.
 - **[DONE 10/19] Section, tab and command-line colours in the theme** — each theme's own, made from its colours where it does not name them; all in the settings window.
 - **[DONE 10/19] Blocks as cards** — padding inside, a margin between; rows laid out by `Rows`, which everything that maps lines to heights asks.
+- **[DONE 10/28] A block left open ends with the program's status** — the terminal closes as the program ends, a moment before it can be reaped; `Session.exit` keeps the status once `exit_status()` answers, and the block the program left open (its shell's `D` never coming) ends there, with the used rows as its end.
 
 ## The command line (M3)
 
@@ -53,6 +54,7 @@ Finished work, moved from `todo.md` with its section; the rules it left behind a
 - **[DONE 10/19] Crisp text on Linux** — hinted through FreeType, built into `bindings.imgui` from a pinned download; macOS unchanged.
 - **[DONE 10/19] Combining marks** — kept with the cell before them, in the screen's table, drawn and copied after its rune.
 - **[DONE 10/19] Wide runes in the command line** — the editor's layout takes the grid's widths; a wide rune is drawn alone and wraps whole.
+- **[DONE 10/28] The filler before a wrapped wide rune is not copied** — the blank the screen leaves where a wide rune wrapped early is `FILLER` (style), and a copy joining the wrapped line drops it alone; the line's own trailing blanks are kept.
 
 ## Settings
 

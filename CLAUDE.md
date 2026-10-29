@@ -124,7 +124,7 @@ each tab a painter taking input raw, under `ui`'s tab bar, menus and Settings ta
 | `tools/check.sh` | the window's checks: scripted runs, each in a `HOME` of its own, their screens or settings compared — tabs, menus, the Settings tab, and the command line at zsh's prompt |
 | `assets/` | the icon: `termina.svg` the source; `Termina.icns` (the app's) and `termina.png` made from it (`assets/README.md`); `Termina.entitlements`, what the signed app's commands may ask for (Releases, above) |
 | `src/desktop/desktop.lyra` | Termina on a Linux desktop: the id its windows go by (`APP_ID`), and, run as an AppImage, the desktop entry and icon it installs for the launcher and the dock |
-| `src/session/session.lyra` | one tab: its PTY, screen, `Mode`, blocks and command line, read when it has written; where its frame's parts go (`frame_layout`: the box, the grid's lines, `Rows`, the page), the grid's selection, the bytes a key sends (`key_sequence`, `control_bytes`) — no framework |
+| `src/session/session.lyra` | one tab: its PTY (opened at the window's cells, measured before the program starts), screen, `Mode`, blocks and command line, read when it has written; where its frame's parts go (`frame_layout`: the box, the grid's lines, `Rows`, the page), the grid's selection, the bytes a key sends (`key_sequence`, `control_bytes`) — no framework |
 | `src/term/line.lyra` | the editor at the prompt (`CommandLine`): keys and typed text (`LineInput`) and the mouse into editor calls, history, Ctrl+R, the completion menu's layout; what it asks of its host as an `Outcome` (`Submit`, `Send`, `Complete`, `Clip`, `PasteWanted`) — no framework |
 | `src/term/tabs.lyra` | a tab's label and the tab commands the window carries out (`TabCommand`) |
 | `src/term/theme.lyra` | recorded colors → pixels (ABGR): the theme's own pair, ANSI 16, xterm's 256; inverse, dim, hidden |
@@ -259,7 +259,9 @@ each tab a painter taking input raw, under `ui`'s tab bar, menus and Settings ta
   history, and a session draws from the screen's first row while it is on (`base`). The main
   screen behind it is fitted on resize.
 - **A wide rune is a cell and a `SPACER`**; writing over either half blanks the other, and a
-  wide rune with one column left wraps first. Drawing puts a wide glyph on its two cells
+  wide rune with one column left wraps first, the column it left blank marked `FILLER` — the
+  screen's own writing, which a copy joining the wrapped line drops alone (a line's own
+  trailing blanks are kept). Drawing puts a wide glyph on its two cells
   alone, centred. The command line lays runes out the same way (`editor.layout`, `cells_of`):
   a wide rune two columns, wrapped whole, a combining mark none.
 - **A zero-width rune joins the cell before it** (`Screen.combine`): a cell's combining marks
@@ -280,7 +282,9 @@ each tab a painter taking input raw, under `ui`'s tab bar, menus and Settings ta
   (`add_fallback`). Color emoji are not drawn yet (`ui.text` has no colour glyphs).
 - **A command is a block of the transcript** (`Session.blocks`, `Block`): `C` opens one
   from the last prompt's `A` line (`OutputStart(line)`), `D` closes it
-  (`CommandEnd(status, line)`, its line the first the output did not write on). Drawn as a
+  (`CommandEnd(status, line)`, its line the first the output did not write on) — or, where the
+  program ends without its `D`, the program's status does (`Session.exit`, kept once
+  `exit_status()` answers, its end the screen's used rows). Drawn as a
   card: the input on the theme's input color, the output on its output color, rounded,
   with padding around each and a margin between cards; the duration and a failure's `exit N` over its
   first row's right end where the text leaves room, a red bar down a failed one's left.

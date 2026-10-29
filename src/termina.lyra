@@ -68,6 +68,7 @@ import face.{
   menus_of,
   save_now,
   grid_of,
+  cells_in,
   color
 }
 
@@ -181,7 +182,8 @@ let windowed = (
     theme,
     fonts,
     platform_.scale(MAIN_WINDOW),
-    mac
+    mac,
+    platform_.window_size(MAIN_WINDOW)
   ) else {
     gpu.close(platform_, renderer)
     fonts.close()
@@ -258,7 +260,10 @@ let scripted = (
     },
   }
   var renderer = window.renderer
-  let Some(start) = started(args, settings, theme, fonts, 1.0, mac) else {
+  let Some(start) = started(args, settings, theme, fonts, 1.0, mac, Size {
+    w: WIDTH,
+    h: HEIGHT
+  }) else {
     sdl3.close(window.platform, renderer)
     fonts.close()
     return (1, empty_term(theme, settings))
@@ -312,21 +317,26 @@ let sliced = pure (steps: []Step) -> []Step => {
 
 /// The first tab, running `args` — a program instead of the shell, without its integration,
 /// where Termina was started — or the login shell, in a window drawn as on a Mac or not;
-/// `None`, said why, if it could not start.
+/// `None`, said why, if it could not start. The tab opens at `window`'s cells, measured
+/// before the program starts, so one reading its size at once sees what it will have.
 let started = (
   args: []string,
   settings: Settings,
   theme: Theme,
   fonts: mut Fonts,
   scale: f32,
-  mac: bool
+  mac: bool,
+  window: Size
 ) -> Maybe<Term> => {
   let spec = FontSpec { family: "mono", size: settings.font_size }
   let grid = grid_of(spec, fonts.metrics(spec, scale), settings.line_spacing)
+  let (cols, rows) = cells_in(window, grid.cell_x, grid.cell_y)
   let Some(s) = open_session(
     args,
     if args.len() > 0 { lookup("PWD") } else { None },
-    0
+    0,
+    cols,
+    rows
   ) else {
     println("termina: the shell could not start")
     return None

@@ -45,21 +45,34 @@ sha256() {
     cut -d' ' -f1
 }
 
-# fetch <url> <dest> <sha256>: download to <dest> unless it is already there, checked.
+# fetch <dest> <sha256> <url>…: download to <dest> unless it is already there, from the first
+# of the urls that answers, checked — any mirror's copy must be the pinned one.
 fetch() {
-  if [ -f "$2" ] && [ "$(sha256 "$2")" = "$3" ]; then return; fi
-  curl -fsSL --retry 2 -o "$2.part" "$1" || { rm -f "$2.part"; die "download of $1 failed"; }
-  got="$(sha256 "$2.part")"
-  [ "$got" = "$3" ] || { rm -f "$2.part"; die "checksum mismatch for $1 (got $got)"; }
-  mv "$2.part" "$2"
+  local dest="$1" want="$2"
+  shift 2
+  if [ -f "$dest" ] && [ "$(sha256 "$dest")" = "$want" ]; then return; fi
+  for url in "$@"; do
+    if curl -fsSL --retry 2 --connect-timeout 30 -o "$dest.part" "$url"; then
+      got="$(sha256 "$dest.part")"
+      [ "$got" = "$want" ] || { rm -f "$dest.part"; die "checksum mismatch for $url (got $got)"; }
+      mv "$dest.part" "$dest"
+      return
+    fi
+    rm -f "$dest.part"
+    printf 'tools/textlibs: %s did not answer; trying the next\n' "$url" >&2
+  done
+  die "no download of $(basename "$dest") answered"
 }
 
 mkdir -p "$WORK" "$PREFIX/lib/pkgconfig" "$PREFIX/include/harfbuzz"
 
 # ── FreeType ─────────────────────────────────────────────────────────────────
 
-fetch "https://download.savannah.gnu.org/releases/freetype/freetype-$FREETYPE_VERSION.tar.gz" \
-  "$WORK/freetype-$FREETYPE_VERSION.tar.gz" "$FREETYPE_SHA256"
+# GNU's server first, SourceForge's copy where it does not answer (it once did not, for a
+# whole release run).
+fetch "$WORK/freetype-$FREETYPE_VERSION.tar.gz" "$FREETYPE_SHA256" \
+  "https://download.savannah.gnu.org/releases/freetype/freetype-$FREETYPE_VERSION.tar.gz" \
+  "https://downloads.sourceforge.net/project/freetype/freetype2/$FREETYPE_VERSION/freetype-$FREETYPE_VERSION.tar.gz"
 tar -xzf "$WORK/freetype-$FREETYPE_VERSION.tar.gz" -C "$WORK"
 cmake -S "$WORK/freetype-$FREETYPE_VERSION" -B "$WORK/freetype-build" -G Ninja \
   -DCMAKE_BUILD_TYPE=Release \
@@ -77,8 +90,8 @@ cmake --install "$WORK/freetype-build"
 
 # ── HarfBuzz ─────────────────────────────────────────────────────────────────
 
-fetch "https://github.com/harfbuzz/harfbuzz/releases/download/$HARFBUZZ_VERSION/harfbuzz-$HARFBUZZ_VERSION.tar.xz" \
-  "$WORK/harfbuzz-$HARFBUZZ_VERSION.tar.xz" "$HARFBUZZ_SHA256"
+fetch "$WORK/harfbuzz-$HARFBUZZ_VERSION.tar.xz" "$HARFBUZZ_SHA256" \
+  "https://github.com/harfbuzz/harfbuzz/releases/download/$HARFBUZZ_VERSION/harfbuzz-$HARFBUZZ_VERSION.tar.xz"
 tar -xJf "$WORK/harfbuzz-$HARFBUZZ_VERSION.tar.xz" -C "$WORK"
 readonly HB="$WORK/harfbuzz-$HARFBUZZ_VERSION/src"
 # FreeType's functions HarfBuzz's hb-ft asks for by feature macro: all in this FreeType. And

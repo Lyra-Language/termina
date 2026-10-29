@@ -68,6 +68,9 @@ pub struct Session {
   /// Still running; `false` once its program has ended or the user closed the tab, and it
   /// is to close.
   alive: bool,
+  /// The program's exit status, once it can be reaped: the terminal closes as it ends, a
+  /// moment before it can (`exit_status()`).
+  exit: Maybe<i64> = None,
   /// A number no other tab of this window has, for the tab bar's identity.
   id: i64,
   /// A selection on the grid, from `sel_a` to `sel_b` (`vt.selection`); none while the two
@@ -112,11 +115,15 @@ pub struct Block {
 }
 
 /// Start a tab: `program` (the login shell with Termina's integration when empty) in `dir`
-/// (the home directory when `None`). `None` when it cannot be started.
+/// (the home directory when `None`), `cols` × `rows` cells — the window's, measured before
+/// the program starts, so one reading its size at once sees what it will have, not the
+/// defaults. `None` when it cannot be started.
 pub let open_session = (
   program: []string,
   dir: Maybe<string>,
-  id: i64
+  id: i64,
+  cols: i64 = 80,
+  rows: i64 = 24
 ) -> Maybe<Session> => {
   let shell = lookup("SHELL") ?? "/bin/sh"
   let own = program.len() > 0
@@ -142,11 +149,11 @@ pub let open_session = (
     Some(d) => Some(d),
     None => lookup("HOME"),
   }
-  let Some(pty) = spawn(args, 80, 24, start_in, env) else { return None }
+  let Some(pty) = spawn(args, cols, rows, start_in, env) else { return None }
   Some(Session {
     pty: pty,
     parse: parser(),
-    shown: screen(80, 24),
+    shown: screen(cols, rows),
     mode: Raw,
     line: command_line(if own { [] } else { load_history(shell) }),
     integrated: integrated,
@@ -294,7 +301,36 @@ impl Session {
     let (alive, got) = drain(self.pty, self.parse, self.shown)
     // Reading only ever ends a tab: one closed by the user stays closed though its program
     // has not ended yet.
-    if !alive { self.alive = false }
+    if !alive {
+      self.alive = false
+      // The terminal closes as the program ends, a moment before it can be reaped; once it
+      // can, the block it left open — the one its shell's `D` mark would have closed — ends
+      // with its status.
+      match self.exit {
+        None => match self.pty.exit_status() {
+          Some(status) => {
+            self.exit = Some(status)
+            match self.running_block {
+              Some(b) => {
+                self.blocks.push(Block {
+                  b | end: self.shown.used_rows().max(b.output),
+                  status: status,
+                  ended: wall_clock_nanos()
+                })
+                if self.blocks.len() > BLOCKS { self.blocks = self.blocks.slice(
+                  self.blocks.len() - BLOCKS,
+                  self.blocks.len()
+                ) }
+              },
+              None => {},
+            }
+            self.running_block = None
+          },
+          None => {},
+        },
+        Some(_) => {},
+      }
+    }
     self.got_output = got
     if got && !shown { self.unseen = true }
     if shown { self.unseen = false }

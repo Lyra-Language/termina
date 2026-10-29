@@ -312,7 +312,7 @@ impl Screen {
         if w == 2 && self.x == self.cols - 1 {
           if self.autowrap && self.cols > 1 {
             self.clear_wide_at(self.y, self.x)
-            self.lines[self.y][self.x] = blank_cell(self.pen.bg)
+            self.lines[self.y][self.x] = Cell { blank_cell(self.pen.bg) | attrs: FILLER }
             self.mark_wrapped()
             self.x = 0
             self.linefeed()
