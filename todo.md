@@ -5,7 +5,7 @@ milestones are in `CLAUDE.md` § Plan; finished items move to `done.md`.
 
 ## Blocks (M2)
 
-- **[OPEN] A block whole** — select, copy (command or output) and fold one, as Warp does.
+- **[OPEN] A block whole** — select and fold one, as Warp does.
 
 ## The command line (M3)
 

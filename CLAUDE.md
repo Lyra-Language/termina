@@ -124,7 +124,7 @@ each tab a painter taking input raw, under `ui`'s tab bar, menus and Settings ta
 | `tools/check.sh` | the window's checks: scripted runs, each in a `HOME` of its own, their screens or settings compared — tabs, menus, the Settings tab, and the command line at zsh's prompt |
 | `assets/` | the icon: `termina.svg` the source; `Termina.icns` (the app's) and `termina.png` made from it (`assets/README.md`); `Termina.entitlements`, what the signed app's commands may ask for (Releases, above) |
 | `src/desktop/desktop.lyra` | Termina on a Linux desktop: the id its windows go by (`APP_ID`), and, run as an AppImage, the desktop entry and icon it installs for the launcher and the dock |
-| `src/session/session.lyra` | one tab: its PTY (opened at the window's cells, measured before the program starts), screen, `Mode`, blocks and command line, read when it has written; where its frame's parts go (`frame_layout`: the box, the grid's lines, `Rows`, the page), the grid's selection, the bytes a key sends (`key_sequence`, `control_bytes`) — no framework |
+| `src/session/session.lyra` | one tab: its PTY (opened at the window's cells, measured before the program starts), screen, `Mode`, blocks and command line, read when it has written; where its frame's parts go (`frame_layout`: the box, the grid's lines, `Rows`, the page), the grid's selection, a block's copy (`block_copy_at`, a right click's target), the bytes a key sends (`key_sequence`, `control_bytes`) — no framework |
 | `src/term/line.lyra` | the editor at the prompt (`CommandLine`): keys and typed text (`LineInput`) and the mouse into editor calls, history, Ctrl+R, the completion menu's layout; what it asks of its host as an `Outcome` (`Submit`, `Send`, `Complete`, `Clip`, `PasteWanted`) — no framework |
 | `src/term/tabs.lyra` | a tab's label and the tab commands the window carries out (`TabCommand`) |
 | `src/term/theme.lyra` | recorded colors → pixels (ABGR): the theme's own pair, ANSI 16, xterm's 256; inverse, dim, hidden |
@@ -135,7 +135,7 @@ each tab a painter taking input raw, under `ui`'s tab bar, menus and Settings ta
 | `src/face/window.lyra` | the chrome on `ui`: the tab bar, the header bar off a Mac, the menus as data (`menus_of` for the Mac's bar, `header_entries` for ☰), all in `ui`'s theme made from Termina's |
 | `src/face/fills.lyra` | the backgrounds' fills drawn (`fill_ops`: a color, `ui`'s gradient, or `ui`'s `picture_fill`, at the color's opacity), and their images decoded once a file (`fill_images`, `bindings.sdl3_image`) |
 | `src/face/paint.lyra` | a tab painted (`paint_tab`): the grid as `PaintCells`, the cards, the box, the command line and its menu, the scrollbar — from `session.frame_layout` |
-| `src/face/input.lyra` | keys, typed text and the pointer as the painter hears them: to the command line at a prompt, else encoded for the program; the mouse selecting, editing or reported |
+| `src/face/input.lyra` | keys, typed text and the pointer as the painter hears them: to the command line at a prompt, else encoded for the program; the mouse selecting, copying a block on a right click, editing or reported |
 | `src/shell/shell.lyra` | shell integration (zsh's `.zshenv` through `ZDOTDIR`, bash's rc file through `--rcfile`): the marks, Tab's completion widget and its request file, the history files, what Return sends |
 | `src/editor/editor.lyra` | the command line's editor — text, caret, selection, motions, words, undo, layout; **pure** |
 | `src/editor/syntax.lyra` | the command line's syntax for coloring: each rune's kind (command, option, quoted, variable, operator, comment); **pure** |
@@ -284,7 +284,11 @@ each tab a painter taking input raw, under `ui`'s tab bar, menus and Settings ta
   from the last prompt's `A` line (`OutputStart(line)`), `D` closes it
   (`CommandEnd(status, line)`, its line the first the output did not write on) — or, where the
   program ends without its `D`, the program's status does (`Session.exit`, kept once
-  `exit_status()` answers, its end the screen's used rows). Drawn as a
+  `exit_status()` answers, its end the screen's used rows). The block also keeps where the
+  command's text began (`cmd_line`, `cmd_col`: where the input began, past the prompt — from the
+  command line's send, the shell's `B` mark, or the prompt's line whole), so a right click on a
+  block copies it: its command on the input's lines, its output on the output's
+  (`Session.block_copy_at`, read the way a selection over the lines would be). Drawn as a
   card: the input on the theme's input color, the output on its output color, rounded,
   with padding around each and a margin between cards; the duration and a failure's `exit N` over its
   first row's right end where the text leaves room, a red bar down a failed one's left.
@@ -461,7 +465,9 @@ each tab a painter taking input raw, under `ui`'s tab bar, menus and Settings ta
    133 (`A` prompt, `B` command, `C` output, `D;status` end) and OSC 7 (directory). Each
    command is a block, drawn as a card — its input and output in the theme's colors,
    padded, with room between cards — its duration and a failure's status at its right, a
-   red bar down a failed one. Next: selecting, copying and folding a block whole.
+   red bar down a failed one. Copying a block is done: a right click on it copies its command
+   (past the prompt) or its output, whichever part is clicked. Next: selecting and folding a
+   block whole.
 4. **M3 — the editor (begun 10/16, before M1 and the block cards)**: zsh's integration,
    then the command line as Termina's editor — multi-line, soft wrap, the mouse (click,
    drag, double-click a word, triple-click a line), word and line motions, undo, the

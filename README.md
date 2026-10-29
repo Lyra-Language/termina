@@ -12,7 +12,8 @@ word-by-word motions, undo, the clipboard, history, and Tab completion — the s
 24-bit) and attributes, wide characters, full-screen programs (vim, less, top), the mouse, and
 selection and copy. Termina ▸ Settings… (⌘,) chooses the font, its size, the colors — a
 see-through background, blurred behind on a Mac — and whether the window reopens where it
-was. It is drawn with Lyra's own GUI framework (`ui`). Blocks come next (`CLAUDE.md` § Plan).
+was. It is drawn with Lyra's own GUI framework (`ui`). Blocks draw as cards, and a right
+click on one copies its command (past the prompt) or its output (`CLAUDE.md` § Plan).
 
 ```bash
 ../lyra/build.sh     # the compiler, with std/, bindings/ and ui/ beside it (SDL3, SDL3_image,

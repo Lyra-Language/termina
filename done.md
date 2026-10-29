@@ -12,6 +12,7 @@ Finished work, moved from `todo.md` with its section; the rules it left behind a
 - **[DONE 10/19] Section, tab and command-line colours in the theme** — each theme's own, made from its colours where it does not name them; all in the settings window.
 - **[DONE 10/19] Blocks as cards** — padding inside, a margin between; rows laid out by `Rows`, which everything that maps lines to heights asks.
 - **[DONE 10/28] A block left open ends with the program's status** — the terminal closes as the program ends, a moment before it can be reaped; `Session.exit` keeps the status once `exit_status()` answers, and the block the program left open (its shell's `D` never coming) ends there, with the used rows as its end.
+- **[DONE 10/29] Copying a block whole** — a right click on a block copies it: its command (past the prompt) on the input's lines, its output on the output's, a running block's output so far. `Block` now keeps where the command's text began (`cmd_line`/`cmd_col`, from the command line's send or the shell's `B` mark); `Session.block_copy_at` reads each part the way a selection over its lines would; `pointer_heard` returns a `CopyText` command for it.
 
 ## The command line (M3)
 

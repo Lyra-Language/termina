@@ -103,10 +103,15 @@ pub struct Session {
 
 /// A command's place in the transcript, as the shell's marks drew it, in absolute lines:
 /// its input — the prompt and the command, from the prompt's first line to where the output
-/// begins — and its output, to where it ended (`end`, -1 while it runs); its exit status
-/// (-1 unknown) and when it started and ended, in nanoseconds.
+/// begins — and its output, to where it ended (`end`, -1 while it runs); the command's text
+/// from `cmd_line`'s column `cmd_col`, past the prompt; its exit status (-1 unknown) and
+/// when it started and ended, in nanoseconds.
 pub struct Block {
   prompt: i64,
+  /// Where the command's text begins: where its input began, past the prompt; the prompt's
+  /// line from its start when no input start was seen.
+  cmd_line: i64,
+  cmd_col: i64,
   output: i64,
   end: i64,
   status: i64,
@@ -270,6 +275,32 @@ impl Session {
   pub let selected_text = pure (self) -> string =>
     selection_text(self.shown, self.sel_a, self.sel_b)
 
+  /// What a right click on the grid's line `line` copies: the block there — its command
+  /// when the line is its input, its output when it is its output (a running block's, so
+  /// far). `None` off a block, on the alternate screen, and where it would copy nothing.
+  pub let block_copy_at = pure (self, line: i64) -> Maybe<string> => {
+    if self.shown.alt { return None }
+    var k = self.blocks.len() - 1
+    while k >= 0 {
+      let b = self.blocks[k]
+      if line >= b.prompt && line < b.output { return copyable(block_command_text(self, b)) }
+      if line >= b.output && line < b.end { return copyable(block_output_text(self, b, b.end)) }
+      k -= 1
+    }
+    match self.running_block {
+      Some(b) => {
+        if line >= b.prompt && line < b.output {
+          return copyable(block_command_text(self, b))
+        }
+        if line >= b.output {
+          return copyable(block_output_text(self, b, self.shown.used_rows()))
+        }
+        None
+      },
+      None => None,
+    }
+  }
+
   /// Select the whole screen and its scrollback.
   pub let select_everything = (self: mut) -> void => {
     let last = self.shown.scrollback_len() + self.shown.rows - 1
@@ -353,13 +384,24 @@ impl Session {
           self.prompt_from = (at, col)
           self.mode = Raw
         },
-        // A command runs: its block opens, from the prompt it was entered at.
+        // A command runs: its block opens, from the prompt it was entered at, its
+        // command's text from where the input began — where it was sent from, the shell's
+        // `B` mark, or the prompt's line whole when neither was seen.
         OutputStart(line) => {
+          let (cmd_line, cmd_col) = match self.sent_from {
+            Some((at, col)) => (at, col),
+            None => match self.mode {
+              AtPrompt(at, col) => (at, col),
+              Raw => (self.prompt_from.0, 0),
+            },
+          }
           self.mode = Raw
           self.sent_from = None
           if self.prompt_from.0 >= 0 {
             self.running_block = Some(Block {
               prompt: self.prompt_from.0,
+              cmd_line: cmd_line,
+              cmd_col: cmd_col,
               output: line.max(self.prompt_from.0),
               end: -1,
               status: -1,
@@ -815,6 +857,32 @@ pub let duration_text = pure (nanos: i64) -> string => {
   let secs = ms / 1000
   "${secs / 60}m ${if secs % 60 < 10 { "0" } else { "" }}${secs % 60}s"
 }
+
+/// A block's command as text: its input's lines from where the command's text began — past
+/// the prompt — to the line before its output, read the way a selection over them would be.
+pub let block_command_text = pure (s: Session, b: Block) -> string => {
+  let last = (b.output - 1).max(b.cmd_line)
+  selection_text(
+    s.shown,
+    Spot { line: b.cmd_line, col: b.cmd_col },
+    Spot { line: last, col: s.shown.cols }
+  ).trim_end()
+}
+
+/// A block's output as text: its lines from where the output began to `end - 1`, read the
+/// way a selection over them would be.
+pub let block_output_text = pure (s: Session, b: Block, end: i64) -> string => {
+  if end <= b.output { return "" }
+  selection_text(
+    s.shown,
+    Spot { line: b.output, col: 0 },
+    Spot { line: end - 1, col: s.shown.cols }
+  ).trim_end()
+}
+
+/// A block's text to copy, or nothing where there is none.
+let copyable = pure (text: string) -> Maybe<string> =>
+  if text == "" { None } else { Some(text) }
 
 /// The bar down a failed block's left edge, in points.
 pub const FAILED_BAR: f32 = 3.0

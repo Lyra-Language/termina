@@ -380,7 +380,7 @@ pub let update = (t: Term, e: TermEvent) -> (Term, []Command<TermEvent>) => {
     },
     KeyHeard(k) => { commands = key_heard(n, k) },
     TextHeard(x) => text_heard(n, x),
-    PointerHeard(p) => pointer_heard(n, p),
+    PointerHeard(p) => { commands = pointer_heard(n, p) },
     ClipboardRead(text) => {
       if n.tabs.len() > 0 {
         let _ = n.tabs[n.active].edit_action(Paste, text)

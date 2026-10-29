@@ -3,9 +3,9 @@ module face
 //! to the command line at a prompt (`term.CommandLine.input`) or encoded for the program
 //! otherwise — **the terminal's own chord is ⌘ on a Mac, Ctrl+Shift elsewhere** (copy, paste and the
 //! rest of the Edit menu's), Ctrl and a letter the control character, Alt the Meta prefix off a
-//! Mac. The pointer selects on the grid, edits in the box, and is reported to a program that
-//! asked for it (`?1000`…), Shift taking it back for selecting; the wheel scrolls the view, or
-//! is the program's arrows on the alternate screen.
+//! Mac. The pointer selects on the grid, copies a block on a right click, edits in the box,
+//! and is reported to a program that asked for it (`?1000`…), Shift taking it back for
+//! selecting; the wheel scrolls the view, or is the program's arrows on the alternate screen.
 
 import ui.app.{ Command, CopyText, PasteText }
 import bindings.pty
@@ -126,9 +126,10 @@ pub let text_heard = (t: mut Term, x: TextInput) -> void => {
 
 /// The pointer: told to a program that asked for it (without Shift); else the wheel scrolls
 /// the view (or is a full-screen program's arrows), a press in the box edits the command line,
-/// and one on the grid selects, a drag after either extending it.
-pub let pointer_heard = (t: mut Term, p: PointerInput) -> void => {
-  if t.tabs.len() == 0 { return }
+/// a right click on a block copies it — its command on the block's input, the output on the
+/// output — and a press on the grid selects, a drag after either extending it.
+pub let pointer_heard = (t: mut Term, p: PointerInput) -> []Command<TermEvent> => {
+  if t.tabs.len() == 0 { return [] }
   let i = t.active
   let f = layout_at(t, t.size)
   let g = t.grid
@@ -136,7 +137,7 @@ pub let pointer_heard = (t: mut Term, p: PointerInput) -> void => {
   let raw = f.input_line < 0
   if (raw && s.shown.mouse_mode != 0 && !p.mods.shift) || t.holding == 3 {
     report(t, f, p)
-    return
+    return []
   }
   match p.kind {
     PointerWheel(_, down) => {
@@ -146,11 +147,12 @@ pub let pointer_heard = (t: mut Term, p: PointerInput) -> void => {
           notches,
           s.shown.cursor_keys
         )) }
-        return
+        return []
       }
       let most = (f.page - (t.size.h - 2.0 * PAD)).max(0.0)
       let to = (t.views[i].scroll + down * WHEEL_ROWS * g.cell_y).clamp(0.0, most)
       t.views[i] = View { scroll: to, sticking: to >= most - 1.0 }
+      []
     },
     PointerPress(Primary, clicks) => {
       let in_box = (f.prompt.is_some() || f.running_box) && p.at.y >= f.box_top
@@ -162,6 +164,19 @@ pub let pointer_heard = (t: mut Term, p: PointerInput) -> void => {
         t.tabs[i].select_press(at_line, under, edge, clicks)
         t.holding = 1
       }
+      []
+    },
+    // A right click copies the block under it: its command on the input's lines, its output
+    // on the output's. Nothing in the box, or off a block.
+    PointerPress(Secondary, _) => {
+      let in_box = (f.prompt.is_some() || f.running_box) && p.at.y >= f.box_top
+      if !in_box && p.at.y < f.rows.y_of(f.grid_lines) {
+        let (at_line, _, _) = grid_spot(t.tabs[i], f, g, p.at)
+        if let Some(text) = t.tabs[i].block_copy_at(at_line) {
+          return [CopyText(text)]
+        }
+      }
+      []
     },
     PointerMove => {
       if t.holding == 2 { t.tabs[i].line.drag(place_of(f, g), p.at) }
@@ -169,13 +184,15 @@ pub let pointer_heard = (t: mut Term, p: PointerInput) -> void => {
         let (at_line, under, edge) = grid_spot(t.tabs[i], f, g, p.at)
         t.tabs[i].select_drag(at_line, under, edge)
       }
+      []
     },
     PointerRelease(Primary) => {
       if t.holding == 2 { t.tabs[i].line.release() }
       if t.holding == 1 { t.tabs[i].select_release() }
       t.holding = 0
+      []
     },
-    _ => {},
+    _ => [],
   }
 }
 

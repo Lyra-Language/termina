@@ -1340,6 +1340,11 @@ let check_sessions = () -> i64 => {
     [x in e.blocks | "${x.prompt}-${x.output}-${x.end} ${x.status}"].join(","),
     "0-1-2 2"
   )
+  // A right click on the block's input copies the command, past the prompt; on its output,
+  // the output; off the block, nothing.
+  failed += check("a block's command", "${e.block_copy_at(0) ?? "none"}", "ls")
+  failed += check("a block's output", "${e.block_copy_at(1) ?? "none"}", "out")
+  failed += check("off a block", "${e.block_copy_at(2) ?? "none"}", "none")
   // Its room, a row 20 points high: above its input the margin and padding (16), between
   // input and output the padding of each (12), below the output padding (6).
   let laid = block_rows_layout(e, 0.0, 0, 20.0, 3)
@@ -1352,11 +1357,60 @@ let check_sessions = () -> i64 => {
   // were — a frame's layout once added the running block to them, a block a frame.
   var busy = Session {
     e |
-    running_block: Some(Block { prompt: 2, output: 3, end: -1, status: -1, started: 0, ended: 0 }),
+    running_block: Some(Block {
+      prompt: 2,
+      cmd_line: 2,
+      cmd_col: 0,
+      output: 3,
+      end: -1,
+      status: -1,
+      started: 0,
+      ended: 0,
+    }),
   }
   for _ in 0..<3 { let _ = block_rows_layout(busy, 0.0, 0, 20.0, 4) }
   failed += check("layout leaves the blocks be", "${busy.blocks.len()}", "1")
   close_session(e)
+  // Two more of the marks' cases: a command of two lines and an output of two lines — each
+  // copied whole, the prompt's `$` out of the command's.
+  let long_marks = "printf '\\033]133;A\\007$ \\033]133;B\\007echo a b\\r\\nc d\\r\\n\\033]133;C\\007one\\r\\ntwo\\r\\n\\033]133;D;0\\007'"
+  let Some(longed) = open_session(["/bin/sh", "-c", "${long_marks}; sleep 2"], None, 8) else {
+    return check("open a tab", "failed", "opened")
+  }
+  var m = longed
+  for _ in 0..<2000000 { if m.blocks.len() == 0 { m.step(true) } }
+  failed += check(
+    "a block's command, wrapped",
+    "${m.block_copy_at(0) ?? "none"}",
+    "echo a b\nc d"
+  )
+  failed += check(
+    "a block's output, two lines",
+    "${m.block_copy_at(2) ?? "none"}",
+    "one\ntwo"
+  )
+  failed += check("its output's last line", "${m.block_copy_at(3) ?? "none"}", "one\ntwo")
+  close_session(m)
+  // A block still running: its command whole, its output so far.
+  let Some(working) = open_session(
+    [
+      "/bin/sh",
+      "-c",
+      "printf '\\033]133;A\\007$ \\033]133;B\\007long\\r\\n\\033]133;C\\007working\\r\\n'; sleep 2",
+    ],
+    None,
+    9
+  ) else {
+    return check("open a tab", "failed", "opened")
+  }
+  var r = working
+  for _ in 0..<4000000 {
+    if r.running_block.is_some() && r.shown.used_rows() >= 3 { break }
+    r.step(true)
+  }
+  failed += check("a running block's command", "${r.block_copy_at(0) ?? "none"}", "long")
+  failed += check("a running block's output", "${r.block_copy_at(1) ?? "none"}", "working")
+  close_session(r)
   let Some(cleared) = open_session(
     ["/bin/sh", "-c", "${marks}; sleep 0.3; printf '\\033[2J'; sleep 2"],
     None,
