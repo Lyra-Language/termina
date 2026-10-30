@@ -136,9 +136,26 @@ pub let pointer_heard = (t: mut Term, p: PointerInput) -> []Command<TermEvent> =
   let g = t.grid
   let s = t.tabs[i]
   let raw = f.input_line < 0
+  // Where the block under the pointer shows its copy button; "Copied" stays on the block it
+  // copied until the pointer is over another.
+  t.pointer = p.at
+  let pointed = hovered_block(s, f, g, p.at)
+  if t.copied_tab != s.id || pointed.map((b) => b.prompt) != Some(t.copied) { t.copied = -1 }
   if (raw && s.shown.mouse_mode != 0 && !p.mods.shift) || t.holding == 3 {
     report(t, f, p)
     return []
+  }
+  // A press on the copy button copies the block's output, and nothing else.
+  if let PointerPress(Primary, _) = p.kind {
+    if let Some(b) = pointed {
+      if copy_button(s, f, g, b).map((r) => r.contains(p.at)) == Some(true) {
+        if let Some(text) = s.output_copy(b) {
+          t.copied = b.prompt
+          t.copied_tab = s.id
+          return [CopyText(text)]
+        }
+      }
+    }
   }
   match p.kind {
     PointerWheel(_, down) => {

@@ -310,6 +310,15 @@ impl Session {
     }
   }
 
+  /// What block `b`'s copy button copies: its output (a running block's, so far); `None`
+  /// where it has none.
+  pub let output_copy = pure (self, b: Block) -> Maybe<string> =>
+    copyable(block_output_text(
+      self,
+      b,
+      if b.end >= 0 { b.end } else { self.running_end() }
+    ))
+
   /// The first absolute line past the running block's output so far.
   pub let running_end = pure (self) -> i64 =>
     self.shown.absolute(self.shown.scrollback_len() + self.shown.used_rows() - 1) + 1

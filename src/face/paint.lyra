@@ -111,7 +111,8 @@ pub let color = pure (abgr: u32) -> Color => Color {
 }
 
 /// Tab `s` as a painter's ops, laid out as `f` — what a frame shows of it — focused or not,
-/// with the grid `g` in theme `theme`, `area` the painter's.
+/// with the grid `g` in theme `theme`, `area` the painter's. The block under `pointer` shows
+/// its copy button, saying "Copied" when it is the block whose prompt is on line `copied`.
 pub let paint_tab = pure (
   s: Session,
   f: FrameLayout,
@@ -119,6 +120,8 @@ pub let paint_tab = pure (
   theme: Theme,
   fills: Fills,
   focused: bool,
+  pointer: Point,
+  copied: i64,
   area: PaintArea
 ) -> []PaintOp => {
   var ops: []PaintOp = []
@@ -207,6 +210,12 @@ pub let paint_tab = pure (
           color(theme.selection)
         )))
       }
+    }
+  }
+  // The block under the pointer: a button over its output that copies it.
+  if let Some(b) = hovered_block(s, f, g, pointer) {
+    if let Some(at) = copy_button(s, f, g, b) {
+      copy_icon(ops, theme, g, at, at.contains(pointer), b.prompt == copied)
     }
   }
   if boxed { ops.push(PaintDraw(PopClip)) }
@@ -409,6 +418,98 @@ let fold_line = (
     color(theme.palette[8])
   ))
 }
+
+/// The block under the painter's point `at`, on the grid's lines above the box; `None` off
+/// one, in the box, and on the alternate screen.
+pub let hovered_block = pure (
+  s: Session,
+  f: FrameLayout,
+  g: Grid,
+  at: Point
+) -> Maybe<Block> => {
+  let boxed = f.prompt.is_some() || f.running_box
+  if at.x < 0.0 || at.y < 0.0 || (boxed && at.y >= f.box_top) { return None }
+  if at.y >= f.rows.y_of(f.grid_lines) { return None }
+  let (at_line, _, _) = grid_spot(s, f, g, at)
+  s.block_at(at_line)
+}
+
+/// Where block `b`'s copy button is: at the right end of its first output line in view, in the
+/// card's margin and over the line's last columns — `None` where none of its output is in view.
+pub let copy_button = pure (
+  s: Session,
+  f: FrameLayout,
+  g: Grid,
+  b: Block
+) -> Maybe<Rect> => {
+  if s.shown.alt { return None }
+  let first = s.shown.absolute(0)
+  let end = (if b.end >= 0 { b.end } else { s.running_end() }) - first
+  var i = (b.output - first).max(f.top)
+  while i < end && f.rows.is_hidden(i) { i += 1 }
+  if i >= end || i >= f.bottom { return None }
+  let right = INSET + f32(s.shown.cols) * g.cell_x + BOX_MARGIN - COPY_INSET
+  let y = f.rows.y_of(i) + (g.cell_y - COPY_SIZE) / 2.0
+  let at = Rect { x: right - COPY_SIZE, y: y, w: COPY_SIZE, h: COPY_SIZE }
+  let boxed = f.prompt.is_some() || f.running_box
+  if boxed && at.y + at.h > f.box_top { return None }
+  Some(at)
+}
+
+/// The copy button's side, and how far it stands in from the card's right edge.
+const COPY_SIZE: f32 = 22.0
+const COPY_INSET: f32 = 4.0
+
+/// The copy button at `at`: two sheets, the one behind up and to the right, on the input's tint
+/// made opaque — it stands over the line's text — in the text's colour under the pointer
+/// (`over`), faint otherwise; `done`, the word "Copied" in its place, as wide as it takes.
+let copy_icon = (
+  ops: mut []PaintOp,
+  theme: Theme,
+  g: Grid,
+  at: Rect,
+  over: bool,
+  done: bool
+) -> void => {
+  let ink = color(if over || done { theme.fg } else { theme.palette[8] })
+  let back = color(theme.input | 0xFF000000)
+  let edge = color(theme.palette[8])
+  if done {
+    let label = "Copied"
+    let w = f32(label.to_runes().len()) * g.cell_x + 2.0 * COPY_LABEL_PAD
+    let pill = Rect { x: at.x + at.w - w, y: at.y, w: w, h: at.h }
+    ops.push(PaintDraw(Fill(pill, radius(5.0), back)))
+    ops.push(PaintDraw(Border(pill, radius(5.0), 1.0, edge)))
+    ops.push(PaintText(
+      Point { x: pill.x + COPY_LABEL_PAD, y: pill.y + (pill.h - g.cell_y) / 2.0 + g.baseline },
+      label,
+      g.font,
+      ink
+    ))
+    return
+  }
+  ops.push(PaintDraw(Fill(at, radius(5.0), back)))
+  ops.push(PaintDraw(Border(at, radius(5.0), 1.0, edge)))
+  let side = f32((at.w * 0.42).round())
+  let behind = Rect {
+    x: at.x + f32((at.w * 0.38).round()),
+    y: at.y + f32((at.h * 0.2).round()),
+    w: side,
+    h: side
+  }
+  let front = Rect {
+    x: at.x + f32((at.w * 0.2).round()),
+    y: at.y + f32((at.h * 0.38).round()),
+    w: side,
+    h: side
+  }
+  ops.push(PaintDraw(Border(behind, radius(2.0), 1.5, ink)))
+  ops.push(PaintDraw(Fill(front, radius(2.0), back)))
+  ops.push(PaintDraw(Border(front, radius(2.0), 1.5, ink)))
+}
+
+/// The room either side of "Copied" in its pill.
+const COPY_LABEL_PAD: f32 = 6.0
 
 /// Under a block's text, as a card: its input on the box's tint, rounded at the top, its output
 /// on a fainter one below, each with its padding; a red bar down the left of a failed one.

@@ -134,8 +134,8 @@ each tab a painter taking input raw, under `ui`'s tab bar, menus and Settings ta
 | `src/settings_page.lui` | the Settings tab as `ui`-target markup — font family or file, size, spacing, theme (saved ones too), every color, bold as bright, the window; `settings_page.lyra` is generated from it (edit the `.lui`) |
 | `src/face/window.lyra` | the chrome on `ui`: the tab bar, the header bar off a Mac, the menus as data (`menus_of` for the Mac's bar, `header_entries` for ☰), all in `ui`'s theme made from Termina's |
 | `src/face/fills.lyra` | the backgrounds' fills drawn (`fill_ops`: a color, `ui`'s gradient, or `ui`'s `picture_fill`, at the color's opacity), and their images decoded once a file (`fill_images`, `bindings.sdl3_image`) |
-| `src/face/paint.lyra` | a tab painted (`paint_tab`): the grid as `PaintCells`, the cards, the box, the command line and its menu, the scrollbar — from `session.frame_layout` |
-| `src/face/input.lyra` | keys, typed text and the pointer as the painter hears them: to the command line at a prompt, else encoded for the program; the mouse selecting, a block whole on the terminal's chord, folded on a card-gutter click, copied on a right click, editing or reported |
+| `src/face/paint.lyra` | a tab painted (`paint_tab`): the grid as `PaintCells`, the cards, the box, the command line and its menu, the scrollbar, the hovered block's copy button (`hovered_block`, `copy_button`) — from `session.frame_layout` |
+| `src/face/input.lyra` | keys, typed text and the pointer as the painter hears them: to the command line at a prompt, else encoded for the program; the mouse selecting, a block whole on the terminal's chord, folded on a card-gutter click, copied on a right click, its output copied by its copy button, editing or reported |
 | `src/shell/shell.lyra` | shell integration (zsh's `.zshenv` through `ZDOTDIR`, bash's rc file through `--rcfile`): the marks, Tab's completion widget and its request file, the history files, what Return sends |
 | `src/editor/editor.lyra` | the command line's editor — text, caret, selection, motions, words, undo, layout; **pure** |
 | `src/editor/syntax.lyra` | the command line's syntax for coloring: each rune's kind (command, option, quoted, variable, operator, comment); **pure** |
@@ -288,7 +288,11 @@ each tab a painter taking input raw, under `ui`'s tab bar, menus and Settings ta
   command's text began (`cmd_line`, `cmd_col`: where the input began, past the prompt — from the
   command line's send, the shell's `B` mark, or the prompt's line whole), so a right click on a
   block copies it: its command on the input's lines, its output on the output's
-  (`Session.block_copy_at`, read the way a selection over the lines would be). Drawn as a
+  (`Session.block_copy_at`, read the way a selection over the lines would be). The block under
+  the pointer also shows a copy button at the right end of its first output line in view, which
+  copies the output (`copy_button`, `Session.output_copy`) and says "Copied" until the pointer is
+  over another block — one geometry for drawing and clicking (`hovered_block`, from
+  `Term.pointer`, the pointer's last place over the terminal). Drawn as a
   card: the input on the theme's input color, the output on its output color, rounded,
   with padding around each and a margin between cards; the duration and a failure's `exit N` over its
   first row's right end where the text leaves room, a red bar down a failed one's left. A press

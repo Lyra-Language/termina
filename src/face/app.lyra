@@ -34,7 +34,7 @@ import ui.interact.{
   FieldPaste,
   FieldUndo
 }
-import ui.draw.{ Size, Rect, radius }
+import ui.draw.{ Size, Point, Rect, radius }
 import ui.backend.{ Modifiers, Character, PageUp, PageDown, WindowState }
 import ui.text.{ FontSpec, FontMetrics }
 import ui.layout.{
@@ -111,6 +111,12 @@ pub struct Term {
   /// The absolute grid line the pointer last hovered, off the box: the menus' block items'
   /// aim; -1 when it has not.
   last_grid_line: i64 = -1,
+  /// Where the pointer last was over the terminal (off it, to begin with): the block under it
+  /// shows its copy button. And the block whose output that button last copied — its prompt's
+  /// line, in the tab `copied_tab` names — which says so until the pointer is over another.
+  pointer: Point = Point { x: -1.0, y: -1.0 },
+  copied: i64 = -1,
+  copied_tab: i64 = -1,
   /// The last tab's screen as its program ended — what `termina --print` prints.
   closed_screen: []string = [],
   /// The user's settings, the file they are kept in (`""` for none: nothing is written) and
@@ -257,6 +263,8 @@ pub let view = pure (t: Term) -> Node<TermEvent> => {
           scale: area.scale,
         },
         t.focused,
+        t.pointer,
+        if t.copied_tab == t.tabs[t.active].id { t.copied } else { -1 },
         area
       ),
     Some(ViewSized)
