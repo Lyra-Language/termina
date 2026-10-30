@@ -63,6 +63,7 @@ import settings_page.{
   DeleteSavedTheme,
   ToggleBoldBright,
   ToggleRememberWindow,
+  ToggleRestoreTabs,
   SetBlur,
   SetTabRuleWidth,
   ResetSettings,
@@ -175,6 +176,7 @@ pub let settings_asked = (t: mut Term, e: SettingsEvent) -> []Command<TermEvent>
     ToggleBoldBright => { t.settings.bold_is_bright = !t.settings.bold_is_bright },
     // Kept as it closes: the place itself is taken then (termina.lyra's `place_of`).
     ToggleRememberWindow => { t.settings.remember_window = !t.settings.remember_window },
+    ToggleRestoreTabs => { t.settings.restore_tabs = !t.settings.restore_tabs },
     SetBlur(field, radius) => with_blur(t.settings, field, radius),
     // Whole points, as a cell is.
     SetTabRuleWidth(width) => {

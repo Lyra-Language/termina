@@ -69,6 +69,8 @@
     | ToggleBoldBright
     /// Whether the window opens where it was last closed.
     | ToggleRememberWindow
+    /// Whether the tabs from the last session open again, as they were.
+    | ToggleRestoreTabs
     /// What is behind a background — the window's (`bg`), the input's, the output's — blurred
     /// by, by its color's field, as its picker's slider is dragged.
     | SetBlur(string, f32)
@@ -330,6 +332,7 @@
         <Column class="section">
           <Text class="heading">Window</Text>
           <Checkbox checked={s.remember_window} on_toggle={ToggleRememberWindow}>Open the window where it was last closed, at its size</Checkbox>
+          <Checkbox checked={s.restore_tabs} on_toggle={ToggleRestoreTabs}>Restore the tabs from the last session</Checkbox>
           <Text class="note">The window shows what is behind it while the Background's opacity is below full, and the Input and Output sections may be translucent over it, each blurring what is behind it as its color's picker says (macOS).</Text>
         </Column>
 

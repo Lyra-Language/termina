@@ -40,23 +40,38 @@ import ui.layout.{ paint }
 import bindings.sdl3.{ platform, set_hint }
 import bindings.freetype.{ HintNone, HintLight }
 import std.env.{ lookup, program_args }
-import std.io.{ write_bytes, sleep_ms }
+import std.io.{ write_bytes, sleep_ms, read_file, write_file, create_dir_all }
+import std.path.{ parent }
 import std.png.{ write_png }
+import std.json.{
+  parse_json,
+  JsonObject,
+  JsonMember,
+  JsonString,
+  JsonNumber,
+  JsonBool,
+  JsonArray,
+}
 import settings.{
   WindowPlace,
+  SavedTab,
   load_settings,
   settings_path,
+  tabs_path,
   settings_to_json,
+  saved_to_json,
+  saved_from_json,
   font_families,
   family_for,
   fallback_fonts,
   Settings
 }
-import session.{ open_session, close_session }
+import session.{ open_session, close_session, Session }
 import term.{ Theme, theme_of }
 import desktop.{ APP_ID, install_desktop_entry }
 import face.{
   Term,
+  View,
   fill_images,
   TermEvent,
   term_of,
@@ -67,6 +82,7 @@ import face.{
   shortcuts,
   menus_of,
   save_now,
+  told_colors,
   grid_of,
   cells_in,
   color
@@ -176,15 +192,11 @@ let windowed = (
     if p.placed { platform_.set_window_position(MAIN_WINDOW, Point { x: p.x, y: p.y }) }
     if p.maximized { platform_.change_window(MAIN_WINDOW, ToMaximized) }
   }
-  let Some(start) = started(
-    args,
-    settings,
-    theme,
-    fonts,
-    platform_.scale(MAIN_WINDOW),
-    mac,
-    platform_.window_size(MAIN_WINDOW)
-  ) else {
+  // Restore tabs if the user has them on, has saved tabs, and did not pass a program:
+  // the default tab is replaced with the first saved tab, the rest are added.
+  let saved_tabs = load_saved_tabs()
+  let start = open_from_saved(saved_tabs, args, settings, theme, fonts, mac, saved_tabs.len(), platform_.scale(MAIN_WINDOW), platform_.window_size(MAIN_WINDOW))
+  let Some(start) = start else {
     gpu.close(platform_, renderer)
     fonts.close()
     return (1, empty_term(theme, settings))
@@ -195,15 +207,74 @@ let windowed = (
     last.settings.window
   )) }
   save_now(last)
+  save_tabs(last.tabs)
   gpu.close(platform_, renderer)
   for s in last.tabs { close_session(s) }
   fonts.close()
   (0, last)
 }
 
-/// Where the window is as it closes: its place and size — or, maximized or minimized, the place
-/// and size it had before (`before`'s, the size the system no longer says), and that it was
-/// maximized.
+/// Whether args, saved_tabs, and settings allow restore: args is empty, `restore_tabs` is
+/// on, and saved_tabs is non-empty. `true` when we should restore.
+let restore_tabs_enabled = (
+  args: []string,
+  saved_tabs: []SavedTab,
+  settings: Settings,
+) -> bool =>
+  args.len() == 0 && settings.restore_tabs && saved_tabs.len() > 0
+
+/// The first term, built from saved tabs if there are some to restore (no args, `restore_tabs`
+/// on), else the default tab via `started()`. `None`, said why, when the default tab fails
+/// to start, or no saved tab could be opened.
+let open_from_saved = (
+  saved_tabs: []SavedTab,
+  args: []string,
+  settings: Settings,
+  theme: Theme,
+  given: Fonts,
+  mac: bool,
+  count: i64,
+  scale: f32,
+  window: Size
+) -> Maybe<Term> => {
+  var result: Maybe<Term> = None
+  var g = given
+  if args.len() == 0 && count > 0 {
+    // Build the initial term from saved tabs.
+    let spec = FontSpec { family: "mono", size: settings.font_size }
+    let grid = grid_of(spec, g.metrics(spec, scale), settings.line_spacing)
+    let (cols, rows) = cells_in(window, grid.cell_x, grid.cell_y)
+    var tabs: []Session = []
+    for k, tab in saved_tabs {
+      let Some(s) = open_session(tab.command, tab.dir, k, cols, rows) else { continue }
+      var mut_s = s
+      told_colors(mut_s, theme)
+      tabs.push(mut_s)
+    }
+    if tabs.len() > 0 {
+      var term = term_of(
+        tabs,
+        theme,
+        grid,
+        settings.line_spacing,
+        lookup("HOME") ?? ""
+      )
+      term.mac = mac
+      term.settings = settings
+      term.settings_file = settings_path()
+      term.saved = settings_to_json(settings)
+      term.families = font_families()
+      fill_images(term.settings.colors, term.images, term.image_revision)
+      result = Some(term)
+    }
+  } else {
+    var mut_given = given
+    result = started(args, settings, theme, mut_given, scale, mac, window)
+  }
+  result
+}
+
+/// The window's place as it closes.
 let place_of<p> where p: Platform = (
   platform: p,
   before: Maybe<WindowPlace>
@@ -229,6 +300,48 @@ let place_of<p> where p: Platform = (
     height: size.h,
   }
 }
+
+/// The tabs open as a session to save: each tab's command and directory, for restore on next
+/// start. Nothing and `false` for the saved file is not written if there are no tabs.
+let save_tabs = (tabs: []Session) -> void => {
+  if tabs.len() == 0 { return }
+  var out: []SavedTab = []
+  for s in tabs {
+    out.push(SavedTab {
+      command: s.command,
+      dir: if s.shown.cwd != "" { Some(s.shown.cwd) } else { None },
+    })
+  }
+  // Kept as tabs.json alongside settings.json — not in settings itself, since this is
+  // session state, not configuration.
+  let path = tabs_path()
+  if let Some(dir) = parent(path) {
+    let _ = create_dir_all(dir)
+    let _ = write_file(path, tab_json(out))
+  }
+}
+
+/// The saved tabs as JSON: `{ "tabs": [...] }`.
+let tab_json = (tabs: []SavedTab) -> string => JsonObject([
+  JsonMember { key: "tabs", value: saved_to_json(tabs) },
+]).to_json_pretty()
+
+/// The saved tabs, in order, from the saved session file, or `[]` when there is no file
+/// (or it could not be parsed). Nothing is kept in a save we just wrote.
+let load_saved_tabs = () -> []SavedTab => {
+  match read_file(tabs_path()) {
+    Some(text) => {
+      let doc = match parse_json(text) {
+        Ok(d) => d,
+        Err(_) => return [],
+      }
+      saved_from_json(doc.field("tabs"))
+    },
+    None => [],
+  }
+}
+
+
 
 /// `steps` played headless through SDL's 2D renderer, the last frame written to `png`: its
 /// status, and the window as the script left it.

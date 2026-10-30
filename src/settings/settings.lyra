@@ -60,6 +60,9 @@ pub struct Settings {
   /// where that was (`None` before it was ever closed so).
   remember_window: bool = true,
   window: Maybe<WindowPlace> = None,
+  /// Whether the tabs open as they were when Termina last quit: a saved session restored on
+  /// start, with each tab its directory (and explicit program, where the tab had one).
+  restore_tabs: bool = true,
 }
 
 /// Where the window was: its top-left corner on the screens (in the system's coordinates; none
@@ -136,6 +139,59 @@ pub const LINE_SPACING_RANGE: (f32, f32) = (1.0, 2.0)
 pub const RULE_WIDTH_RANGE: (f32, f32) = (0.0, 6.0)
 /// The blurs, behind a see-through window and behind its sections, in points.
 pub const BLUR_RANGE: (f32, f32) = (0.0, 64.0)
+
+// ── Saved session ──────────────────────────────────────────────────────────
+
+/// A saved tab: its command (the tab's `Session.command`, `[]` for the login shell) and its
+/// directory, `None` when the shell had not yet reported.
+pub struct SavedTab {
+  command: []string,
+  dir: Maybe<string>,
+}
+
+/// The saved session as the file holds it: an array of tabs, in order, each with the
+/// program that opened it (or `[]` for the login shell) and the directory it was in.
+pub let saved_to_json = (tabs: []SavedTab) -> JsonValue => {
+  var arr: []JsonValue = []
+  for t in tabs {
+    var cmd_arr: []JsonValue = []
+    for c in t.command { cmd_arr.push(JsonString(c)) }
+    var members: []JsonMember = [JsonMember { key: "command", value: JsonArray(cmd_arr) }]
+    match t.dir {
+      Some(d) => { members.push(JsonMember { key: "dir", value: JsonString(d) }) },
+      None => {},
+    }
+    arr.push(JsonObject(members))
+  }
+  JsonArray(arr)
+}
+
+/// Saved tabs from the file: a lenient read — each element must have a command array (which
+/// may be empty), and a `dir` where present. Anything else is skipped.
+pub let saved_from_json = (v: Maybe<JsonValue>) -> []SavedTab => {
+  let Some(doc) = v else { return [] }
+  var out: []SavedTab = []
+  for item in doc.elements() {
+    var cmd: []string = []
+    match item.field("command") {
+      Some(JsonArray(arr)) => {
+        for tab in arr {
+          match tab.as_text() {
+            Some(text) => { cmd.push(text) },
+            None => {},
+          }
+        }
+      },
+      _ => {},
+    }
+    let dir = match item.field("dir") {
+      Some(JsonString(s)) if s != "" => Some(s),
+      _ => None,
+    }
+    out.push(SavedTab { command: cmd, dir: dir })
+  }
+  out
+}
 
 // ── Themes ───────────────────────────────────────────────────────────────────
 
@@ -412,6 +468,11 @@ let mix = pure (a: u32, b: u32, t: f32) -> u32 => {
 /// `~/.config/termina/settings.json`.
 pub let settings_path = () -> string => config_dir().join("termina").join("settings.json")
 
+/// Where the saved session is kept, so tabs can be restored on start: the tab bar's saved
+/// state, as an array of commands (each the tab's `Session.command`, `[]` for the login
+/// shell) and directories.
+pub let tabs_path = () -> string => config_dir().join("termina").join("tabs.json")
+
 /// The settings kept at `path`, or the defaults when there are none to read. With none at
 /// `path`, the settings the terminal kept before it was renamed (`~/.config/sulafat/`) are
 /// read instead — saved at `path` the next time anything changes.
@@ -471,6 +532,7 @@ pub let settings_to_json = pure (s: Settings) -> string => JsonObject([
   member("output_blur", JsonNumber(f64(s.output_blur))),
   member("tab_rule_width", JsonNumber(f64(s.tab_rule_width))),
   member("remember_window", JsonBool(s.remember_window)),
+  member("restore_tabs", JsonBool(s.restore_tabs)),
   ...(match s.window {
     Some(w) => [member("window", JsonObject([
       ...(if w.placed { [member("x", JsonNumber(f64(w.x))), member("y", JsonNumber(f64(w.y)))] } else { [] }),
@@ -532,6 +594,7 @@ pub let settings_from_json = pure (text: string) -> Settings => {
     output_blur: f32(number_field(doc, "output_blur") ?? f64(d.output_blur)).clamp(BLUR_RANGE.0, BLUR_RANGE.1),
     tab_rule_width: rule_width.clamp(RULE_WIDTH_RANGE.0, RULE_WIDTH_RANGE.1),
     remember_window: (doc.field("remember_window") ?? JsonBool(d.remember_window)).as_bool() ?? d.remember_window,
+    restore_tabs: (doc.field("restore_tabs") ?? JsonBool(d.restore_tabs)).as_bool() ?? d.restore_tabs,
     window: window_from_json(doc.field("window")),
   }
 }

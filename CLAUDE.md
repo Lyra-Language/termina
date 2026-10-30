@@ -19,7 +19,8 @@ build/termina CMD [ARG…]    # that program instead (as xterm -e), no integrati
                             #    script's colors, say, seen without typing
 open build/Termina.app      # the same, as a Mac app
                             # Settings… (⌘,; Ctrl+, off macOS): font, size, spacing, colors,
-                            #    the window — kept in ~/.config/termina/settings.json
+                            #    the window — kept in ~/.config/termina/settings.json,
+                            #    and open tabs on next start — kept in ~/.config/termina/tabs.json
 build/termina --header …    # drawn as off a Mac on a Mac too — the header bar — for checks
 build/termina --print CMD … # and, when it ends, its screen printed
 build/termina --script STEPS [--png FILE] [CMD …]   # played headless (with

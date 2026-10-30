@@ -584,7 +584,7 @@ pub let screen_text = pure (s: Session) -> []string => {
 }
 
 /// What a program asking (vim) is told the colors are: the theme's.
-let told_colors = (s: mut Session, theme: Theme) -> void => {
+pub let told_colors = (s: mut Session, theme: Theme) -> void => {
   s.shown.fg_report = report_of(theme.fg)
   s.shown.bg_report = report_of(theme.bg)
 }

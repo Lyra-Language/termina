@@ -67,6 +67,9 @@ pub struct Session {
   integrated: Maybe<Integration>,
   /// What the tab is called without a title from its program: the program, by name.
   program: string,
+  /// The full command (program and arguments) used to start this tab, `[]` for the login
+  /// shell: what `open_session` received as its `program`, remembered for restore.
+  command: []string,
   /// The command running since Return, or `""` at a prompt: the tab's name meanwhile.
   running: string,
   /// Whether output arrived this frame, and since the tab was last shown.
@@ -172,6 +175,7 @@ pub let open_session = (
     line: command_line(if own { [] } else { load_history(shell) }),
     integrated: integrated,
     program: base_name(args[0]),
+    command: program,
     running: "",
     got_output: false,
     unseen: false,
