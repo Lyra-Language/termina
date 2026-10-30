@@ -61,7 +61,7 @@ if [ "$(uname -s)" = Darwin ]; then
   <key>CFBundleExecutable</key><string>termina</string>
   <key>CFBundlePackageType</key><string>APPL</string>
   <key>CFBundleIconFile</key><string>Termina</string>
-  <key>CFBundleShortVersionString</key><string>0.4.0</string>
+  <key>CFBundleShortVersionString</key><string>0.4.1</string>
   <key>NSHighResolutionCapable</key><true/>
   <key>NSAppleEventsUsageDescription</key><string>A command run in Termina wants to control another app.</string>
   <key>NSMicrophoneUsageDescription</key><string>A command run in Termina wants to use the microphone.</string>

@@ -517,7 +517,7 @@ let check_reports = () -> i64 => {
   failed += check("DA1", replies("\e[c"), "\\e[?62;22c")
   failed += check("DA1 with a 0", replies("\e[0c"), "\\e[?62;22c")
   failed += check("DA2", replies("\e[>c"), "\\e[>1;1;0c")
-  failed += check("XTVERSION", replies("\e[>q"), "\\eP>|Termina 0.4.0\\e\\")
+  failed += check("XTVERSION", replies("\e[>q"), "\\eP>|Termina 0.4.1\\e\\")
   failed += check("DSR status", replies("\e[5n"), "\\e[0n")
   failed += check("cursor position", replies("ab\r\nc\e[6n"), "\\e[2;2R")
   failed += check("DECRQM set", replies("\e[?2004h\e[?2004$p"), "\\e[?2004;1$y")
