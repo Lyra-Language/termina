@@ -1066,7 +1066,7 @@ pub const PROMPT_ROWS: i64 = 4
 /// is set in from the grid's sides, the space inside it above and below its rows, between
 /// the prompt's row and the command's, and between it and a completion menu above it, and
 /// its corners' rounding. Its colors are the theme's: the input section's, and its rule.
-pub const BOX_MARGIN: f32 = 12.0
+pub const BOX_MARGIN: f32 = 22.0
 pub const BOX_INSET: f32 = 2.0
 pub const BOX_PADDING: f32 = 12.0
 pub const BOX_GAP: f32 = 4.0

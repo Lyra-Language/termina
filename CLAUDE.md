@@ -289,7 +289,8 @@ each tab a painter taking input raw, under `ui`'s tab bar, menus and Settings ta
   command line's send, the shell's `B` mark, or the prompt's line whole), so a right click on a
   block copies it: its command on the input's lines, its output on the output's
   (`Session.block_copy_at`, read the way a selection over the lines would be). The block under
-  the pointer also shows a copy button at the right end of its first output line in view, which
+  the pointer also shows a copy button in the card's right margin on its first output line in
+  view, placed and sized as the fold chevron is in the left (`margin_mark`), which
   copies the output (`copy_button`, `Session.output_copy`) and says "Copied" until the pointer is
   over another block — one geometry for drawing and clicking (`hovered_block`, from
   `Term.pointer`, the pointer's last place over the terminal). Drawn as a
@@ -299,7 +300,13 @@ each tab a painter taking input raw, under `ui`'s tab bar, menus and Settings ta
   under the terminal's chord on a block's line (or Block ▸ Select Block) selects the block whole
   (`Session.select_block_at`); a finished block whose output is more than a line folds — a click in
   the card's left gutter (or Block ▸ Fold/Unfold) hides the output's lines past its first, which
-  stand in for them as a chevron and a line count on that line's own row (`Block.folded`).
+  stand in for them as a line count on that line's own row (`Block.folded`). **The gutter shows
+  the toggle**: ▾ on the first output line of the block under the pointer while it is open
+  (`fold_toggle`), ▸ there always while it is folded (`fold_line`), drawn half again the text's
+  size (a speck otherwise) and brightened with the pointer on it. **Only the chevron toggles**:
+  a press inside its rect (`fold_toggle`, shared by paint and input), not the gutter around it or
+  the count. The margins are `BOX_MARGIN` wide, room for the chevron and the copy button clear of
+  the card's edge and the text.
 - **On the main screen the grid ends at the rows in use** (`Screen.used_rows`: the cursor's
   row, or a lower one with anything on it): the blank rows below a running command's output
   would pad the page past the view, with the box and the cards' room, and the view, following

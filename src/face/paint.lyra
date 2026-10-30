@@ -182,7 +182,7 @@ pub let paint_tab = pure (
     let upto = if f.input_line >= 0 && i == f.first && f.first_col > 0 { f.first_col } else { cols }
     let row_theme = if input_rows[i - f.top] { input_theme } else { theme }
     match fold_mark_at(fold_marks, i) {
-      Some(count) => fold_line(ops, theme, g, f, i, count),
+      Some(count) => fold_line(ops, theme, g, f, i, count, pointer),
       None => line(
         ops,
         row_theme,
@@ -212,10 +212,18 @@ pub let paint_tab = pure (
       }
     }
   }
-  // The block under the pointer: a button over its output that copies it.
+  // The block under the pointer: a button over its output that copies it, and where it folds,
+  // a chevron in its card's left gutter — where a click folds it (input.lyra). Folded, its
+  // mark's chevron is drawn whether hovered or not.
   if let Some(b) = hovered_block(s, f, g, pointer) {
     if let Some(at) = copy_button(s, f, g, b) {
       copy_icon(ops, theme, g, at, at.contains(pointer), b.prompt == copied)
+    }
+    if !b.folded {
+      if let Some(at) = fold_toggle(s, f, g, b) {
+        let over = at.contains(pointer)
+        fold_chevron(ops, theme, g, at, "▾", over)
+      }
     }
   }
   if boxed { ops.push(PaintDraw(PopClip)) }
@@ -401,19 +409,23 @@ let fold_mark_at = pure (marks: [](i64, i64), i: i64) -> Maybe<i64> => {
   None
 }
 
-/// A folded block's mark on its first output's line: a chevron and the lines hidden, in place
-/// of the line's own text (the card's output band already backs it).
+/// A folded block's mark on its first output's line: ▸ in the card's gutter, where the open
+/// block's ▾ was — a click on it unfolds the block — and the lines hidden, in place of the
+/// line's own text (the card's output band already backs it). The ▸ brightens under `pointer`.
 let fold_line = (
   ops: mut []PaintOp,
   theme: Theme,
   g: Grid,
   f: FrameLayout,
   i: i64,
-  count: i64
+  count: i64,
+  pointer: Point
 ) -> void => {
+  let at = margin_mark(g, INSET - BOX_MARGIN, f.rows.y_of(i))
+  fold_chevron(ops, theme, g, at, "▸", at.contains(pointer))
   ops.push(PaintText(
     Point { x: INSET, y: f.rows.y_of(i) + g.baseline },
-    "▸ ${count} ${if count == 1 { "line" } else { "lines" }}",
+    "${count} ${if count == 1 { "line" } else { "lines" }} folded",
     g.font,
     color(theme.palette[8])
   ))
@@ -434,8 +446,8 @@ pub let hovered_block = pure (
   s.block_at(at_line)
 }
 
-/// Where block `b`'s copy button is: at the right end of its first output line in view, in the
-/// card's margin and over the line's last columns — `None` where none of its output is in view.
+/// Where block `b`'s copy button is: in its card's right margin, on its first output line in
+/// view, placed as the fold chevron is in the left — `None` where none of its output is in view.
 pub let copy_button = pure (
   s: Session,
   f: FrameLayout,
@@ -448,21 +460,15 @@ pub let copy_button = pure (
   var i = (b.output - first).max(f.top)
   while i < end && f.rows.is_hidden(i) { i += 1 }
   if i >= end || i >= f.bottom { return None }
-  let right = INSET + f32(s.shown.cols) * g.cell_x + BOX_MARGIN - COPY_INSET
-  let y = f.rows.y_of(i) + (g.cell_y - COPY_SIZE) / 2.0
-  let at = Rect { x: right - COPY_SIZE, y: y, w: COPY_SIZE, h: COPY_SIZE }
+  let at = margin_mark(g, INSET + f32(s.shown.cols) * g.cell_x, f.rows.y_of(i))
   let boxed = f.prompt.is_some() || f.running_box
   if boxed && at.y + at.h > f.box_top { return None }
   Some(at)
 }
 
-/// The copy button's side, and how far it stands in from the card's right edge.
-const COPY_SIZE: f32 = 22.0
-const COPY_INSET: f32 = 4.0
-
-/// The copy button at `at`: two sheets, the one behind up and to the right, on the input's tint
-/// made opaque — it stands over the line's text — in the text's colour under the pointer
-/// (`over`), faint otherwise; `done`, the word "Copied" in its place, as wide as it takes.
+/// The copy button at `at`: two sheets, the one behind up and to the right, square in it, in
+/// the text's colour under the pointer (`over`), faint otherwise; `done`, the word "Copied" on
+/// the input's tint made opaque — it stands over the line's text — as wide as it takes.
 let copy_icon = (
   ops: mut []PaintOp,
   theme: Theme,
@@ -488,28 +494,75 @@ let copy_icon = (
     ))
     return
   }
-  ops.push(PaintDraw(Fill(at, radius(5.0), back)))
-  ops.push(PaintDraw(Border(at, radius(5.0), 1.0, edge)))
-  let side = f32((at.w * 0.42).round())
-  let behind = Rect {
-    x: at.x + f32((at.w * 0.38).round()),
-    y: at.y + f32((at.h * 0.2).round()),
-    w: side,
-    h: side
-  }
-  let front = Rect {
-    x: at.x + f32((at.w * 0.2).round()),
-    y: at.y + f32((at.h * 0.38).round()),
-    w: side,
-    h: side
-  }
-  ops.push(PaintDraw(Border(behind, radius(2.0), 1.5, ink)))
-  ops.push(PaintDraw(Fill(front, radius(2.0), back)))
-  ops.push(PaintDraw(Border(front, radius(2.0), 1.5, ink)))
+  // The sheets as big as the chevron's ink — its glyph's box is wider — so the space around
+  // each is alike.
+  let tint = color(theme.output | 0xFF000000)
+  let square = f32((at.w * COPY_SCALE).round())
+  let side = f32((square * 0.7).round())
+  let left = f32((at.x + (at.w - square) / 2.0).round())
+  let top = f32((at.y + (at.h - square) / 2.0).round())
+  let shift = square - side
+  let behind = Rect { x: left + shift, y: top, w: side, h: side }
+  let front = Rect { x: left, y: top + shift, w: side, h: side }
+  ops.push(PaintDraw(Border(behind, radius(0.0), 1.0, ink)))
+  ops.push(PaintDraw(Fill(front, radius(0.0), tint)))
+  ops.push(PaintDraw(Border(front, radius(0.0), 1.0, ink)))
 }
+
+/// How much of its place the copy button's sheets take: the chevron's ink in its glyph's box.
+const COPY_SCALE: f32 = 0.72
 
 /// The room either side of "Copied" in its pill.
 const COPY_LABEL_PAD: f32 = 6.0
+
+/// Where block `b`'s fold chevron is, the ▾ open or its mark's ▸ folded, and where a click
+/// toggles it: in its card's left gutter, on its first output line — `None` for a block that
+/// does not fold (running, or its output a line or none) or whose first output line is out of
+/// view.
+pub let fold_toggle = pure (
+  s: Session,
+  f: FrameLayout,
+  g: Grid,
+  b: Block
+) -> Maybe<Rect> => {
+  if s.shown.alt || b.end < 0 || b.end <= b.output + 1 { return None }
+  let o = b.output - s.shown.absolute(0)
+  if o < f.top || o >= f.bottom { return None }
+  Some(margin_mark(g, INSET - BOX_MARGIN, f.rows.y_of(o)))
+}
+
+/// A card's mark — the fold chevron in its left margin, the copy button in its right — on the
+/// line at `y`, in the margin from `x`: as wide as the chevron's glyph and centred, as clear of
+/// the card's edge as of the text.
+let margin_mark = pure (g: Grid, x: f32, y: f32) -> Rect => {
+  let wide = g.cell_x * CHEVRON_SCALE
+  Rect { x: x + (BOX_MARGIN - wide) / 2.0, y: y, w: wide, h: g.cell_y }
+}
+
+/// A fold chevron at `at` — `glyph`, ▾ open or ▸ folded — half again the text's size, on the
+/// output's tint made opaque, in the text's colour while the pointer is on it (`over`), faint
+/// otherwise.
+let fold_chevron = (
+  ops: mut []PaintOp,
+  theme: Theme,
+  g: Grid,
+  at: Rect,
+  glyph: string,
+  over: bool
+) -> void => {
+  let font = FontSpec { g.font | size: g.font.size * CHEVRON_SCALE }
+  ops.push(PaintDraw(Fill(at, radius(3.0), color(theme.output | 0xFF000000))))
+  ops.push(PaintText(
+    Point { x: at.x, y: at.y + g.baseline + g.cell_y * (CHEVRON_SCALE - 1.0) / 3.0 },
+    glyph,
+    font,
+    color(if over { theme.fg } else { theme.palette[8] })
+  ))
+}
+
+/// How much larger than the text the fold chevron is drawn: at the text's size the glyph is a
+/// speck.
+const CHEVRON_SCALE: f32 = 1.5
 
 /// Under a block's text, as a card: its input on the box's tint, rounded at the top, its output
 /// on a fainter one below, each with its padding; a red bar down the left of a failed one.

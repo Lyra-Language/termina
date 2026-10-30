@@ -13,10 +13,10 @@ word-by-word motions, undo, the clipboard, history, and Tab completion — the s
 selection and copy. Termina ▸ Settings… (⌘,) chooses the font, its size, the colors — a
 see-through background, blurred behind on a Mac — and whether the window reopens where it
 was. It is drawn with Lyra's own GUI framework (`ui`). Blocks draw as cards: a right
-click on one copies its command (past the prompt) or its output, as does the copy button over
+click on one copies its command (past the prompt) or its output, as does the copy button beside
 the output of the block under the pointer, a press under the terminal's
-chord selects the block whole, and a finished block's output folds back to a chevron and a
-line count (click the card's left edge, or use the Block menu) (`CLAUDE.md` § Plan).
+chord selects the block whole, and a finished block's output folds back to a line count (click
+the ▾ in the card's left margin — its ▸ unfolds it — or use the Block menu) (`CLAUDE.md` § Plan).
 
 ```bash
 ../lyra/build.sh     # the compiler, with std/, bindings/ and ui/ beside it (SDL3, SDL3_image,

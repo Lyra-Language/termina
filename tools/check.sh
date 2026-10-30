@@ -118,9 +118,9 @@ if ZSH="$(command -v zsh)"; then
   typed "'world' Home 'echo hello ' Enter" "hello world" "Home to the command line's start"
   typed "'garbage' Ctrl+u 'echo cleared' Enter" "cleared" "Ctrl+U clears the command line"
   typed "'echo /usr/bi' Tab wait:1500 Enter" "/usr/bin/" "Tab completes from zsh"
-  # The copy button, at the right end of the block's first output line (924,100 in the
+  # The copy button, at the right end of the block's first output line (934,100 in the
   # window as a script opens it, whichever font sets the cells), pasted back into a command.
-  typed "'echo copied-out' Enter wait:1500 move:924,100 click:924,100 'echo pasted-' Primary+v Enter" \
+  typed "'echo copied-out' Enter wait:1500 move:934,100 click:934,100 'echo pasted-' Primary+v Enter" \
     "pasted-copied-out" "a block's copy button copies its output"
   # History: the command again by Up — its output twice.
   out="$(SHELL="$ZSH" run --print --script "wait:2500 'echo again' Enter wait:1200 Up Enter wait:1500")"
