@@ -277,9 +277,12 @@ each tab a painter taking input raw, under `ui`'s tab bar, menus and Settings ta
   Linux display is most often a pixel a point, where unhinted stems straddle two columns and
   look soft. A Mac draws text unhinted, and Termina there does too. Hinted advances are whole
   pixels, so a cell is.
-- **Glyphs a family lacks come from fallback fonts** (`settings.fallback_fonts`: Arial
-  Unicode or Noto Sans CJK, then Apple Symbols or DejaVu Sans), `ui.text`'s fallbacks
-  (`add_fallback`). Color emoji are not drawn yet (`ui.text` has no colour glyphs).
+- **Glyphs a family lacks come from fallback fonts** (`settings.fallback_fonts`, the first
+  installed of each group of `ui.text`'s `SYSTEM_FALLBACKS` — Arial Unicode or Noto Sans CJK,
+  then Apple Symbols or DejaVu Sans, then Apple Color Emoji or Noto Color Emoji — never a copy
+  of the list), `ui.text`'s fallbacks (`add_fallback`). **Emoji are drawn in colour** by
+  `ui.text`; U+FE0F after a character with a text form (❤, ☀) asks for its emoji, so the
+  command line paints a zero-width rune in its base's cell (`command_line`), never alone.
 - **A command is a block of the transcript** (`Session.blocks`, `Block`): `C` opens one
   from the last prompt's `A` line (`OutputStart(line)`), `D` closes it
   (`CommandEnd(status, line)`, its line the first the output did not write on) — or, where the

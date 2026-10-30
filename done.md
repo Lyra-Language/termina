@@ -44,6 +44,7 @@ Finished work, moved from `todo.md` with its section; the rules it left behind a
 
 ## M1 — a classic terminal
 
+- **[DONE 10/30] Color emoji** — drawn by `ui.text` in their own colours (lyra's COMPLETED.md, 10/30); the fallbacks are `ui.text`'s `SYSTEM_FALLBACKS`, emoji last; U+FE0F joins its base's cell on the command line.
 - **[DONE 10/16] Colours and attributes** — SGR (both spellings) into styled cells, erases on the pen's background, drawn by runs.
 - **[DONE 10/16] Bold as bright** — `Theme.bold_is_bright`, off by default; no setting to turn it on yet.
 - **[DONE 10/16] Wide characters** — `vt/width.lyra`; a wide rune is a cell and a spacer; combining marks dropped.

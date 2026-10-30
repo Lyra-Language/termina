@@ -833,7 +833,11 @@ let command_line = (
     var stop = k
     while stop < text.len() && places[stop].0 == at_row && paints[stop] == paint {
       let r = text[stop]
-      if r != '\n' && r != ' ' {
+      if cells_of(r) == 0 && run.len() > 0 {
+        // A mark, a joiner or an emoji's selector: its base's cluster, which it changes.
+        let base = run[run.len() - 1]
+        run[run.len() - 1] = TextCell { base | text: "${base.text}${r}" }
+      } else if r != '\n' && r != ' ' {
         run.push(TextCell {
           col: places[stop].1,
           text: "${r}",

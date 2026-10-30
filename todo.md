@@ -7,8 +7,6 @@ milestones are in `CLAUDE.md` § Plan; finished items move to `done.md`.
 
 ## M1 — a classic terminal
 
-- **[OPEN] Color emoji** — CJK and symbols come from fallback fonts, but emoji need colour glyphs, which `ui.text` does not draw yet (FreeType's colour bitmaps or COLR layers; lyra's todo).
-
 ## Settings
 
 ## Found along the way
