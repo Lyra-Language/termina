@@ -136,9 +136,9 @@ each tab a painter taking input raw, under `ui`'s tab bar, menus and Settings ta
 | `src/face/fills.lyra` | the backgrounds' fills drawn (`fill_ops`: a color, `ui`'s gradient, or `ui`'s `picture_fill`, at the color's opacity), and their images decoded once a file (`fill_images`, `bindings.sdl3_image`) |
 | `src/face/paint.lyra` | a tab painted (`paint_tab`): the grid as `PaintCells`, the cards, the box, the command line and its menu, the scrollbar, the hovered block's copy button (`hovered_block`, `copy_button`) — from `session.frame_layout` |
 | `src/face/input.lyra` | keys, typed text and the pointer as the painter hears them: to the command line at a prompt, else encoded for the program; the mouse selecting, a block whole on the terminal's chord, folded on a card-gutter click, copied on a right click, its output copied by its copy button, editing or reported |
-| `src/shell/shell.lyra` | shell integration (zsh's `.zshenv` through `ZDOTDIR`, bash's rc file through `--rcfile`): the marks, Tab's completion widget and its request file, the history files, what Return sends |
+| `src/shell/shell.lyra` | shell integration (zsh's `.zshenv` through `ZDOTDIR`, bash's rc file through `--rcfile`): the marks, Tab's completion widget and its request file, the command lookup widget and its file, the history files, what Return sends |
 | `src/editor/editor.lyra` | the command line's editor — text, caret, selection, motions, words, undo, layout; **pure** |
-| `src/editor/syntax.lyra` | the command line's syntax for coloring: each rune's kind (command, option, quoted, variable, operator, comment); **pure** |
+| `src/editor/syntax.lyra` | the command line's syntax for coloring: each rune's kind (command, option, quoted, variable, operator, comment), and the plain command words to ask the shell about; **pure** |
 | `src/vt/parser.lyra` | bytes → `Action`s — Paul Williams' DEC parser; **pure**, keeps all state across reads |
 | `src/vt/screen.lyra` | `Action`s → the cell grid, cursor, scroll region, scrollback ring |
 | `src/vt/width.lyra` | how many cells a rune takes: 2 wide (CJK, emoji), 0 combining, 1 the rest |
@@ -457,6 +457,16 @@ each tab a painter taking input raw, under `ui`'s tab bar, menus and Settings ta
   ever chooses a color): commands, options, quoted text, variables, operators and comments,
   in the theme's ANSI green, cyan, yellow, magenta, blue and its faint grey. `$(…)` is
   lexed as a command line of its own.
+- **A command the shell cannot run is red** — the shell's answer, not Termina's guess: each
+  plain command word (`editor.command_words`: whole, no quoting, variable, `~` or glob) is
+  asked of the live shell as Tab's completions are, through a request file of its own
+  (`TERMINA_COMMANDS_FILE`) and the key `\e[9897~` — zsh's `whence`, bash's `type -t` —
+  reported as OSC 7770 `c;<word>;<1|0>`, then `c`. **The asking is after every event**
+  (`settle` → `Session.ask_commands`), not in `step`: typing writes nothing back, so no
+  `step` follows it. One ask at a time (`CommandLine.asking`), the answers kept until a new
+  prompt (`CommandLine.prompt_at` — a command may change what exists); a word not yet
+  answered stays green. An ask the shell reads as typed ahead is dropped (`typeahead`), and
+  the prompt's words stay green.
 - **Ctrl+R searches the history** (`CommandLine.searching`): the editor's text is the query,
   the menu — the box's width — the history's commands with it in them, case aside, each once,
   the newest last and chosen; ↑/Ctrl+R older, ↓/Ctrl+S newer, Return or Tab puts one in,
@@ -486,14 +496,14 @@ each tab a painter taking input raw, under `ui`'s tab bar, menus and Settings ta
    red bar down a failed one. A right click on it copies its command (past the prompt) or its
    output, whichever part is clicked; a press under the terminal's chord (or Block ▸ Select
    Block) selects the block whole, and a finished block's output — more than a line — folds from
-   the card's left gutter or Block's Fold/Unfold, hiding the lines past its first (a chevron and
-   the count stand in for them). M2 done 10/29.
+   the ▾ chevron in the card's left margin or Block's Fold/Unfold, hiding the lines past its
+   first (a ▸ and the count stand in for them). M2 done 10/29.
 4. **M3 — the editor (begun 10/16, before M1 and the block cards)**: zsh's integration,
    then the command line as Termina's editor — multi-line, soft wrap, the mouse (click,
    drag, double-click a word, triple-click a line), word and line motions, undo, the
    clipboard, history from `~/.zsh_history`, Tab completion (zsh's own, in a menu); bash's
    integration and its completion, syntax coloring, Ctrl+R history search, prompts of
    several lines and right prompts in the box, the box kept, greyed, while a command runs
-   (10/19).
+   (10/19); a command the shell cannot run in red (10/30).
 
 Open work is in `todo.md`; finished work in `done.md`.

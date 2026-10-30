@@ -49,6 +49,11 @@ pub struct Screen {
   /// Keys typed ahead that the shell found waiting at a new line (OSC 7770 `t`), raw, since
   /// [Screen.take_typed_ahead].
   typed_ahead: []string,
+  /// What the shell said of the command words it was asked about (OSC 7770 `c;word;1|0`: it
+  /// can run it, or not), and how many of its answers have ended (`c`), since
+  /// [Screen.take_commands].
+  commands: [](string, bool),
+  commands_ended: i64,
   /// Lines dropped off the top of a full scrollback: what makes an [Screen.absolute] line
   /// number stay the same line while the ring turns.
   dropped: i64,
@@ -145,6 +150,8 @@ pub let screen = pure (cols: i64, rows: i64) -> Screen => Screen {
   cwd: "",
   marks: [],
   completing: [],
+  commands: [],
+  commands_ended: 0,
   completed: [],
   typed_ahead: [],
   dropped: 0,
@@ -206,6 +213,15 @@ impl Screen {
   pub let take_completions = (self: mut) -> [][]Completion => {
     let out = self.completed
     self.completed = []
+    out
+  }
+
+  /// What the shell has said of command words since the last call, and whether an answer
+  /// ended; emptied.
+  pub let take_commands = (self: mut) -> ([](string, bool), bool) => {
+    let out = (self.commands, self.commands_ended > 0)
+    self.commands = []
+    self.commands_ended = 0
     out
   }
 
@@ -493,9 +509,14 @@ impl Screen {
     }
   }
 
-  // OSC 7770, Termina's own: the shell reporting completions.
+  // OSC 7770, Termina's own: the shell reporting completions, keys typed ahead, and which
+  // command words it can run.
   let completion_report = (self: mut, report: string) -> void => {
-    if report.starts_with("t;") { self.typed_ahead.push(percent_decode(report.slice(
+    if report == "c" { self.commands_ended += 1 }
+    else if report.starts_with("c;") {
+      let f = report.slice(2, report.len()).split(";")
+      if f.len() == 2 { self.commands.push((percent_decode(f[0]), f[1] == "1")) }
+    } else if report.starts_with("t;") { self.typed_ahead.push(percent_decode(report.slice(
       2,
       report.len()
     ))) }

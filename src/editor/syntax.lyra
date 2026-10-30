@@ -8,6 +8,9 @@ module editor
 //! `$(` — not counting `NAME=value` assignments before it, and the word after `sudo`, `time`
 //! and their like, or after a keyword that begins a command (`then`, `do`, `!`), is one too.
 //! A word after `<` or `>` is a file, never a command.
+//!
+//! **Whether a command exists** is the shell's to say — its aliases, functions and `PATH` —
+//! so [command_words] only finds the words to ask it about.
 
 /// What a rune of the command line is part of.
 pub data Kind = Plain | Command | Option | Quoted | Variable | Operator | Comment
@@ -63,6 +66,45 @@ pub let kinds = pure (text: []rune) -> []Kind => {
     }
   }
   out
+}
+
+/// The command words of `text` the shell can be asked about, as rune spans (start, end): each
+/// a whole word of [Command] runes, plain — no quoting, escape or expansion in it (a variable,
+/// `~`, a glob), whose meaning the shell would have to work out first.
+pub let command_words = pure (text: []rune) -> [](i64, i64) => {
+  let kind = kinds(text)
+  var out: [](i64, i64) = []
+  var i = 0
+  while i < text.len() {
+    if kind[i] != Command || (i > 0 && !is_boundary(text, kind, i - 1)) {
+      i += 1
+      continue
+    }
+    var end = i
+    while end < text.len() && kind[end] == Command && !is_blank(text[end]) { end += 1 }
+    if end == text.len() || is_boundary(text, kind, end) {
+      let word = text_of(text.slice(i, end))
+      if is_plain(word) { out.push((i, end)) }
+    }
+    i = end.max(i + 1)
+  }
+  out
+}
+
+/// Whether rune `i` ends a word: a blank or an operator.
+let is_boundary = pure (text: []rune, kind: []Kind, i: i64) -> bool =>
+  is_blank(text[i]) || kind[i] == Operator
+
+let is_blank = pure (r: rune) -> bool => r == ' ' || r == '\t' || r == '\n'
+
+/// Whether a command word means itself: none of `\ ~ * ?`, and `[` or `{` only as the whole
+/// word (`[`, `[[`, `{`, which are commands).
+let is_plain = pure (word: string) -> bool => {
+  if word == "[" || word == "[[" || word == "{" { return true }
+  for r in word.to_runes() {
+    if r == '\\' || r == '~' || r == '*' || r == '?' || r == '[' || r == '{' { return false }
+  }
+  true
 }
 
 /// Words after which the next is a command too: those that run one, and keywords that

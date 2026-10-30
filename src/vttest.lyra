@@ -6,7 +6,13 @@
 
 import bindings.pty.{ spawn, close }
 import bindings.sdl3.{ platform }
-import shell.{ integration, submission, completion_request, parse_bash_history }
+import shell.{
+  integration,
+  submission,
+  completion_request,
+  commands_request,
+  parse_bash_history,
+}
 import editor.{
   editor,
   Editor,
@@ -16,6 +22,7 @@ import editor.{
   rune_at,
   shell_word_at,
   kinds,
+  command_words,
   Plain,
   Command,
   Option,
@@ -136,11 +143,13 @@ let main = () -> u8 => {
   failed += check_marks()
   failed += check_words()
   failed += check_completion_reports()
+  failed += check_command_reports()
   // The integration's checks need the shell itself: a machine without it skips them, and
   // says so. bash's need 4.4 or newer, which macOS's own /bin/bash is not.
   if installed(["/bin/zsh"], "the zsh checks") {
     failed += check_shell("/bin/zsh")
     failed += check_completion("/bin/zsh")
+    failed += check_commands("/bin/zsh")
     failed += check_typed_ahead("/bin/zsh")
   }
   let bashes = if platform() == "macOS" {
@@ -151,6 +160,7 @@ let main = () -> u8 => {
     for b in bashes { if is_executable(b) && !is_executable(bash) { bash = b } }
     failed += check_shell(bash)
     failed += check_completion(bash)
+    failed += check_commands(bash)
     failed += check_typed_ahead(bash)
     failed += check_bash_history()
   }
@@ -186,7 +196,20 @@ let check_syntax = () -> i64 => {
   failed += check("a command inside $(…)", syntax("echo $(pwd)"), "CCCCPXXCCCX")
   failed += check("braces and $?", syntax(`x ${A}$?`), "CPVVVVVV")
   failed += check("an unclosed $(", syntax("x $(pw"), "CPXXCC")
+  // The command words the shell is asked about: whole and plain ones only.
+  failed += check("words: a pipe's two", words("ls -la | grp x"), "ls|grp")
+  failed += check("words: after sudo", words("sudo nosuch -f"), "sudo|nosuch")
+  failed += check("words: past an assignment, not a variable", words("X=1 make && $ED f"), "make")
+  failed += check("words: not quoted", words("\"ec\"ho x; e'c'ho"), "")
+  failed += check("words: not a ~ path, a ./ one", words("~/bin/x; ./run"), "./run")
+  failed += check("words: inside $(…)", words("echo $(whoami)"), "echo|whoami")
+  failed += check("words: [[ and a glob", words("[[ -f x ]] && l*"), "[[")
   failed
+}
+
+let words = pure (text: string) -> string => {
+  let runes = text.to_runes()
+  [w in command_words(runes) | text_of_runes(runes.slice(w.0, w.1))].join("|")
 }
 
 let syntax = pure (text: string) -> string => [k in kinds(text.to_runes()) | match k {
@@ -922,6 +945,83 @@ let check_completion_reports = () -> i64 => {
     }
   }
   failed
+}
+
+// OSC 7770 `c`: what the shell said of command words, and the answer's end.
+let check_command_reports = () -> i64 => {
+  var p = parser()
+  var s = screen(20, 2)
+  s.apply(p.feed("\e]7770;c;ls;1\x07\e]7770;c;a%3Bb;0\x07".encode_utf8()))
+  let (first, ended_first) = s.take_commands()
+  s.apply(p.feed("\e]7770;c\x07".encode_utf8()))
+  let (second, ended) = s.take_commands()
+  var failed = check(
+    "commands: found and not, decoded",
+    [a in first | "${a.0}=${a.1}"].join(","),
+    "ls=true,a;b=false"
+  )
+  failed += check("commands: not ended before its c", "${ended_first}", "false")
+  failed += check("commands: ended", "${second.len()} ${ended}", "0 true")
+  failed
+}
+
+// Which commands the live shell can run, through the integration: one, a builtin, a keyword,
+// an alias and a function the first command made, one that does not exist, a path to nothing.
+let check_commands = (shell: string) -> i64 => {
+  let name = shell.base()
+  let Some(i) = integration(shell, "vttest-commands") else {
+    return check("${name} integration", "not written", "written")
+  }
+  let Some(pty) = spawn(i.args, 80, 10, None, ["TERM=xterm-256color", ...i.env]) else {
+    return check("spawn ${name}", "failed", "spawned")
+  }
+  var p = parser()
+  var s = screen(80, 10)
+  let asks = ["ls", "cd", "if", "termina_alias", "termina_fn", "termina_no_such", "./termina_nope"]
+  var heard: []string = []
+  var prompts = 0
+  var defined = false
+  var asked = false
+  var ended = false
+  var deadline = wall_clock_nanos() + 20000000000
+  while !ended && wall_clock_nanos() < deadline {
+    // At bracketed paste, as `check_completion` waits: the first prompt defines the alias and
+    // the function, the second is asked.
+    if prompts == 1 && s.bracketed_paste && !defined {
+      let _ = pty.write(submission("alias termina_alias=true; termina_fn() { :; }", true))
+      defined = true
+    } else if prompts >= 2 && s.bracketed_paste && !asked {
+      match commands_request(i, asks) {
+        Some(key) => {
+          let _ = pty.write(key)
+        },
+        None => {},
+      }
+      asked = true
+    }
+    match pty.read() {
+      None => { deadline = 0 },
+      Some(bytes) => {
+        if bytes.len() > 0 { s.apply(p.feed(bytes)) }
+        for m in s.take_marks() {
+          match m {
+            InputStart(_, _) => { prompts += 1 },
+            _ => {},
+          }
+        }
+        let (answers, done) = s.take_commands()
+        for (w, found) in answers { heard.push("${w}=${if found { 1 } else { 0 }}") }
+        if done { ended = true }
+      },
+    }
+  }
+  close(pty)
+  let _ = remove_file(i.commands)
+  check(
+    "${name}: which commands exist",
+    heard.join(" "),
+    "ls=1 cd=1 if=1 termina_alias=1 termina_fn=1 termina_no_such=0 ./termina_nope=0"
+  )
 }
 
 // The shell's own completions through the integration, in a directory of known files: zsh's

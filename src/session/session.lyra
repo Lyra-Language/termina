@@ -35,7 +35,14 @@ import vt.{
   selection_text,
   word_span,
 }
-import shell.{ integration, load_history, submission, completion_request, Integration }
+import shell.{
+  integration,
+  load_history,
+  submission,
+  completion_request,
+  commands_request,
+  Integration,
+}
 import term.{
   EditAction,
   Copy,
@@ -405,8 +412,9 @@ impl Session {
   }
 
   /// This frame's reading: what the program wrote, carried out; where its shell now is; the
-  /// shell's completions and keys typed ahead handed to the command line; a typed-ahead
-  /// command run at a prompt. `shown` says whether the tab is the one in view.
+  /// shell's completions, keys typed ahead and what it said of command words handed to the
+  /// command line; a typed-ahead command run at a prompt, or the command words asked about.
+  /// `shown` says whether the tab is the one in view.
   pub let step = (self: mut, shown: bool) -> void => {
     let (alive, got) = drain(self.pty, self.parse, self.shown)
     // Reading only ever ends a tab: one closed by the user stays closed though its program
@@ -455,6 +463,7 @@ impl Session {
           if !redrawn {
             self.mode = AtPrompt(at, col)
             self.running = ""
+            self.line.prompt_at(at, col)
           }
         },
         // A prompt begins; drawn again with its line (bash's readline, on a paste), it does
@@ -535,6 +544,25 @@ impl Session {
         None => {},
       },
       Raw => {},
+    }
+    // What the shell said of the command words typed; at a prompt, those not yet asked
+    // about, asked.
+    let (answers, ended) = self.shown.take_commands()
+    self.line.commands_answered(answers, ended)
+    self.ask_commands()
+  }
+
+  /// At a prompt, the command words the shell has not been asked about, asked — one ask at a
+  /// time — for their color: whether it can run each. The front end asks after each event
+  /// (typing writes nothing back, so no [step] follows it), [step] after the shell's output.
+  pub let ask_commands = (self: mut) -> void => {
+    if let Raw = self.mode { return }
+    let Some(i) = self.integrated else { return }
+    let words = self.line.commands_to_ask()
+    if words.len() == 0 { return }
+    if let Some(key) = commands_request(i, words) {
+      let _ = self.pty.write(key)
+      self.line.commands_asked()
     }
   }
 

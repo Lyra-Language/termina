@@ -30,6 +30,7 @@ Finished work, moved from `todo.md` with its section; the rules it left behind a
 - **[DONE 10/19] Ctrl+R history search** — the editor's text the query, the matches in a list above the box.
 - **[DONE 10/19] bash's integration** — marks, commands, type-ahead and history through an `--rcfile` that reads what `bash -l` would; bash 4.4 or newer (`PS0`).
 - **[DONE 10/19] bash's Tab completion** — a `bind -x` widget running what readline would (compspec, `-F` function, `compgen`), the word given unquoted; matches in the same menu as zsh's.
+- **[DONE 10/30] A command that does not exist, in red** — the live shell is asked of each plain command word (`editor.command_words`) through a request file and a widget of its own (zsh's `whence`, bash's `type -t`), so aliases, functions and `PATH` count. Asked after every event — typing writes nothing back, so no `step` follows it — one ask at a time; the answers kept per prompt (`CommandLine.known`). vttest asks zsh and bash live.
 
 ## Tabs
 

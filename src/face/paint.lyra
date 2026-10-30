@@ -43,6 +43,7 @@ import editor.{
   position,
   cells_of,
   kinds,
+  command_words,
   Kind,
   Plain,
   Command,
@@ -790,7 +791,8 @@ pub let place_of = pure (f: FrameLayout, g: Grid) -> Place => Place {
 }
 
 /// The command line: its selection, its text in its syntax's colors — the theme's own ANSI
-/// green, cyan, yellow, magenta and blue — the caret when focused, and the completion menu.
+/// green, cyan, yellow, magenta and blue, and red for a command the shell said it cannot run
+/// — the caret when focused, and the completion menu.
 let command_line = (
   ops: mut []PaintOp,
   line: CommandLine,
@@ -802,7 +804,12 @@ let command_line = (
   let text = line.edit.text
   let (a, b) = line.edit.selection()
   let places = layout(text, at.wrap)
-  let kind = kinds(text)
+  var paints: []u32 = [kd in kinds(text) | kind_color(theme, kd)]
+  for (from, to) in command_words(text) {
+    if line.command_found(text_of(text.slice(from, to))) == Some(false) {
+      for k in from..<to { paints[k] = theme.palette[1] }
+    }
+  }
   for k in 0..<text.len() {
     if k >= a && k < b {
       let (at_row, col) = places[k]
@@ -821,13 +828,10 @@ let command_line = (
   var k = 0
   while k < text.len() {
     let (at_row, _) = places[k]
-    let paint = kind_color(theme, kind[k])
+    let paint = paints[k]
     var run: []TextCell = []
     var stop = k
-    while stop < text.len() && places[stop].0 == at_row && kind_color(
-      theme,
-      kind[stop]
-    ) == paint {
+    while stop < text.len() && places[stop].0 == at_row && paints[stop] == paint {
       let r = text[stop]
       if r != '\n' && r != ' ' {
         run.push(TextCell {

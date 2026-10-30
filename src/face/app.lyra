@@ -445,11 +445,13 @@ pub let cells_in = pure (size: Size, cell_x: f32, cell_y: f32) -> (i64, i64) => 
   (cols, rows)
 }
 
-/// The shown tab fitted to the painter — as many whole cells as it holds — and its view kept to
-/// the page: at the bottom while it sticks there, never past either end.
+/// The shown tab fitted to the painter — as many whole cells as it holds — its view kept to
+/// the page (at the bottom while it sticks there, never past either end), and the shell asked
+/// about the command words its command line now has, however they came there.
 let settle = (t: mut Term) -> void => {
   if t.tabs.len() == 0 || t.size.w <= 0.0 { return }
   let i = t.active
+  t.tabs[i].ask_commands()
   let (cols, rows) = cells_in(t.size, t.grid.cell_x, t.grid.cell_y)
   t.tabs[i].fit(cols, rows)
   let f = layout_at(t, t.size)

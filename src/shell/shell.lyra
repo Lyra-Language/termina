@@ -17,6 +17,12 @@ module shell
 //! 7770) without inserting or listing any. Its messages are `b` (begin), `m;<prefix>;<insert>;<suffix>;<shown>;<description>`
 //! (a match, each field percent-encoded) and `e` (end); `vt.Screen` collects them.
 //!
+//! **Which commands exist** is the shell's too, for the command line's colors: Termina writes
+//! the command words to another request file and sends another key, whose widget asks the
+//! shell of each (zsh's `whence`, bash's `type -t` — aliases, functions, builtins, keywords,
+//! `PATH`, a path to a program) and reports `c;<word>;<1|0>` (OSC 7770, the word
+//! percent-encoded) for each, then `c`.
+//!
 //! **Keys typed ahead** — typed while a command ran, and not read by it — are still on the
 //! terminal when zsh starts its next line, and zsh's own line editor would take them into
 //! a buffer hidden under Termina's. A `zle-line-init` hook (wrapping the user's own) reads
@@ -47,22 +53,24 @@ import std.io.{ write_file, create_dir_all, read_bytes }
 import std.path
 
 /// What a shell with Termina's integration is started with: its command line, its
-/// environment, as `NAME=value` entries for `bindings.pty`'s `spawn`, and the file
-/// completion requests are written to.
+/// environment, as `NAME=value` entries for `bindings.pty`'s `spawn`, and the files
+/// completion requests and command lookups are written to.
 pub struct Integration {
   args: []string,
   env: []string,
   request: string,
+  commands: string,
 }
 
 /// The integration for `shell` (a path, as `$SHELL` holds it), its files written; `None` for
-/// a shell it has none for, or when they could not be written. Each window has a request
-/// file of its own, named by `id`.
+/// a shell it has none for, or when they could not be written. Each window has request
+/// files of its own, named by `id`.
 pub let integration = (shell: string, id: string) -> Maybe<Integration> => {
   let name = shell.base()
   if name == "zsh" {
     let Some(dir) = integration_dir("zsh", ".zshenv", ZSHENV) else { return None }
     let request = dir.join("request-${id}")
+    let commands = dir.join("commands-${id}")
     return Some(Integration {
       args: [shell, "-l"],
       env: [
@@ -70,17 +78,25 @@ pub let integration = (shell: string, id: string) -> Maybe<Integration> => {
         "TERMINA_ORIG_ZDOTDIR=${lookup("ZDOTDIR") ?? ""}",
         "TERMINA_SHELL_INTEGRATION=1",
         "TERMINA_COMPLETE_FILE=${request}",
+        "TERMINA_COMMANDS_FILE=${commands}",
       ],
       request: request,
+      commands: commands,
     })
   }
   if name == "bash" {
     let Some(dir) = integration_dir("bash", "rc.bash", BASHRC) else { return None }
     let request = dir.join("request-${id}")
+    let commands = dir.join("commands-${id}")
     return Some(Integration {
       args: [shell, "--rcfile", dir.join("rc.bash"), "-i"],
-      env: ["TERMINA_SHELL_INTEGRATION=1", "TERMINA_COMPLETE_FILE=${request}"],
+      env: [
+        "TERMINA_SHELL_INTEGRATION=1",
+        "TERMINA_COMPLETE_FILE=${request}",
+        "TERMINA_COMMANDS_FILE=${commands}",
+      ],
       request: request,
+      commands: commands,
     })
   }
   None
@@ -101,6 +117,18 @@ pub let completion_request = (
 
 /// The key zsh's completion widget is bound to: a private CSI no keyboard sends.
 const COMPLETE_KEY: string = "\e[9898~"
+
+/// Ask the shell which of `words` (command words, none empty or with a line break) it can
+/// run: the request written, a word a line, and the key that runs the shell's widget on it,
+/// to be sent to the shell. `None` when the file cannot be written.
+pub let commands_request = (i: Integration, words: []string) -> Maybe<string> =>
+  if write_file(
+    i.commands,
+    [w in words | "${w}\n"].join("")
+  ) { Some(COMMANDS_KEY) } else { None }
+
+/// The key the command lookup widget is bound to, beside [COMPLETE_KEY].
+const COMMANDS_KEY: string = "\e[9897~"
 
 /// What the shell is sent to run `command`. Through bracketed paste when the shell has it
 /// on (zsh does at its prompt), so that a command of several lines reaches the shell's line
@@ -313,6 +341,19 @@ if [[ -o interactive ]]; then
     BUFFER=
     CURSOR=0
   }
+  # Which command words the shell can run, for the command line's colors: the request file
+  # holds them a line each, and each is reported (OSC 7770 c) found or not, then the end.
+  _termina_commands() {
+    local f=$TERMINA_COMMANDS_FILE w
+    [[ -r $f ]] || return 0
+    for w in "${(@f)$(<$f)}"; do
+      [[ -z $w ]] && continue
+      _termina_enc "$w"
+      if builtin whence -- "$w" >/dev/null 2>&1; then builtin printf '\e]7770;c;%s;1\a' "$REPLY"
+      else builtin printf '\e]7770;c;%s;0\a' "$REPLY"; fi
+    done
+    builtin printf '\e]7770;c\a'
+  }
   # Keys typed ahead: at the start of each line, before zsh's line editor reads them, read
   # whatever is waiting and report it (OSC 7770 t), controls and `%`/`;` as %XX.
   _termina_line_init() {
@@ -333,6 +374,7 @@ if [[ -o interactive ]]; then
   _termina_bind() {
     zle -C _termina_complete_word complete-word _termina_capture
     zle -N _termina_complete
+    zle -N _termina_commands
     # The user's own zle-line-init, if their .zshrc made one, still runs — first.
     if (( $+widgets[zle-line-init] )) && [[ ${widgets[zle-line-init]} != *_termina_line_init* ]]; then
       zle -A zle-line-init _termina_orig_line_init
@@ -340,7 +382,10 @@ if [[ -o interactive ]]; then
     zle -N zle-line-init _termina_line_init
     # Bound once the user's .zshrc has chosen emacs or vi keys, in every keymap.
     local m
-    for m in emacs viins vicmd; do builtin bindkey -M $m '\e[9898~' _termina_complete; done
+    for m in emacs viins vicmd; do
+      builtin bindkey -M $m '\e[9898~' _termina_complete
+      builtin bindkey -M $m '\e[9897~' _termina_commands
+    done
     add-zsh-hook -d precmd _termina_bind
   }
   add-zsh-hook precmd _termina_bind
@@ -581,9 +626,25 @@ if (( BASH_VERSINFO[0] > 4 || (BASH_VERSINFO[0] == 4 && BASH_VERSINFO[1] >= 4) )
     READLINE_LINE=
     READLINE_POINT=0
   }
+  # Which command words the shell can run, for the command line's colors: the request file
+  # holds them a line each, and each is reported (OSC 7770 c) found or not, then the end.
+  _termina_commands() {
+    local f=$TERMINA_COMMANDS_FILE w
+    [[ -r $f ]] || return 0
+    while IFS= builtin read -r w; do
+      [[ -z $w ]] && continue
+      _termina_enc "$w"
+      if builtin type -t -- "$w" >/dev/null 2>&1; then builtin printf '\e]7770;c;%s;1\a' "$REPLY"
+      else builtin printf '\e]7770;c;%s;0\a' "$REPLY"; fi
+    done <"$f"
+    builtin printf '\e]7770;c\a'
+    READLINE_LINE=
+    READLINE_POINT=0
+  }
   # In every keymap, whichever the user's files chose.
   for _termina_m in emacs vi-insert vi-command; do
     builtin bind -m "$_termina_m" -x '"\e[9898~": _termina_complete' 2>/dev/null
+    builtin bind -m "$_termina_m" -x '"\e[9897~": _termina_commands' 2>/dev/null
   done
   builtin unset _termina_m
 fi

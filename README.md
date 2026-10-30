@@ -8,7 +8,7 @@ Linux.
 
 **Status: early.** The login shell runs in a window, in tabs (⌘T, ⌘W, ⌘1–9). With zsh or bash (4.4 or newer), the command line is an
 editor of Termina's own, in a box pinned to the window's foot: several lines, the mouse (double-click a word to select it),
-word-by-word motions, undo, the clipboard, history, and Tab completion — the shell's own, in a menu. It is a classic terminal underneath: color (16, 256,
+word-by-word motions, undo, the clipboard, history, Tab completion — the shell's own, in a menu — and syntax colors, a command the shell cannot run in red. It is a classic terminal underneath: color (16, 256,
 24-bit) and attributes, wide characters, full-screen programs (vim, less, top), the mouse, and
 selection and copy. Termina ▸ Settings… (⌘,) chooses the font, its size, the colors — a
 see-through background, blurred behind on a Mac — and whether the window reopens where it

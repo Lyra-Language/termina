@@ -50,9 +50,11 @@ import editor.{
   index_at,
   rune_at,
   shell_word_at,
-  text_of
+  text_of,
+  command_words,
 }
 import vt.{ Completion }
+import std.collections.{ HashMap, hashmap_new }
 
 /// The command line's state between frames: the editor, the history being walked, and a
 /// drag under way.
@@ -94,6 +96,12 @@ pub struct CommandLine {
   /// History search (Ctrl+R) under way: what the editor held before it, put back if it is
   /// cancelled. Meanwhile the editor's text is the query and the menu its matches.
   searching: Maybe<string>,
+  /// What the shell has said of the command words typed at this prompt (`true`: it can run
+  /// it), for their color; whether it is being asked of more; and the prompt (its input's
+  /// absolute line and column) the answers are for — a new prompt may have a new `PATH`.
+  known: HashMap<string, bool>,
+  asking: bool,
+  known_at: (i64, i64),
 }
 
 /// Completions a menu shows at once; more scroll.
@@ -143,6 +151,9 @@ pub let command_line = pure (history: []string) -> CommandLine => CommandLine {
   menu_keys: false,
   suffix_left: None,
   searching: None,
+  known: hashmap_new(),
+  asking: false,
+  known_at: (-1, -1),
 }
 
 /// What the Edit menu does — and ⌘Z, ⇧⌘Z, ⌘X, ⌘C, ⌘V, ⌘A without one.
@@ -379,6 +390,45 @@ impl CommandLine {
         None
       },
     }
+  }
+
+  /// The command words typed that the shell has not been asked about, each once — none while
+  /// it is being asked ([commands_asked]).
+  pub let commands_to_ask = pure (self) -> []string => {
+    if self.asking { return [] }
+    var out: []string = []
+    for (a, b) in command_words(self.edit.text) {
+      let word = text_of(self.edit.text.slice(a, b))
+      if !self.known.contains_key(word) && !out.contains(word) { out.push(word) }
+    }
+    out
+  }
+
+  /// The shell asked about command words; their answers are awaited.
+  pub let commands_asked = (self: mut) -> void => { self.asking = true }
+
+  /// What the shell said of command words, kept; `ended`, its answer is whole, and more can be
+  /// asked.
+  pub let commands_answered = (
+    self: mut,
+    answers: [](string, bool),
+    ended: bool
+  ) -> void => {
+    for (word, found) in answers { let _ = self.known.insert(word, found) }
+    if ended { self.asking = false }
+  }
+
+  /// Whether the shell can run command word `word`, as it said; `None` while not known.
+  pub let command_found = pure (self, word: string) -> Maybe<bool> => self.known.get(word)
+
+  /// A prompt whose input begins at absolute `line` and `col`: a new one forgets what the
+  /// shell said of commands (a command may have changed what exists) — the same one drawn
+  /// again does not.
+  pub let prompt_at = (self: mut, line: i64, col: i64) -> void => {
+    if self.known_at == (line, col) { return }
+    self.known = hashmap_new()
+    self.asking = false
+    self.known_at = (line, col)
   }
 
   /// Run a command: remember it, and start an empty line.
