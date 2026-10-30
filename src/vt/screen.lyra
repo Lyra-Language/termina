@@ -99,6 +99,9 @@ pub struct Screen {
   /// ([marks_of]); the first is none. `combining_ids` finds a run already kept.
   combining: []string,
   combining_ids: HashMap<string, i64>,
+  /// The current hyperlink — OSC 8's `url` — while the sequence is active. `None` when no
+  /// hyperlink is started. Cells written with this set are part of the link ([Screen.link_at]).
+  current_link: Maybe<string> = None,
 }
 
 /// One completion the shell offered for the word at the caret (`../shell/shell.lyra`): the
@@ -249,6 +252,16 @@ impl Screen {
   pub let cursor_line = pure (self) -> i64 =>
     self.dropped + self.scrollback.len() + self.y
 
+  /// The hyperlink at absolute line `n`, column `x`; `None` when there is none. Lines in
+  /// the scrollback are indexed from `scrollback_start`.
+  pub let link_at = pure (self, n: i64, x: i64) -> Maybe<string> => {
+    let Some(line) = self.line_at(n) else { return None }
+    let y = if line < self.scrollback.len() { line } else { line - self.scrollback.len() }
+    if y < 0 || y >= self.rows || x < 0 || x >= self.cols { return None }
+    let cell = if y < self.scrollback.len() { self.scrollback[y][x] } else { self.lines[y - self.scrollback.len()][x] }
+    cell.link
+  }
+
   /// How many lines there are above the screen.
   pub let scrollback_len = pure (self) -> i64 => self.scrollback.len()
 
@@ -345,10 +358,16 @@ impl Screen {
   // there with the wrap pending (without autowrap, to be written over).
   let put = (self: mut, r: rune, w: i64) -> void => {
     self.clear_wide_at(self.y, self.x)
-    self.lines[self.y][self.x] = self.pen.cell(r)
+    let mut cell = self.pen.cell(r)
+    cell.link = self.current_link
+    if self.current_link.is_some() { cell.attrs = cell.attrs | HYPERLINK }
+    self.lines[self.y][self.x] = cell
     if w == 2 {
       self.clear_wide_at(self.y, self.x + 1)
-      self.lines[self.y][self.x + 1] = self.pen.cell(SPACER)
+      let mut spacer = self.pen.cell(SPACER)
+      spacer.link = self.current_link
+      if self.current_link.is_some() { spacer.attrs = spacer.attrs | HYPERLINK }
+      self.lines[self.y][self.x + 1] = spacer
     }
     let last = self.x + w - 1
     if last >= self.cols - 1 {
@@ -478,6 +497,19 @@ impl Screen {
       self.title = text.slice(2, text.len())
     } else if text.starts_with("7;") {
       self.cwd = file_url_path(text.slice(2, text.len()))
+    } else if text.starts_with("8;") {
+      // OSC 8: hyperlink — `8;params;url` starts one, `8;;` ends it. `params` is a semicolon-
+      // separated list of `key=value` pairs that xterm uses for identification; we ignore it.
+      let rest = text.slice(2, text.len())
+      let Some(semicolon) = find_semicolon(rest) else {
+        return
+      }
+      let url = rest.slice(semicolon + 1, rest.len())
+      if url == "" {
+        self.current_link = None
+      } else {
+        self.current_link = Some(url)
+      }
     } else if text.starts_with("133;") {
       self.shell_mark(text.slice(4, text.len()))
     } else if text == "10;?" || text == "11;?" || text == "12;?" {
@@ -814,6 +846,16 @@ let file_url_path = pure (url: string) -> string => {
   let rest = url.slice(7, url.len())
   let Some(slash) = rest.index("/") else { return "" }
   percent_decode(rest.slice(slash, rest.len()))
+}
+
+/// The index of the first `;` in `s`, or `None` when there is none.
+let find_semicolon = pure (s: string) -> Maybe<i64> => {
+  var i = 0
+  while i < s.len() {
+    if s[i] == ';' { return Some(i) }
+    i += 1
+  }
+  None
 }
 
 /// `s` with each `%XX` escape decoded to its byte; a `%` not followed by two hex digits is

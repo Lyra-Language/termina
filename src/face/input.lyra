@@ -8,7 +8,7 @@ module face
 //! reported to a program that asked for it (`?1000`…), Shift taking it back for
 //! selecting; the wheel scrolls the view, or is the program's arrows on the alternate screen.
 
-import ui.app.{ Command, CopyText, PasteText }
+import ui.app.{ Command, CopyText, PasteText, OpenUrl }
 import bindings.pty
 import ui.backend.{
   Modifiers,
@@ -34,6 +34,7 @@ import session.{
   Session,
   AtPrompt,
   Raw,
+  FrameLayout,
   key_sequence,
   control_bytes,
   meta,
@@ -157,7 +158,16 @@ pub let pointer_heard = (t: mut Term, p: PointerInput) -> []Command<TermEvent> =
       }
     }
   }
+  let in_box = (f.prompt.is_some() || f.running_box) && p.at.y >= f.box_top
   match p.kind {
+    // Cmd/Ctrl + click on a hyperlink: open it in the default browser.
+    PointerPress(Primary, _) if p.mods.primary && !in_box && p.at.y < f.rows.y_of(f.grid_lines) => {
+      let (at_line, under, _) = grid_spot(s, f, g, p.at)
+      if let Some(url) = s.shown.link_at(at_line, under) {
+        return [OpenUrl(url)]
+      }
+      []
+    },
     PointerWheel(_, down) => {
       if raw && s.shown.alt && s.shown.alternate_scroll && s.shown.mouse_mode == 0 {
         let notches = wheel_notches(t.tabs[i], -down)
@@ -173,7 +183,6 @@ pub let pointer_heard = (t: mut Term, p: PointerInput) -> []Command<TermEvent> =
       []
     },
     PointerPress(Primary, clicks) => {
-      let in_box = (f.prompt.is_some() || f.running_box) && p.at.y >= f.box_top
       let on_chevron = match pointed {
         Some(b) => fold_toggle(s, f, g, b).map((r) => r.contains(p.at)) == Some(true),
         None => false,
@@ -204,7 +213,6 @@ pub let pointer_heard = (t: mut Term, p: PointerInput) -> []Command<TermEvent> =
     // A right click copies the block under it: its command on the input's lines, its output
     // on the output's. Nothing in the box, or off a block.
     PointerPress(Secondary, _) => {
-      let in_box = (f.prompt.is_some() || f.running_box) && p.at.y >= f.box_top
       if !in_box && p.at.y < f.rows.y_of(f.grid_lines) {
         let (at_line, _, _) = grid_spot(t.tabs[i], f, g, p.at)
         t.last_grid_line = at_line
@@ -222,7 +230,6 @@ pub let pointer_heard = (t: mut Term, p: PointerInput) -> []Command<TermEvent> =
       }
       // The line under the pointer, where the menus' block items aim: off the box and the
       // box's own room.
-      let in_box = (f.prompt.is_some() || f.running_box) && p.at.y >= f.box_top
       if !in_box && p.at.y < f.rows.y_of(f.grid_lines) {
         let (at_line, _, _) = grid_spot(t.tabs[i], f, g, p.at)
         t.last_grid_line = at_line

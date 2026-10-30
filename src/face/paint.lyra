@@ -32,6 +32,7 @@ import vt.{
   UNDERLINE,
   DOUBLE_UNDERLINE,
   CURLY_UNDERLINE,
+  HYPERLINK,
   STRIKE,
   SPACER,
   width_of,
@@ -357,9 +358,9 @@ let decorations = (
   let thick = m.underline_thickness.max(1.0)
   var k = from
   while k < to {
-    let attrs = cells[k].attrs & (UNDERLINE_ANY | STRIKE)
+    let attrs = cells[k].attrs & (UNDERLINE_ANY | STRIKE | HYPERLINK)
     var stop = k + 1
-    while stop < to && cells[stop].attrs & (UNDERLINE_ANY | STRIKE) == attrs { stop += 1 }
+    while stop < to && cells[stop].attrs & (UNDERLINE_ANY | STRIKE | HYPERLINK) == attrs { stop += 1 }
     let x0 = x + f32(k) * g.cell_x
     let w = f32(stop - k) * g.cell_x
     let under = baseline + m.underline_y
@@ -381,6 +382,13 @@ let decorations = (
       )))
     }
     if attrs & CURLY_UNDERLINE != 0 { ops.push(PaintWave(
+      Point { x: x0, y: under + thick },
+      w,
+      thick * 1.5,
+      thick,
+      c
+    )) }
+    if attrs & HYPERLINK != 0 { ops.push(PaintWave(
       Point { x: x0, y: under + thick },
       w,
       thick * 1.5,

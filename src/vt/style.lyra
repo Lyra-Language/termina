@@ -16,6 +16,8 @@ pub struct Cell {
   bg: u32,
   /// [BOLD], [DIM], … combined with `|`.
   attrs: u32,
+  /// A hyperlink started with OSC 8 — `None` for cells not in one.
+  link: Maybe<string> = None,
 }
 
 /// The style characters are written in, as SGR has left it.
@@ -56,6 +58,9 @@ pub const FILLER: u32 = 2048
 /// The bits of `attrs` from here up are not attributes but the combining marks after the
 /// cell's rune: an index into the screen's [Screen.combining], 0 for none ([marks_of]).
 pub const MARKS_SHIFT: u32 = 12
+/// Not a style: a cell that is part of an OSC 8 hyperlink ([vt.screen.Screen.current_link]);
+/// drawn with a wavy underline ([paint.lyra]'s `draw_attr`).
+pub const HYPERLINK: u32 = 4096
 
 /// Which of the screen's combining marks follow `c`'s rune; 0 for none.
 pub let marks_of = pure (c: Cell) -> i64 => i64(c.attrs >> MARKS_SHIFT)
