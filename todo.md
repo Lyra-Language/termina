@@ -3,10 +3,6 @@
 Open work for Termina only (compiler and binding gaps it finds go in `../lyra/todo.md`). The
 milestones are in `CLAUDE.md` § Plan; finished items move to `done.md`.
 
-## Blocks (M2)
-
-- **[OPEN] A block whole** — select and fold one, as Warp does.
-
 ## The command line (M3)
 
 - **[OPEN] A command that does not exist** — syntax coloring could show it red, but Termina cannot see the shell's aliases and functions; asking the shell (`type`) per command word would.

@@ -117,6 +117,8 @@ pub struct Block {
   status: i64,
   started: i64,
   ended: i64,
+  /// Whether its output is folded: hidden, its room one line (a chevron and its count).
+  folded: bool = false,
 }
 
 /// Start a tab: `program` (the login shell with Termina's integration when empty) in `dir`
@@ -283,8 +285,15 @@ impl Session {
     var k = self.blocks.len() - 1
     while k >= 0 {
       let b = self.blocks[k]
-      if line >= b.prompt && line < b.output { return copyable(block_command_text(self, b)) }
-      if line >= b.output && line < b.end { return copyable(block_output_text(self, b, b.end)) }
+      if line >= b.prompt && line < b.output { return copyable(block_command_text(
+        self,
+        b
+      )) }
+      if line >= b.output && line < b.end { return copyable(block_output_text(
+        self,
+        b,
+        b.end
+      )) }
       k -= 1
     }
     match self.running_block {
@@ -293,12 +302,73 @@ impl Session {
           return copyable(block_command_text(self, b))
         }
         if line >= b.output {
-          return copyable(block_output_text(self, b, self.shown.used_rows()))
+          return copyable(block_output_text(self, b, self.running_end()))
         }
         None
       },
       None => None,
     }
+  }
+
+  /// The first absolute line past the running block's output so far.
+  pub let running_end = pure (self) -> i64 =>
+    self.shown.absolute(self.shown.scrollback_len() + self.shown.used_rows() - 1) + 1
+
+  /// The block — finished or running — whose input or output covers absolute line `line`.
+  pub let block_at = pure (self, line: i64) -> Maybe<Block> => {
+    if self.shown.alt { return None }
+    var k = self.blocks.len() - 1
+    while k >= 0 {
+      let b = self.blocks[k]
+      if line >= b.prompt && line < b.end { return Some(b) }
+      k -= 1
+    }
+    match self.running_block {
+      Some(b) => {
+        if line >= b.prompt && line < self.running_end() { Some(b) } else { None }
+      },
+      None => None,
+    }
+  }
+
+  /// Select the block covering absolute line `line` whole: its command's text, past the
+  /// prompt's, through its last output line — a running block's, through the last line in
+  /// use. `false` where no block covers the line.
+  pub let select_block_at = (self: mut, line: i64) -> bool => match self.block_at(line) {
+    Some(b) => {
+      let end = if b.end >= 0 { b.end } else { self.running_end() }
+      if end > b.cmd_line {
+        self.sel_a = Spot { line: b.cmd_line, col: b.cmd_col }
+        self.sel_b = Spot { line: end - 1, col: self.shown.cols }
+        true
+      } else {
+        false
+      }
+    },
+    None => false,
+  }
+
+  /// Fold or unfold the finished block covering absolute line `line`, when its output is more
+  /// than a line — a running block's output is live, so it is not folded. `false` where no
+  /// foldable block covers it.
+  pub let toggle_fold_at = (self: mut, line: i64) -> bool => {
+    var k = self.blocks.len() - 1
+    while k >= 0 {
+      let b = self.blocks[k]
+      if line >= b.prompt && line < b.end && b.end > b.output + 1 {
+        self.blocks[k] = Block { b | folded: !b.folded }
+        return true
+      }
+      k -= 1
+    }
+    false
+  }
+
+  /// The block covering absolute line `line`'s fold state, where its output is more than a
+  /// line — `None` elsewhere.
+  pub let fold_at = pure (self, line: i64) -> Maybe<bool> => match self.block_at(line) {
+    Some(b) => if b.end >= 0 && b.end > b.output + 1 { Some(b.folded) } else { None },
+    None => None,
   }
 
   /// Select the whole screen and its scrollback.
@@ -645,7 +715,10 @@ pub let frame_layout = pure (
     base: base,
     cell_y: cell_y,
     at: [],
-    through: []
+    through: [],
+    hid_at: [],
+    hid_end: [],
+    hid_thru: []
   } }
   else { block_rows_layout(s, origin_y, base, cell_y, grid_lines) }
   // The page: the grid's lines, and room under them for the box and a margin above it, so
@@ -653,7 +726,9 @@ pub let frame_layout = pure (
   let above_box = if box_height > 0.0 { BLOCK_MARGIN } else { 0.0 }
   let page = layout.y_of(grid_lines) - origin_y + above_box + box_height
   let top = layout.line_at_y(origin_y + scroll_y, grid_lines)
-  let bottom = (top + rows + 1).min(grid_lines)
+  // The view's bottom: `rows` more drawn lines down; a folded block's hidden lines take no
+  // room, so the view reaches further in line-index terms.
+  let bottom = layout.visible_end(top, rows + 1, grid_lines)
   // The box's top: the view's foot, wherever it is scrolled to.
   let view_bottom = origin_y + scroll_y + view_h
   FrameLayout {
@@ -748,16 +823,21 @@ pub struct Rows {
   cell_y: f32,
   at: []i64,
   through: []f32,
+  /// Lines a folded block hides: [start, end) line-index ranges, in order; `hid_thru[k]`
+  /// counts the hidden lines before range `k`.
+  hid_at: []i64,
+  hid_end: []i64,
+  hid_thru: []i64,
 }
 
 impl Rows {
   /// Line `i`'s top: below every gap above it.
   pub let y_of = pure (self, i: i64) -> f32 =>
-    self.origin_y + f32(i - self.base) * self.cell_y + self.room_through(i)
+    self.origin_y + f32(i - self.base - self.hidden_before(i)) * self.cell_y + self.room_through(i)
 
   /// Where the gaps above line `i` begin: the foot of the line before.
   pub let y_above = pure (self, i: i64) -> f32 =>
-    self.origin_y + f32(i - self.base) * self.cell_y + self.room_through(i - 1)
+    self.y_of(i) - (self.room_through(i) - self.room_through(i - 1))
 
   /// The line at screen height `y` — the last whose top is above it — from `base` to `last`.
   pub let line_at_y = pure (self, y: f32, last: i64) -> i64 => {
@@ -767,7 +847,51 @@ impl Rows {
       let mid = (lo + hi + 1) / 2
       if self.y_of(mid) <= y { lo = mid } else { hi = mid - 1 }
     }
+    // A hidden line takes no room: its top is its successor's top, so land on the next
+    // drawn line instead of it.
+    while self.is_hidden(lo) { lo += 1 }
     lo
+  }
+
+  /// The smallest line `i`, from `top` to `limit`, where at least `count` lines are drawn
+  /// between `top` and `i` (hidden lines take no room).
+  pub let visible_end = pure (self, top: i64, count: i64, limit: i64) -> i64 => {
+    let drawn = (end: i64) -> i64 =>
+      end - top - (self.hidden_before(end) - self.hidden_before(top))
+    var lo = top
+    var hi = limit
+    while lo < hi {
+      let mid = (lo + hi) / 2
+      if drawn(mid) >= count { hi = mid } else { lo = mid + 1 }
+    }
+    lo
+  }
+
+  /// Whether line `i` is hidden by a folded block.
+  pub let is_hidden = pure (self, i: i64) -> bool => {
+    var lo = 0
+    var hi = self.hid_at.len()
+    while lo < hi {
+      let mid = (lo + hi) / 2
+      if self.hid_at[mid] <= i { lo = mid + 1 } else { hi = mid }
+    }
+    lo > 0 && self.hid_end[lo - 1] > i
+  }
+
+  /// How many hidden lines there are before line `i`.
+  pub let hidden_before = pure (self, i: i64) -> i64 => {
+    var lo = 0
+    var hi = self.hid_at.len()
+    while lo < hi {
+      let mid = (lo + hi) / 2
+      if self.hid_at[mid] < i { lo = mid + 1 } else { hi = mid }
+    }
+    if lo == 0 { 0 } else {
+      self.hid_thru[lo - 1] + (i - self.hid_at[lo - 1]).clamp(
+        0,
+        self.hid_end[lo - 1] - self.hid_at[lo - 1]
+      )
+    }
   }
 
   /// The room of every gap above lines up to and including line `i`.
@@ -793,6 +917,7 @@ pub let block_rows_layout = pure (
   grid_lines: i64
 ) -> Rows => {
   var gaps: [](i64, f32) = []
+  var folds: [](i64, i64) = []
   let first = s.shown.absolute(0)
   // The running block with the finished ones, in an array of its own: `s.blocks` itself is
   // the session's, and an array a variable is set to is that array, not a copy — a push
@@ -812,6 +937,13 @@ pub let block_rows_layout = pure (
         BLOCK_PAD
       )) }
     }
+    // A folded block's output, past its first line (the first stays, drawn as the fold's
+    // mark), is hidden.
+    if b.folded && b.end >= 0 {
+      let s0 = (o + 1).max(base)
+      let e0 = (b.end - first).min(grid_lines)
+      if s0 < e0 { folds.push((s0, e0)) }
+    }
   }
   // In order of line, the gaps above one line together.
   var at: []i64 = []
@@ -824,7 +956,28 @@ pub let block_rows_layout = pure (
       through.push(sum)
     }
   }
-  Rows { origin_y: origin_y, base: base, cell_y: cell_y, at: at, through: through }
+  // The blocks' being in order, the fold ranges are already in line order: the hidden lines
+  // before each range.
+  var hid_at: []i64 = []
+  var hid_end: []i64 = []
+  var hid_thru: []i64 = []
+  var hidden = 0
+  for (s0, e0) in folds {
+    hid_thru.push(hidden)
+    hid_at.push(s0)
+    hid_end.push(e0)
+    hidden += e0 - s0
+  }
+  Rows {
+    origin_y: origin_y,
+    base: base,
+    cell_y: cell_y,
+    at: at,
+    through: through,
+    hid_at: hid_at,
+    hid_end: hid_end,
+    hid_thru: hid_thru,
+  }
 }
 
 /// `gaps` in order of their lines — nearly so already, the blocks being in order: an

@@ -1294,6 +1294,12 @@ let shown_bytes = pure (bytes: []u8) -> string => {
 
 // Real tabs: a tab named by its program's title, then by its directory, and one whose
 // program ends found ended.
+/// `m` rendered as its value or `none`.
+let fold_str = pure (m: Maybe<bool>) -> string => match m {
+  Some(f) => "${f}",
+  None => "none",
+}
+
 let check_sessions = () -> i64 => {
   var failed = 0
   let Some(titled) = open_session(
@@ -1345,6 +1351,11 @@ let check_sessions = () -> i64 => {
   failed += check("a block's command", "${e.block_copy_at(0) ?? "none"}", "ls")
   failed += check("a block's output", "${e.block_copy_at(1) ?? "none"}", "out")
   failed += check("off a block", "${e.block_copy_at(2) ?? "none"}", "none")
+  // Selecting the block whole takes the command (past the prompt) and the output.
+  failed += check("a block selected whole", "${e.select_block_at(1)} ${e.selected_text()}", "true ls\nout")
+  // A one-line output is not foldable; the fold stays off.
+  failed += check("a line's output not foldable", "${fold_str(e.fold_at(1))}", "none")
+  failed += check("fold refused on a line", "${e.toggle_fold_at(1)}", "false")
   // Its room, a row 20 points high: above its input the margin and padding (16), between
   // input and output the padding of each (12), below the output padding (6).
   let laid = block_rows_layout(e, 0.0, 0, 20.0, 3)
@@ -1390,6 +1401,31 @@ let check_sessions = () -> i64 => {
     "one\ntwo"
   )
   failed += check("its output's last line", "${m.block_copy_at(3) ?? "none"}", "one\ntwo")
+  // Folding: the output's lines past the first are hidden, and their room leaves the layout.
+  let laid_open = block_rows_layout(m, 0.0, 0, 20.0, 5)
+  failed += check(
+    "unfolded rows",
+    "${laid_open.y_of(4)} ${laid_open.is_hidden(3)}",
+    "114 false"
+  )
+  failed += check("a foldable block folds", "${m.toggle_fold_at(3)}", "true")
+  failed += check("its fold state", "${fold_str(m.fold_at(0))}", "true")
+  let laid_folded = block_rows_layout(m, 0.0, 0, 20.0, 5)
+  failed += check(
+    "a folded block's rows",
+    "${laid_folded.y_of(0)} ${laid_folded.y_of(2)} ${laid_folded.y_of(4)} ${laid_folded.line_at_y(78.0, 5)}",
+    "16 68 94 2"
+  )
+  failed += check("a folded line hidden", "${laid_folded.is_hidden(3)}", "true")
+  failed += check("a kept line shown", "${laid_folded.is_hidden(2)}", "false")
+  // Whole-block selection is unaffected by the fold: it reads the screen, not the layout.
+  failed += check(
+    "a folded block, selected whole",
+    "${m.select_block_at(2)} ${m.selected_text()}",
+    "true echo a b\nc d\none\ntwo"
+  )
+  failed += check("a fold un-folds", "${m.toggle_fold_at(3)}", "true")
+  failed += check("its fold state after un-fold", "${fold_str(m.fold_at(3))}", "false")
   close_session(m)
   // A block still running: its command whole, its output so far.
   let Some(working) = open_session(
@@ -1410,6 +1446,14 @@ let check_sessions = () -> i64 => {
   }
   failed += check("a running block's command", "${r.block_copy_at(0) ?? "none"}", "long")
   failed += check("a running block's output", "${r.block_copy_at(1) ?? "none"}", "working")
+  // A running block is selected whole through its output so far, but is not foldable.
+  failed += check(
+    "a running block, selected whole",
+    "${r.select_block_at(1)} ${r.selected_text().trim()}",
+    "true long\nworking"
+  )
+  failed += check("a running block not foldable", "${fold_str(r.fold_at(1))}", "none")
+  failed += check("fold refused while running", "${r.toggle_fold_at(1)}", "false")
   close_session(r)
   let Some(cleared) = open_session(
     ["/bin/sh", "-c", "${marks}; sleep 0.3; printf '\\033[2J'; sleep 2"],

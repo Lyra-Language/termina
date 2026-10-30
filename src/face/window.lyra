@@ -207,6 +207,7 @@ pub let menus_of = pure (t: Term) -> []Menu<TermEvent> => [
   Menu { label: "Termina", entries: [item("Settings…", TabAsked(OpenSettings), Some(primary(','))) ] },
   Menu { label: "Shell", entries: shell_items(t) },
   Menu { label: "Edit", entries: edit_items(t) },
+  Menu { label: "Block", entries: block_items(t) },
   Menu { label: "View", entries: view_items(t) },
 ]
 
@@ -217,6 +218,7 @@ pub let header_entries = pure (t: Term) -> []MenuEntry<TermEvent> => [
   MenuSeparator,
   Submenu("Shell", shell_items(t)),
   Submenu("Edit", edit_items(t)),
+  Submenu("Block", block_items(t)),
   Submenu("View", view_items(t)),
   Submenu("Window", window_items(t)),
   MenuSeparator,
@@ -281,6 +283,24 @@ let view_items = pure (t: Term) -> []MenuEntry<TermEvent> => [
   item("Bigger", TabAsked(FontBigger), Some(own(t, '='))),
   item("Smaller", TabAsked(FontSmaller), Some(own(t, '-'))),
 ]
+
+/// Block's items, on the block the pointer last was over: take it whole, or fold its output
+/// (unfold it back) — a card's gutter click folds and unfolds too.
+let block_items = pure (t: Term) -> []MenuEntry<TermEvent> => {
+  let over = t.tabs.len() > 0 && !t.on_settings
+  let sel_ok = if over { t.tabs[t.active]
+      .block_at(t.last_grid_line)
+      .is_some() } else { false }
+  let fold = if over { t.tabs[t.active].fold_at(t.last_grid_line) } else { None }
+  let fold_label = match fold {
+    Some(true) => "Unfold Block",
+    _ => "Fold Block",
+  }
+  [
+    MenuItemEntry(MenuItem { label: "Select Block", on_select: SelectBlock, shortcut: None, enabled: sel_ok }),
+    MenuItemEntry(MenuItem { label: fold_label, on_select: FoldBlock, shortcut: None, enabled: fold.is_some() }),
+  ]
+}
 
 /// Window's items, off a Mac: the window's own, then the tabs, the shown one checked, as a
 /// Mac's Window menu lists windows; the first nine with Alt and their number.

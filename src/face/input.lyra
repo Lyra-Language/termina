@@ -3,8 +3,9 @@ module face
 //! to the command line at a prompt (`term.CommandLine.input`) or encoded for the program
 //! otherwise — **the terminal's own chord is ⌘ on a Mac, Ctrl+Shift elsewhere** (copy, paste and the
 //! rest of the Edit menu's), Ctrl and a letter the control character, Alt the Meta prefix off a
-//! Mac. The pointer selects on the grid, copies a block on a right click, edits in the box,
-//! and is reported to a program that asked for it (`?1000`…), Shift taking it back for
+//! Mac. The pointer selects on the grid, takes a block whole on the terminal's chord, folds one
+//! on a click in its card's left gutter, copies it on a right click, edits in the box, and is
+//! reported to a program that asked for it (`?1000`…), Shift taking it back for
 //! selecting; the wheel scrolls the view, or is the program's arrows on the alternate screen.
 
 import ui.app.{ Command, CopyText, PasteText }
@@ -161,8 +162,21 @@ pub let pointer_heard = (t: mut Term, p: PointerInput) -> []Command<TermEvent> =
         t.holding = 2
       } else if !in_box && p.at.y < f.rows.y_of(f.grid_lines) {
         let (at_line, under, edge) = grid_spot(t.tabs[i], f, g, p.at)
-        t.tabs[i].select_press(at_line, under, edge, clicks)
-        t.holding = 1
+        t.last_grid_line = at_line
+        if edit_chord(t, p.mods) {
+          // The terminal's chord on a block's line: the block whole, its command and output;
+          // off a block, the press's usual selection.
+          if !t.tabs[i].select_block_at(at_line) {
+            t.tabs[i].select_press(at_line, under, edge, clicks)
+            t.holding = 1
+          }
+        } else if p.at.x < INSET {
+          // A block's card, its left gutter: the block under the pointer, folded or not.
+          let _ = t.tabs[i].toggle_fold_at(at_line)
+        } else {
+          t.tabs[i].select_press(at_line, under, edge, clicks)
+          t.holding = 1
+        }
       }
       []
     },
@@ -172,6 +186,7 @@ pub let pointer_heard = (t: mut Term, p: PointerInput) -> []Command<TermEvent> =
       let in_box = (f.prompt.is_some() || f.running_box) && p.at.y >= f.box_top
       if !in_box && p.at.y < f.rows.y_of(f.grid_lines) {
         let (at_line, _, _) = grid_spot(t.tabs[i], f, g, p.at)
+        t.last_grid_line = at_line
         if let Some(text) = t.tabs[i].block_copy_at(at_line) {
           return [CopyText(text)]
         }
@@ -183,6 +198,13 @@ pub let pointer_heard = (t: mut Term, p: PointerInput) -> []Command<TermEvent> =
       if t.holding == 1 {
         let (at_line, under, edge) = grid_spot(t.tabs[i], f, g, p.at)
         t.tabs[i].select_drag(at_line, under, edge)
+      }
+      // The line under the pointer, where the menus' block items aim: off the box and the
+      // box's own room.
+      let in_box = (f.prompt.is_some() || f.running_box) && p.at.y >= f.box_top
+      if !in_box && p.at.y < f.rows.y_of(f.grid_lines) {
+        let (at_line, _, _) = grid_spot(t.tabs[i], f, g, p.at)
+        t.last_grid_line = at_line
       }
       []
     },

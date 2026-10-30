@@ -108,6 +108,9 @@ pub struct Term {
   /// line (2), or a program's mouse report (3, `button` the button held).
   holding: i64 = 0,
   button: i64 = -1,
+  /// The absolute grid line the pointer last hovered, off the box: the menus' block items'
+  /// aim; -1 when it has not.
+  last_grid_line: i64 = -1,
   /// The last tab's screen as its program ended — what `termina --print` prints.
   closed_screen: []string = [],
   /// The user's settings, the file they are kept in (`""` for none: nothing is written) and
@@ -162,6 +165,10 @@ pub data TermEvent =
   | TabMoved(i64, i64)
   /// An Edit menu item, on the shown tab.
   | EditAsked(EditAction)
+  /// The block under the pointer's last line, as a whole (Block's item).
+  | SelectBlock
+  /// The block under the pointer's last line, folded or unfolded (Block's item).
+  | FoldBlock
   /// Quit, and the window minimized or maximized (Window's items and the header bar's).
   | Quit
   | Minimize
@@ -395,6 +402,16 @@ pub let update = (t: Term, e: TermEvent) -> (Term, []Command<TermEvent>) => {
     TabClosed(i) => { if i >= 0 && i < n.tabs.len() { commands = close_tab(n, i) } },
     TabMoved(from, to) => tab_moved(n, from, to),
     EditAsked(a) => { commands = edit_asked(n, a) },
+    SelectBlock => {
+      if !n.on_settings && n.tabs.len() > 0 {
+        let _ = n.tabs[n.active].select_block_at(n.last_grid_line)
+      }
+    },
+    FoldBlock => {
+      if !n.on_settings && n.tabs.len() > 0 {
+        let _ = n.tabs[n.active].toggle_fold_at(n.last_grid_line)
+      }
+    },
     Quit => { commands = [QuitApp] },
     Minimize => { commands = [WindowMinimize] },
     ToggleMaximize => { commands = [if n.maximized { WindowRestore } else { WindowMaximize }] },

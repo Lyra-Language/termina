@@ -2,6 +2,7 @@ module face
 //! A tab drawn for `ui`: the ops a painter answers, in its own coordinates, from the tab's state
 //! and where everything goes (`session.frame_layout`) — the blocks' cards under the text,
 //! the grid's lines a cell at a time (`PaintCells`: a run of one color, each cell its own face),
+//! a folded block's mark (a chevron and its hidden count) in place of its hidden output,
 //! how each block ended over them, the selection, and at a prompt the command line's box with
 //! the prompt in it, or the cursor while a program runs.
 //!
@@ -162,26 +163,42 @@ pub let paint_tab = pure (
       for i in (p - oldest).max(f.top)..<(o - oldest).min(f.bottom) { input_rows[i - f.top] = true }
     }
   }
+  // A folded block's mark: its first output's line, with the lines hidden past it.
+  var fold_marks: [](i64, i64) = []
+  if !s.shown.alt {
+    let oldest = s.shown.absolute(0)
+    for b in s.blocks {
+      if b.folded && b.end > b.output { fold_marks.push((
+        b.output - oldest,
+        b.end - b.output - 1
+      )) }
+    }
+  }
   for i in f.top..<f.bottom {
+    if rows.is_hidden(i) { continue }
     let upto = if f.input_line >= 0 && i == f.first && f.first_col > 0 { f.first_col } else { cols }
     let row_theme = if input_rows[i - f.top] { input_theme } else { theme }
-    line(
-      ops,
-      row_theme,
-      g,
-      Point { x: INSET, y: rows.y_of(i) },
-      s.shown.line(i),
-      s.shown.combining,
-      upto
-    )
+    match fold_mark_at(fold_marks, i) {
+      Some(count) => fold_line(ops, theme, g, f, i, count),
+      None => line(
+        ops,
+        row_theme,
+        g,
+        Point { x: INSET, y: rows.y_of(i) },
+        s.shown.line(i),
+        s.shown.combining,
+        upto
+      ),
+    }
   }
   // Over the cards: how each ended, and how long it took.
   if !s.shown.alt {
     for b in s.blocks { note(ops, s, theme, g, f, b) }
   }
-  // The selection, over the text.
+  // The selection, over the text; the lines a folded block hides are not drawn.
   if s.sel_a.line != s.sel_b.line || s.sel_a.col != s.sel_b.col {
     for i in f.top..<f.bottom {
+      if rows.is_hidden(i) { continue }
       let (a, b) = selected_on(s.sel_a, s.sel_b, s.shown.absolute(i), cols)
       if b > a {
         ops.push(PaintDraw(Fill(
@@ -366,6 +383,32 @@ let decorations = (
 
 /// Every underline's bit.
 const UNDERLINE_ANY: u32 = UNDERLINE | DOUBLE_UNDERLINE | CURLY_UNDERLINE
+
+/// The number of lines a folded block hides, on the line `i` is its first output's, or `None`.
+let fold_mark_at = pure (marks: [](i64, i64), i: i64) -> Maybe<i64> => {
+  for (m, n) in marks {
+    if m == i { return Some(n) }
+  }
+  None
+}
+
+/// A folded block's mark on its first output's line: a chevron and the lines hidden, in place
+/// of the line's own text (the card's output band already backs it).
+let fold_line = (
+  ops: mut []PaintOp,
+  theme: Theme,
+  g: Grid,
+  f: FrameLayout,
+  i: i64,
+  count: i64
+) -> void => {
+  ops.push(PaintText(
+    Point { x: INSET, y: f.rows.y_of(i) + g.baseline },
+    "▸ ${count} ${if count == 1 { "line" } else { "lines" }}",
+    g.font,
+    color(theme.palette[8])
+  ))
+}
 
 /// Under a block's text, as a card: its input on the box's tint, rounded at the top, its output
 /// on a fainter one below, each with its padding; a red bar down the left of a failed one.

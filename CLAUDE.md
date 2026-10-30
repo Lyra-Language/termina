@@ -124,7 +124,7 @@ each tab a painter taking input raw, under `ui`'s tab bar, menus and Settings ta
 | `tools/check.sh` | the window's checks: scripted runs, each in a `HOME` of its own, their screens or settings compared — tabs, menus, the Settings tab, and the command line at zsh's prompt |
 | `assets/` | the icon: `termina.svg` the source; `Termina.icns` (the app's) and `termina.png` made from it (`assets/README.md`); `Termina.entitlements`, what the signed app's commands may ask for (Releases, above) |
 | `src/desktop/desktop.lyra` | Termina on a Linux desktop: the id its windows go by (`APP_ID`), and, run as an AppImage, the desktop entry and icon it installs for the launcher and the dock |
-| `src/session/session.lyra` | one tab: its PTY (opened at the window's cells, measured before the program starts), screen, `Mode`, blocks and command line, read when it has written; where its frame's parts go (`frame_layout`: the box, the grid's lines, `Rows`, the page), the grid's selection, a block's copy (`block_copy_at`, a right click's target), the bytes a key sends (`key_sequence`, `control_bytes`) — no framework |
+| `src/session/session.lyra` | one tab: its PTY (opened at the window's cells, measured before the program starts), screen, `Mode`, blocks and command line, read when it has written; where its frame's parts go (`frame_layout`: the box, the grid's lines, `Rows` incl. folded blocks' hidden lines, the page), the grid's selection, a block's copy (`block_copy_at`, a right click's target), its whole-selection (`select_block_at`) and fold state (`toggle_fold_at`, `fold_at`, `Block.folded`), the bytes a key sends (`key_sequence`, `control_bytes`) — no framework |
 | `src/term/line.lyra` | the editor at the prompt (`CommandLine`): keys and typed text (`LineInput`) and the mouse into editor calls, history, Ctrl+R, the completion menu's layout; what it asks of its host as an `Outcome` (`Submit`, `Send`, `Complete`, `Clip`, `PasteWanted`) — no framework |
 | `src/term/tabs.lyra` | a tab's label and the tab commands the window carries out (`TabCommand`) |
 | `src/term/theme.lyra` | recorded colors → pixels (ABGR): the theme's own pair, ANSI 16, xterm's 256; inverse, dim, hidden |
@@ -135,7 +135,7 @@ each tab a painter taking input raw, under `ui`'s tab bar, menus and Settings ta
 | `src/face/window.lyra` | the chrome on `ui`: the tab bar, the header bar off a Mac, the menus as data (`menus_of` for the Mac's bar, `header_entries` for ☰), all in `ui`'s theme made from Termina's |
 | `src/face/fills.lyra` | the backgrounds' fills drawn (`fill_ops`: a color, `ui`'s gradient, or `ui`'s `picture_fill`, at the color's opacity), and their images decoded once a file (`fill_images`, `bindings.sdl3_image`) |
 | `src/face/paint.lyra` | a tab painted (`paint_tab`): the grid as `PaintCells`, the cards, the box, the command line and its menu, the scrollbar — from `session.frame_layout` |
-| `src/face/input.lyra` | keys, typed text and the pointer as the painter hears them: to the command line at a prompt, else encoded for the program; the mouse selecting, copying a block on a right click, editing or reported |
+| `src/face/input.lyra` | keys, typed text and the pointer as the painter hears them: to the command line at a prompt, else encoded for the program; the mouse selecting, a block whole on the terminal's chord, folded on a card-gutter click, copied on a right click, editing or reported |
 | `src/shell/shell.lyra` | shell integration (zsh's `.zshenv` through `ZDOTDIR`, bash's rc file through `--rcfile`): the marks, Tab's completion widget and its request file, the history files, what Return sends |
 | `src/editor/editor.lyra` | the command line's editor — text, caret, selection, motions, words, undo, layout; **pure** |
 | `src/editor/syntax.lyra` | the command line's syntax for coloring: each rune's kind (command, option, quoted, variable, operator, comment); **pure** |
@@ -291,7 +291,11 @@ each tab a painter taking input raw, under `ui`'s tab bar, menus and Settings ta
   (`Session.block_copy_at`, read the way a selection over the lines would be). Drawn as a
   card: the input on the theme's input color, the output on its output color, rounded,
   with padding around each and a margin between cards; the duration and a failure's `exit N` over its
-  first row's right end where the text leaves room, a red bar down a failed one's left.
+  first row's right end where the text leaves room, a red bar down a failed one's left. A press
+  under the terminal's chord on a block's line (or Block ▸ Select Block) selects the block whole
+  (`Session.select_block_at`); a finished block whose output is more than a line folds — a click in
+  the card's left gutter (or Block ▸ Fold/Unfold) hides the output's lines past its first, which
+  stand in for them as a chevron and a line count on that line's own row (`Block.folded`).
 - **On the main screen the grid ends at the rows in use** (`Screen.used_rows`: the cursor's
   row, or a lower one with anything on it): the blank rows below a running command's output
   would pad the page past the view, with the box and the cards' room, and the view, following
@@ -301,14 +305,17 @@ each tab a painter taking input raw, under `ui`'s tab bar, menus and Settings ta
   frame's gaps above lines, from the blocks). Everything that turns a line into a height
   or back — drawing, the cursor, selection, the first line in view, the page's height, the
   mouse — asks it (`y_of`, `y_above`, `line_at_y`); `i × cell.y` is wrong wherever blocks
-  are. A program's mouse reports still count the screen's own rows: blocks put no gaps on
+  are. A folded block's hidden output lines (past its first) are ranges in `Rows`
+  (`is_hidden`, `hidden_before`): they take no room, `line_at_y` lands on the next drawn line,
+  and a view's end (`visible_end`) counts drawn lines only. A program's mouse reports still count the screen's own rows: blocks put no gaps on
   the alternate screen, and a `clear` drops those on the main one. A screen
   erased whole on the main screen (`\e[2J`, `\e[J` from its first cell: `clear`, Ctrl+L)
   is the `Cleared(line)` mark, and the blocks on it go. None on the alternate screen.
 - **The grid's selection is absolute lines and column boundaries** (`vt.Spot`), so it stays
   on its text as output scrolls. The mouse selects above the command line at a prompt, and
   with Shift when a program has asked for the mouse (`?1000`/`?1002`/`?1003`, SGR `?1006` or
-  X10), which is otherwise told of it; on the alternate screen an unreporting program gets
+  X10), which is otherwise told of it; a press under the terminal's chord on a block's line (or
+  Block ▸ Select Block) takes the block whole. On the alternate screen an unreporting program gets
   the wheel as arrows (`?1007`).
 - **Erase at a pending wrap erases the last column**, as xterm does: a line exactly as wide as
   the screen followed by `\e[K` loses its last character (less's status on a long path).
@@ -461,13 +468,15 @@ each tab a painter taking input raw, under `ui`'s tab bar, menus and Settings ta
    DEC private modes (alternate screen, cursor keys, autowrap, DECSCUSR, bracketed paste,
    mouse reporting, focus), device reports, selection and copy, Alt as Meta. vim, less and
    top run correctly (`vttest`'s `check_full_screen`).
-3. **M2 — blocks (begun 10/19)**: the shell integration's marks (zsh's and bash's) — OSC
+3. **M2 — blocks (done 10/29, begun 10/19)**: the shell integration's marks (zsh's and bash's) — OSC
    133 (`A` prompt, `B` command, `C` output, `D;status` end) and OSC 7 (directory). Each
    command is a block, drawn as a card — its input and output in the theme's colors,
    padded, with room between cards — its duration and a failure's status at its right, a
-   red bar down a failed one. Copying a block is done: a right click on it copies its command
-   (past the prompt) or its output, whichever part is clicked. Next: selecting and folding a
-   block whole.
+   red bar down a failed one. A right click on it copies its command (past the prompt) or its
+   output, whichever part is clicked; a press under the terminal's chord (or Block ▸ Select
+   Block) selects the block whole, and a finished block's output — more than a line — folds from
+   the card's left gutter or Block's Fold/Unfold, hiding the lines past its first (a chevron and
+   the count stand in for them). M2 done 10/29.
 4. **M3 — the editor (begun 10/16, before M1 and the block cards)**: zsh's integration,
    then the command line as Termina's editor — multi-line, soft wrap, the mouse (click,
    drag, double-click a word, triple-click a line), word and line motions, undo, the
