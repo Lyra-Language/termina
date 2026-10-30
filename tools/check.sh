@@ -118,10 +118,18 @@ if ZSH="$(command -v zsh)"; then
   typed "'world' Home 'echo hello ' Enter" "hello world" "Home to the command line's start"
   typed "'garbage' Ctrl+u 'echo cleared' Enter" "cleared" "Ctrl+U clears the command line"
   typed "'echo /usr/bi' Tab wait:1500 Enter" "/usr/bin/" "Tab completes from zsh"
-  # The copy button, at the right end of the block's first output line (934,100 in the
-  # window as a script opens it, whichever font sets the cells), pasted back into a command.
-  typed "'echo copied-out' Enter wait:1500 move:934,100 click:934,100 'echo pasted-' Primary+v Enter" \
-    "pasted-copied-out" "a block's copy button copies its output"
+  # The copy button, in the card's right margin on the block's first output line, pasted back
+  # into a command. Drawn as off a Mac (`--header`), so the header bar puts that line at the
+  # same height on a Mac and Linux — 934,140, whichever font sets the cells — and pasted with
+  # the terminal's chord off a Mac, Ctrl+Shift.
+  out="$(SHELL="$ZSH" run --header --print --script "wait:2500 'echo copied-out' Enter wait:1500 move:934,140 click:934,140 'echo pasted-' Ctrl+Shift+v Enter wait:1500")"
+  if echo "$out" | grep -qx -- "pasted-copied-out"; then
+    echo "ok    a block's copy button copies its output"
+  else
+    echo "FAIL  a block's copy button copies its output: no line \"pasted-copied-out\""
+    echo "$out" | sed 's/^/    /'
+    failed=1
+  fi
   # History: the command again by Up — its output twice.
   out="$(SHELL="$ZSH" run --print --script "wait:2500 'echo again' Enter wait:1200 Up Enter wait:1500")"
   if [ "$(echo "$out" | grep -cx again)" = 2 ]; then
