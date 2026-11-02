@@ -58,13 +58,21 @@ pub const FILLER: u32 = 2048
 /// The bits of `attrs` from here up are not attributes but the combining marks after the
 /// cell's rune: an index into the screen's [Screen.combining], 0 for none ([marks_of]).
 pub const MARKS_SHIFT: u32 = 12
-/// Not a style: a cell that is part of an OSC 8 hyperlink ([vt.screen.Screen.current_link]);
-/// drawn with a wavy underline ([paint.lyra]'s `draw_attr`).
-pub const HYPERLINK: u32 = 4096
 
-/// Which of the screen's combining marks follow `c`'s rune; 0 for none.
-pub let marks_of = pure (c: Cell) -> i64 => i64(c.attrs >> MARKS_SHIFT)
+/// Not a style and not written by the program: a cell that is part of an
+/// OSC 8 hyperlink ([vt.screen.Screen.current_link]); drawn with a wavy
+/// underline ([paint.lyra]'s `draw_attr`). Stored at bit 17 so it doesn't
+/// collide with the marks range (shift 12).
+pub const HYPERLINK: u32 = 131072
+/// Set on cells with a plain-text detected URL (not OSC 8).
+pub const DETECTED: u32 = 262144
 
+/// Mask out [HYPERLINK] before shifting — it sits in the marks range but is
+/// not a combining-mark index.
+pub let marks_of = pure (c: Cell) -> i64 => {
+  let a = c.attrs & ~HYPERLINK & ~DETECTED
+  i64(a >> MARKS_SHIFT)
+}
 /// Every underline.
 pub const UNDERLINES: u32 = UNDERLINE | DOUBLE_UNDERLINE | CURLY_UNDERLINE
 

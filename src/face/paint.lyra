@@ -33,6 +33,7 @@ import vt.{
   DOUBLE_UNDERLINE,
   CURLY_UNDERLINE,
   HYPERLINK,
+  DETECTED,
   STRIKE,
   SPACER,
   width_of,
@@ -59,6 +60,7 @@ import session.{
   Session,
   Block,
   FrameLayout,
+  Rows,
   duration_text,
   BLOCK_PAD,
   BLOCK_ROUNDING,
@@ -72,6 +74,15 @@ import session.{
 }
 import term.{ Theme, CommandLine, Place, cell_pos, MENU_PAD, MENU_SHOWN }
 
+/// Brighten an `0xAABBGGRR` color by a factor (clamped to 255 per channel).
+let brighten = pure (abgr: u32, factor: f32) -> u32 => {
+  let r = u32((f32(abgr & 0xFF) * factor).min(255.0).round())
+  let g = u32((f32((abgr >> 8) & 0xFF) * factor).min(255.0).round())
+  let b = u32((f32((abgr >> 16) & 0xFF) * factor).min(255.0).round())
+  (abgr & 0xFF000000) | (b << 16) | (g << 8) | r
+}
+/// Warp-style light blue for hyperlink hover.
+const LINK_HOVER: u32 = 0xFF64B5F6
 /// What a grid is drawn with: its font, a cell's width and height, how far below a row's top
 /// its text's baseline is, and the font's measurements (underline, strikeout).
 pub struct Grid {
@@ -192,7 +203,10 @@ pub let paint_tab = pure (
         Point { x: INSET, y: rows.y_of(i) },
         s.shown.line(i),
         s.shown.combining,
-        upto
+        upto,
+        pointer,
+        i,
+        rows
       ),
     }
   }
@@ -231,7 +245,7 @@ pub let paint_tab = pure (
   if boxed { ops.push(PaintDraw(PopClip)) }
   match f.prompt {
     Some((i, prompt_end)) =>
-      prompt_box(ops, s, f, g, theme, fills, input_theme, i, prompt_end, focused),
+      prompt_box(ops, s, f, g, theme, fills, input_theme, i, prompt_end, focused, pointer),
     None => {
       if f.running_box {
         // The command running, greyed, its first line, as wide as the box.
@@ -275,6 +289,24 @@ pub let paint_tab = pure (
   scrollbar(ops, f, theme, area)
   ops
 }
+/// Whether pointer is over a hyperlink cell at the given screen line and column.
+let hyperlink_at = pure (
+  cells: []Cell,
+  column: i64,
+  n: i64,
+  pointer: Point,
+  at_x: f32,
+  line_y: f32,
+  cell_x: f32,
+  cell_y: f32
+) -> bool => {
+  if column < 0 || column >= n { return false }
+  let c = cells[column]
+  if c.attrs & HYPERLINK == 0 || c.ch == SPACER || c.ch == ' ' { return false }
+  let cell_w = width_of(c.ch).max(1)
+  let cx = at_x + f32(column) * cell_x
+  pointer.x >= cx && pointer.x < cx + f32(cell_w) * cell_x && pointer.y >= line_y && pointer.y < line_y + cell_y
+}
 
 /// A screen line's first `upto` cells drawn from `at` (its first cell's top left): its
 /// background runs, then its text a run of one color at a time — each cell in its own face —
@@ -286,7 +318,10 @@ let line = (
   at: Point,
   cells: []Cell,
   combining: []string,
-  upto: i64
+  upto: i64,
+  pointer: Point,
+  screen_line: i64,
+  rows: Rows
 ) -> void => {
   let n = upto.min(cells.len())
   if n <= 0 { return }
@@ -311,37 +346,102 @@ let line = (
     end -= 1
   }
   let baseline = at.y + g.baseline
+  let line_y = rows.y_of(screen_line)
+  // For each hyperlink span, determine if pointer is over it
+  let hyperlink_hovered = (col: i64) -> bool => {
+    if col < 0 || col >= n { return false }
+    if cells[col].attrs & HYPERLINK == 0 { return false }
+    // Find span
+    var start = col
+    while start > 0 && cells[start - 1].attrs & HYPERLINK != 0 { start -= 1 }
+    var end_sp = start
+    while end_sp < n && cells[end_sp].attrs & HYPERLINK != 0 { end_sp += 1 }
+    // Check pointer against any non-space cell in the span
+    var m = start
+    while m < end_sp {
+      let sc = cells[m]
+      if sc.ch != SPACER && sc.ch != ' ' {
+        let cell_w = f32(width_of(sc.ch).max(1)) * g.cell_x
+        let cx = at.x + f32(m) * g.cell_x
+        if pointer.x >= cx && pointer.x < cx + cell_w && pointer.y >= line_y && pointer.y < line_y + g.cell_y {
+          return true
+        }
+      }
+      m += 1
+    }
+    false
+  }
   var k = 0
   while k < end {
-    let (fg, _) = theme.colors(cells[k])
+    let c = cells[k]
+    let (fg, _) = theme.colors(c)
+    var display_fg = fg
+    if c.attrs & HYPERLINK != 0 && hyperlink_hovered(k) { display_fg = LINK_HOVER }
+    // Build run: consume all cells with same display_fg
     var run: []TextCell = []
-    var stop = k
-    while stop < end && theme.colors(cells[stop]).0 == fg {
-      let c = cells[stop]
-      if c.ch != SPACER && c.ch != ' ' {
-        let marks = marks_of(c)
+    var sep = k
+    while sep < end {
+      let sc = cells[sep]
+      let (sc_fg, _) = theme.colors(sc)
+      var sc_display = sc_fg
+      if sc.attrs & HYPERLINK != 0 && hyperlink_hovered(sep) { sc_display = LINK_HOVER }
+      if sc_display != display_fg { break }
+      if sc.ch != SPACER && sc.ch != ' ' {
+        let marks = marks_of(sc)
         run.push(TextCell {
-          col: stop,
-          text: if marks != 0 { "${c.ch}${combining[marks]}" } else { "${c.ch}" },
-          width: width_of(c.ch).max(1),
-          bold: c.attrs & BOLD != 0,
-          italic: c.attrs & ITALIC != 0,
+          col: sep,
+          text: if marks != 0 { "${sc.ch}${combining[marks]}" } else { "${sc.ch}" },
+          width: width_of(sc.ch).max(1),
+          bold: sc.attrs & BOLD != 0,
+          italic: sc.attrs & ITALIC != 0,
         })
       }
-      stop += 1
+      sep += 1
     }
     if run.len() > 0 { ops.push(PaintCells(
       Point { x: at.x, y: baseline },
       g.cell_x,
       run,
       g.font,
-      color(fg)
+      color(display_fg)
     )) }
-    decorations(ops, g, cells, k, stop, baseline, at.x, color(fg))
-    k = stop
+    decorations(ops, g, cells, k, sep, baseline, at.x, color(display_fg))
+    k = sep
+  }
+  // Hover underline: solid light blue under hyperlink spans the pointer is over.
+  var j = 0
+  while j < n {
+    let c = cells[j]
+    if c.attrs & HYPERLINK != 0 && c.ch != SPACER && c.ch != ' ' && hyperlink_hovered(j) {
+      // Find this span to draw the full-width underline
+      var start = j
+      while start > 0 && cells[start - 1].attrs & HYPERLINK != 0 { start -= 1 }
+      var end_sp = start
+      while end_sp < n && cells[end_sp].attrs & HYPERLINK != 0 { end_sp += 1 }
+      // Draw underline from span start to end, skipping spaces
+      let under = baseline + g.metrics.underline_y
+      let thick = g.metrics.underline_thickness.max(1.0)
+      var x0 = at.x + f32(start) * g.cell_x
+      var w: f32 = 0.0
+      var m = start
+      while m < end_sp {
+        let sc = cells[m]
+        if sc.ch != SPACER && sc.ch != ' ' {
+          w += f32(width_of(sc.ch).max(1)) * g.cell_x
+        }
+        m += 1
+      }
+      ops.push(PaintDraw(Fill(
+        Rect { x: x0, y: under - thick / 2.0, w: w, h: thick },
+        radius(0.0),
+        color(LINK_HOVER)
+      )))
+      j = end_sp
+    } else {
+      j += 1
+    }
   }
 }
-
 /// The underlines and strikeouts of cells `from` up to `to`, a run of one color, in runs of one
 /// decoration.
 let decorations = (
@@ -388,7 +488,7 @@ let decorations = (
       thick,
       c
     )) }
-    if attrs & HYPERLINK != 0 { ops.push(PaintWave(
+    if attrs & HYPERLINK != 0 && cells[k].attrs & DETECTED == 0 { ops.push(PaintWave(
       Point { x: x0, y: under + thick },
       w,
       thick * 1.5,
@@ -739,7 +839,8 @@ let prompt_box = (
   input_theme: Theme,
   i: i64,
   prompt_end: i64,
-  focused: bool
+  focused: bool,
+  pointer: Point
 ) -> void => {
   let cols = s.shown.cols
   frame_box(ops, theme, fills, g, cols, f.box_top, f.view_bottom)
@@ -757,7 +858,10 @@ let prompt_box = (
         Point { x: INSET + BOX_INSET, y: row_y(r) },
         cells.slice(from, to),
         s.shown.combining,
-        to - from
+        to - from,
+        pointer,
+        f.first + r,
+        f.rows
       )
     }
   }
@@ -778,7 +882,10 @@ let prompt_box = (
       Point { x: INSET + BOX_INSET + f32(f.wrap.cols - width) * g.cell_x, y: row_y(f.prompt_rows - 1) },
       cells.slice(from, to),
       s.shown.combining,
-      width
+      width,
+      pointer,
+      i,
+      f.rows
     )
   }
   command_line(ops, s.line, place_of(f, g), g, theme, focused)

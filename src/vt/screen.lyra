@@ -253,8 +253,10 @@ impl Screen {
     self.dropped + self.scrollback.len() + self.y
 
   /// The hyperlink at absolute line `n`, column `x`; `None` when there is none. Lines in
-  /// the scrollback are indexed from `scrollback_start`.
-  pub let link_at = pure (self, n: i64, x: i64) -> Maybe<string> => {
+  /// the scrollback are indexed from `scrollback_start`. Both OSC 8 hyperlinks and plain-text
+  /// URLs detected when text is printed are stored in the cells' [Cell.link], so this resolves
+  /// them through scrollback just like the glyph ([Screen.line]).
+  pub let link_at = pure (self: ref, n: i64, x: i64) -> Maybe<string> => {
     let Some(line) = self.line_at(n) else { return None }
     let y = if line < self.scrollback.len() { line } else { line - self.scrollback.len() }
     if y < 0 || y >= self.rows || x < 0 || x >= self.cols { return None }
@@ -326,6 +328,11 @@ impl Screen {
   // Text at the cursor, a cell a rune — two for a wide one (`width.lyra`), its second a
   // [SPACER]; a zero-width rune joins the cell before it ([combine]).
   let print = (self: mut, text: []rune) -> void => {
+    // The columns and line the text starts on, before the loop moves the cursor. A pending wrap
+    // means the first rune lands at column 0 of the next line, so the link there starts one line
+    // lower.
+    let start_col = if self.wrap_pending { 0 } else { self.x }
+    let url_line = if self.wrap_pending { self.y + 1 } else { self.y }
     for r in text {
       let w = width_of(r)
       if w == 0 && i64(r) >= 0x300 { self.combine(r) }
@@ -350,6 +357,76 @@ impl Screen {
           }
         }
         if fits { self.put(r, w) }
+      }
+    }
+    // The text has been written; mark any plain-text URL it carried. Set on the cells, so the
+    // link travels with them into scrollback and back ([Screen.link_at]). A link split across an
+    // automatic line wrap is not fully re-marked on the second line; a URL is rarely that long.
+    self.mark_url_cells(text, start_col, url_line)
+  }
+
+  // Mark plain-text URLs in the just-written cells, giving each a [Cell.link] and the
+  // [HYPERLINK] attrs bit. Scans for "http://"/"https://" prefixes and extends the link until
+  // whitespace or common URL-ending punctuation. `text` starts at column `start_col` on the
+  // current line `url_line`.
+  let mark_url_cells = (
+    self: mut,
+    text: []rune,
+    start_col: i64,
+    url_line: i64
+  ) -> void => {
+    var i = 0
+    while i < text.len() {
+      if text.len() - i >= 7 {
+        // Match the "http://" prefix ("https://" is accepted by the `s` below).
+        var match_proto = true
+        if text[i] != 'h' { match_proto = false }
+        if match_proto && i + 1 < text.len() && text[i + 1] != 't' { match_proto = false }
+        if match_proto && i + 2 < text.len() && text[i + 2] != 't' { match_proto = false }
+        if match_proto && i + 3 < text.len() && text[i + 3] != 'p' { match_proto = false }
+        if match_proto && i + 4 < text.len() && text[i + 4] != ':' { match_proto = false }
+        if match_proto && i + 5 < text.len() && text[i + 5] != '/' { match_proto = false }
+        if match_proto && i + 6 < text.len() && text[i + 6] != '/' { match_proto = false }
+        if match_proto {
+          var j = i + 7
+          // "https://"?
+          if j < text.len() && text[j] == 's' { j += 1 }
+          // The link runs to the next delimiter.
+          while j < text.len() {
+            let ch = text[j]
+            if ch == ' ' || ch == '\n' || ch == '\r' || ch == '\t' || ch == '"' || ch == '\'' || ch == ')' || ch == '>' {
+              break
+            }
+            j += 1
+          }
+          let start = start_col + i
+          let end = start_col + j
+          // Build the URL string from the matched runes.
+          var url_chars: []rune = []
+          var k = i
+          while k < j {
+            url_chars.push(text[k])
+            k += 1
+          }
+          let url_str = url_chars.join("")
+          // Mark the cells. A cell that already carries an OSC 8 link keeps it; detected URLs are
+          // the fallback for text a program never advertised as a link.
+          var m = start
+          while m < end && m >= 0 && m < self.cols {
+            let mut c = self.lines[url_line][m]
+            if c.link.is_none() {
+              c.link = Some(url_str)
+            }
+            c.attrs = c.attrs | HYPERLINK | DETECTED
+            self.lines[url_line][m] = c
+            m += 1
+          }
+          i = j
+        } else {
+          i += 1
+        }
+      } else {
+        i += 1
       }
     }
   }

@@ -36,6 +36,7 @@ import ui.interact.{
 }
 import ui.draw.{ Size, Point, Rect, radius }
 import ui.backend.{ Modifiers, Character, PageUp, PageDown, WindowState }
+import ui.backend.{ Cursor, Hand }
 import ui.text.{ FontSpec, FontMetrics }
 import ui.layout.{
   Node,
@@ -79,6 +80,7 @@ import term.{
   Paste,
 }
 import editor.{ position }
+import vt.{ HYPERLINK, width_of, SPACER }
 import settings.{ Settings, FontFamily, defaults, PlainBacking }
 import settings_page.{ SettingsEvent, settings_page }
 import ui.style.{ Style }
@@ -242,13 +244,57 @@ pub let layout_at = pure (t: Term, size: Size) -> FrameLayout => {
 /// The window, in the theme's colours: on a Mac the tab bar (`window.lyra`), elsewhere the
 /// header bar over it; then the shown tab, painted and taking input raw.
 pub let view = pure (t: Term) -> Node<TermEvent> => {
-  if t.tabs.len() == 0 { return column::<TermEvent>([]) }
+  // Check if pointer is over a hyperlink span (not just one cell)
+  var is_link = false
+  if t.tabs.len() > 0 {
+    let f = layout_at(t, Size { w: t.size.w, h: t.size.h - 2.0 * PAD })
+    let s = t.tabs[t.active]
+    let shown = s.shown
+    let grid = t.grid
+    let p = t.pointer
+    // Pointer relative to the grid area
+    let rel_x = p.x - INSET
+    if rel_x >= 0 && p.y >= f.rows.origin_y {
+      let col = i64((rel_x / grid.cell_x).floor())
+      if col >= 0 && col < shown.cols {
+        var row = 0
+        while row < shown.used_rows() {
+          let y = f.rows.y_of(row + shown.scrollback_len())
+          if p.y >= y && p.y < y + grid.cell_y {
+            let cells = shown.line(row)
+            // Extend to find the full hyperlink span
+            var start = col
+            while start > 0 && cells[start - 1].attrs & HYPERLINK != 0 { start -= 1 }
+            var end_sp = start
+            while end_sp < shown.cols && cells[end_sp].attrs & HYPERLINK != 0 { end_sp += 1 }
+            // Check pointer against any non-space cell in the span
+            var m = start
+            while m < end_sp {
+              let sc = cells[m]
+              if sc.ch != SPACER && sc.ch != ' ' {
+                let cell_w = f32(width_of(sc.ch).max(1)) * grid.cell_x
+                let cx = INSET + f32(m) * grid.cell_x
+                if p.x >= cx && p.x < cx + cell_w {
+                  is_link = true
+                  break
+                }
+              }
+              m += 1
+            }
+          }
+          row += 1
+        }
+      }
+    }
+  }
   let raw = RawInput {
     on_key: (k: KeyInput) -> Maybe<TermEvent> => Some(KeyHeard(k)),
     on_text: (x: TextInput) -> Maybe<TermEvent> => Some(TextHeard(x)),
     on_pointer: (p: PointerInput) -> Maybe<TermEvent> => Some(PointerHeard(p)),
     caret: Some(caret_of(t)),
+    cursor: if is_link { Hand } else { Arrow },
   }
+  if t.tabs.len() == 0 { return column::<TermEvent>([]) }
   let terminal = expanded(painted(
     (area: PaintArea) -> []PaintOp =>
       paint_tab(
