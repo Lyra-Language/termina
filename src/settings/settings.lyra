@@ -151,7 +151,7 @@ pub struct SavedTab {
 
 /// The saved session as the file holds it: an array of tabs, in order, each with the
 /// program that opened it (or `[]` for the login shell) and the directory it was in.
-pub let saved_to_json = (tabs: []SavedTab) -> JsonValue => {
+pub let pure saved_to_json = (tabs: []SavedTab) -> JsonValue => {
   var arr: []JsonValue = []
   for t in tabs {
     var cmd_arr: []JsonValue = []
@@ -168,7 +168,7 @@ pub let saved_to_json = (tabs: []SavedTab) -> JsonValue => {
 
 /// Saved tabs from the file: a lenient read — each element must have a command array (which
 /// may be empty), and a `dir` where present. Anything else is skipped.
-pub let saved_from_json = (v: Maybe<JsonValue>) -> []SavedTab => {
+pub let pure saved_from_json = (v: Maybe<JsonValue>) -> []SavedTab => {
   let Some(doc) = v else { return [] }
   var out: []SavedTab = []
   for item in doc.elements() {
@@ -350,7 +350,7 @@ pub let edit_colors = (s: mut Settings) -> void => {
 
 /// Whether Save has a theme to overwrite: the colors changed from one of the user's saved
 /// themes, still there.
-pub let can_save = pure (s: Settings) -> bool =>
+pub let can_save = pure (s: ref Settings) -> bool =>
   s.theme_name == "Custom" && saved_colors(s.themes, s.edited_from) != None
 
 /// The current colors saved as theme `name` (one of that name replaced), and made the
@@ -505,7 +505,7 @@ let colors_in = pure (v: JsonValue) -> JsonValue => match v.field("colors") {
 const OLD_COLORS_KEY: string = "colours"
 
 /// Keep `s` at `path`, making its directory; whether it was written.
-pub let save_settings = (path: string, s: Settings) -> bool => {
+pub let save_settings = (path: string, s: ref Settings) -> bool => {
   match path.parent() {
     Some(dir) => if !create_dir_all(dir) { return false },
     None => {},
@@ -514,7 +514,7 @@ pub let save_settings = (path: string, s: Settings) -> bool => {
 }
 
 /// `s` as the file holds it.
-pub let settings_to_json = pure (s: Settings) -> string => JsonObject([
+pub let settings_to_json = pure (s: ref Settings) -> string => JsonObject([
   member("font_family", JsonString(s.font_family)),
   member("font_file", JsonString(s.font_file)),
   member("font_size", JsonNumber(f64(s.font_size))),
@@ -686,7 +686,7 @@ let colors_from_json = pure (c: JsonValue, base: Colors) -> Colors => {
 
 /// How much what is behind the background `field` names is blurred, in points: the window's
 /// (`bg`), the input sections' or the output sections' ([may_be_clear]); 0 for any other.
-pub let blur_named = pure (s: Settings, field: string) -> f32 => match field {
+pub let blur_named = pure (s: ref Settings, field: string) -> f32 => match field {
   "bg" => s.background_blur,
   "input" => s.input_blur,
   "output" => s.output_blur,
@@ -859,7 +859,7 @@ pub let families_of = pure (files: []string) -> []FontFamily => {
 
 /// The faces the settings choose: the chosen file's alone when there is one, else the family
 /// named (the first of `families` when it is not installed).
-pub let family_for = pure (s: Settings, families: []FontFamily) -> Maybe<FontFamily> => {
+pub let family_for = pure (s: ref Settings, families: []FontFamily) -> Maybe<FontFamily> => {
   if s.font_file != "" { return Some(file_family(s.font_file)) }
   family_named(families, s.font_family)
 }

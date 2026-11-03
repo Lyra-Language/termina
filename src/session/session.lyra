@@ -197,7 +197,7 @@ pub let open_session = (
 }
 
 /// End a tab: its program hung up on, its request file removed.
-pub let close_session = (s: Session) -> void => {
+pub let close_session = (s: ref Session) -> void => {
   close(s.pty)
   match s.integrated {
     Some(i) => {
@@ -209,7 +209,7 @@ pub let close_session = (s: Session) -> void => {
 
 /// The tab's name: the title its program set, else the command running, else its
 /// directory's last part (`~` for home), else the program.
-pub let tab_title = pure (s: Session, home: string) -> string => {
+pub let tab_title = pure (s: ref Session, home: string) -> string => {
   if s.shown.title != "" { return s.shown.title }
   if s.running != "" { return first_line(s.running) }
   let cwd = s.shown.cwd
@@ -220,7 +220,7 @@ pub let tab_title = pure (s: Session, home: string) -> string => {
 }
 
 /// The directory a tab beside this one starts in: where its shell last said it was.
-pub let directory = pure (s: Session) -> Maybe<string> =>
+pub let directory = pure (s: ref Session) -> Maybe<string> =>
   if s.shown.cwd == "" { None } else { Some(s.shown.cwd) }
 
 impl Session {
@@ -267,7 +267,7 @@ impl Session {
   }
 
   /// Whether Edit menu item `a` would do anything now.
-  pub let can = pure (self, a: EditAction) -> bool => {
+  pub let can = pure (self: ref Session, a: EditAction) -> bool => {
     let at_prompt = match self.mode {
       AtPrompt(_, _) => true,
       Raw => false,
@@ -281,17 +281,17 @@ impl Session {
   }
 
   /// Whether the grid has a selection.
-  pub let has_selection = pure (self) -> bool =>
+  pub let has_selection = pure (self: ref Session) -> bool =>
     self.sel_a.line != self.sel_b.line || self.sel_a.col != self.sel_b.col
 
   /// The grid's selected text.
-  pub let selected_text = pure (self) -> string =>
+  pub let selected_text = pure (self: ref Session) -> string =>
     selection_text(self.shown, self.sel_a, self.sel_b)
 
   /// What a right click on the grid's line `line` copies: the block there — its command
   /// when the line is its input, its output when it is its output (a running block's, so
   /// far). `None` off a block, on the alternate screen, and where it would copy nothing.
-  pub let block_copy_at = pure (self, line: i64) -> Maybe<string> => {
+  pub let block_copy_at = pure (self: ref Session, line: i64) -> Maybe<string> => {
     if self.shown.alt { return None }
     var k = self.blocks.len() - 1
     while k >= 0 {
@@ -323,7 +323,7 @@ impl Session {
 
   /// What block `b`'s copy button copies: its output (a running block's, so far); `None`
   /// where it has none.
-  pub let output_copy = pure (self, b: Block) -> Maybe<string> =>
+  pub let output_copy = pure (self: ref Session, b: Block) -> Maybe<string> =>
     copyable(block_output_text(
       self,
       b,
@@ -331,11 +331,11 @@ impl Session {
     ))
 
   /// The first absolute line past the running block's output so far.
-  pub let running_end = pure (self) -> i64 =>
+  pub let running_end = pure (self: ref Session) -> i64 =>
     self.shown.absolute(self.shown.scrollback_len() + self.shown.used_rows() - 1) + 1
 
   /// The block — finished or running — whose input or output covers absolute line `line`.
-  pub let block_at = pure (self, line: i64) -> Maybe<Block> => {
+  pub let block_at = pure (self: ref Session, line: i64) -> Maybe<Block> => {
     if self.shown.alt { return None }
     var k = self.blocks.len() - 1
     while k >= 0 {
@@ -386,7 +386,7 @@ impl Session {
 
   /// The block covering absolute line `line`'s fold state, where its output is more than a
   /// line — `None` elsewhere.
-  pub let fold_at = pure (self, line: i64) -> Maybe<bool> => match self.block_at(line) {
+  pub let fold_at = pure (self: ref Session, line: i64) -> Maybe<bool> => match self.block_at(line) {
     Some(b) => if b.end >= 0 && b.end > b.output + 1 { Some(b.folded) } else { None },
     None => None,
   }
@@ -687,7 +687,7 @@ pub struct FrameLayout {
 }
 
 pub let frame_layout = pure (
-  s: Session,
+  s: ref Session,
   cell_x: f32,
   cell_y: f32,
   origin_y: f32,
@@ -835,7 +835,7 @@ pub let wheel_keys = pure (notches: i64, cursor_keys: bool) -> string => {
 /// What a click selects on line `line` (absolute): with `unit` 1 the place `edge` (a column
 /// boundary), with 2 the word around cell `under`, with 3 the whole line.
 let unit_span = pure (
-  shown: Screen,
+  shown: ref Screen,
   unit: i64,
   line: i64,
   under: i64,
@@ -951,7 +951,7 @@ impl Rows {
 /// padding, between its input and output the padding of each, below its output padding —
 /// for the lines from `base` to `grid_lines` (indices).
 pub let block_rows_layout = pure (
-  s: Session,
+  s: ref Session,
   origin_y: f32,
   base: i64,
   cell_y: f32,
@@ -1054,7 +1054,7 @@ pub let duration_text = pure (nanos: i64) -> string => {
 
 /// A block's command as text: its input's lines from where the command's text began — past
 /// the prompt — to the line before its output, read the way a selection over them would be.
-pub let block_command_text = pure (s: Session, b: Block) -> string => {
+pub let block_command_text = pure (s: ref Session, b: Block) -> string => {
   let last = (b.output - 1).max(b.cmd_line)
   selection_text(
     s.shown,
@@ -1065,7 +1065,7 @@ pub let block_command_text = pure (s: Session, b: Block) -> string => {
 
 /// A block's output as text: its lines from where the output began to `end - 1`, read the
 /// way a selection over them would be.
-pub let block_output_text = pure (s: Session, b: Block, end: i64) -> string => {
+pub let block_output_text = pure (s: ref Session, b: Block, end: i64) -> string => {
   if end <= b.output { return "" }
   selection_text(
     s.shown,

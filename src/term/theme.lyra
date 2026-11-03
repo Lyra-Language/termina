@@ -57,7 +57,7 @@ pub struct Theme {
 }
 
 /// The theme the settings describe.
-pub let theme_of = pure (s: Settings) -> Theme => Theme {
+ pub let theme_of = pure (s: ref Settings) -> Theme => Theme {
   fg: abgr(s.colors.fg),
   bg: abgr(s.colors.bg),
   cursor: abgr(s.colors.cursor),

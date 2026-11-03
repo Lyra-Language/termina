@@ -177,15 +177,16 @@ pub struct Place {
 
 impl CommandLine {
   /// How many rows the command line takes laid out by `wrap`.
-  pub let rows = pure (self, wrap: Wrap) -> i64 => row_count(self.edit.text, wrap)
+  pub let rows = pure (self: ref, wrap: Wrap) -> i64 =>
+    row_count(self.edit.text, wrap)
 
   /// How many rows the completion menu takes below them (0 when it is closed) — or the
   /// history search's matches, one row saying there are none when there are none.
-  pub let menu_rows = pure (self) -> i64 =>
+  pub let menu_rows = pure (self: ref) -> i64 =>
     if self.menu.len() == 0 { if self.searching != None { 1 } else { 0 } } else { self.menu.len().min(MENU_ROWS) }
 
   /// Whether a history search (Ctrl+R) is under way.
-  pub let is_searching = pure (self) -> bool => self.searching != None
+  pub let is_searching = pure (self: ref) -> bool => self.searching != None
 
   /// The shell's completions arrived. Those for a line since edited are dropped; one is put
   /// in; of several, the start they share is put in and the menu opens. Asked again as
@@ -301,7 +302,7 @@ impl CommandLine {
 
   // Where the menu is: its top left on the screen (below the command line's last row, or
   // above it by `lift`), its column (the word's, moved left to fit), and its width in cells.
-  pub let menu_layout = pure (self, at: Place) -> (Point, i64, i64) => {
+  pub let menu_layout = pure (self: ref, at: Place) -> (Point, i64, i64) => {
     let wrap = at.wrap
     var shown_w = 0
     var desc_w = 0
@@ -358,7 +359,7 @@ impl CommandLine {
   }
 
   /// Whether `a` would do anything now: what the Edit menu greys out when not.
-  pub let can = pure (self, a: EditAction) -> bool => match a {
+  pub let can = pure (self: ref, a: EditAction) -> bool => match a {
     Undo => self.edit.undo_stack.len() > 0,
     Redo => self.edit.redo_stack.len() > 0,
     Cut => self.edit.has_selection(),
@@ -394,7 +395,7 @@ impl CommandLine {
 
   /// The command words typed that the shell has not been asked about, each once — none while
   /// it is being asked ([commands_asked]).
-  pub let commands_to_ask = pure (self) -> []string => {
+  pub let commands_to_ask = pure (self: ref) -> []string => {
     if self.asking { return [] }
     var out: []string = []
     for (a, b) in command_words(self.edit.text) {
@@ -419,7 +420,8 @@ impl CommandLine {
   }
 
   /// Whether the shell can run command word `word`, as it said; `None` while not known.
-  pub let command_found = pure (self, word: string) -> Maybe<bool> => self.known.get(word)
+  pub let command_found = pure (self: ref, word: string) -> Maybe<bool> =>
+    self.known.get(word)
 
   /// A prompt whose input begins at absolute `line` and `col`: a new one forgets what the
   /// shell said of commands (a command may have changed what exists) — the same one drawn

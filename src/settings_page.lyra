@@ -84,26 +84,26 @@ pub data SettingsEvent =
   | KeepSetting
 
 /// The Family list: a chosen file's own name first, set off by a rule, then the families.
-let family_options = pure (s: Settings, families: []FontFamily) -> []string => [
+let family_options = pure (s: ref Settings, families: []FontFamily) -> []string => [
   ...(if s.font_file != "" { [file_family(s.font_file).name] } else { [] }),
   ...[f in families | f.name],
 ]
 
 /// Each option's font: a family in itself, the chosen file's name in the select's own.
-let family_fonts = pure (s: Settings, families: []FontFamily) -> []string => [
+let family_fonts = pure (s: ref Settings, families: []FontFamily) -> []string => [
   ...(if s.font_file != "" { [""] } else { [] }),
   ...[f in families | preview_name(f)],
 ]
 
 /// Where the list shows the font in use: the file's own name, else its family.
-let family_shown = pure (s: Settings, families: []FontFamily) -> i64 => {
+let family_shown = pure (s: ref Settings, families: []FontFamily) -> i64 => {
   if s.font_file != "" { return 0 }
   for k, f in families { if f.name == s.font_family { return k } }
   -1
 }
 
 /// The family at `k` of the list, the file's own name (first) being no change.
-let family_picked = pure (s: Settings, families: []FontFamily, k: i64) -> SettingsEvent => {
+let family_picked = pure (s: ref Settings, families: []FontFamily, k: i64) -> SettingsEvent => {
   let first = if s.font_file != "" { 1 } else { 0 }
   if k < first || k - first >= families.len() { KeepSetting } else { UseFamily(families[k - first].name) }
 }
@@ -111,28 +111,28 @@ let family_picked = pure (s: Settings, families: []FontFamily, k: i64) -> Settin
 /// The Theme list: Termina's themes, then the user's after a rule — the one being edited
 /// marked `*` until Save ([edited_name]) — and a theme that is neither (`Custom`) first, set
 /// off by a rule of its own.
-let theme_options = pure (s: Settings) -> []string => [
+let theme_options = pure (s: ref Settings) -> []string => [
   ...(if theme_listed(s) { [] } else { [s.theme_name] }),
   ...THEME_NAMES,
   ...[t in s.themes | if t.name == edited_name(s) { "${t.name}*" } else { t.name }],
 ]
 
 /// The saved theme whose colors are being edited, which Save overwrites; `""` for none.
-let edited_name = pure (s: Settings) -> string => if can_save(s) { s.edited_from } else { "" }
+let edited_name = pure (s: ref Settings) -> string => if can_save(s) { s.edited_from } else { "" }
 
 /// Whether the theme in use is one of the list's — a saved one being edited among them.
-let theme_listed = pure (s: Settings) -> bool =>
+let theme_listed = pure (s: ref Settings) -> bool =>
   THEME_NAMES.contains(s.theme_name) || is_saved(s) || edited_name(s) != ""
 
 /// Where the list shows the theme in use: a saved one being edited at its own place, marked.
-let theme_shown = pure (s: Settings) -> i64 => {
+let theme_shown = pure (s: ref Settings) -> i64 => {
   let shown = if edited_name(s) != "" { "${edited_name(s)}*" } else { s.theme_name }
   for k, name in theme_options(s) { if name == shown { return k } }
   -1
 }
 
 /// The rules of the Theme list: after an unlisted theme, and before the user's themes.
-let theme_rules = pure (s: Settings) -> []i64 => {
+let theme_rules = pure (s: ref Settings) -> []i64 => {
   let first = if theme_listed(s) { 0 } else { 1 }
   [
     ...(if first == 1 { [1] } else { [] }),
@@ -141,7 +141,7 @@ let theme_rules = pure (s: Settings) -> []i64 => {
 }
 
 /// The theme at `k` of the list.
-let theme_picked = pure (s: Settings, k: i64) -> SettingsEvent => {
+let theme_picked = pure (s: ref Settings, k: i64) -> SettingsEvent => {
   let first = if theme_listed(s) { 0 } else { 1 }
   let at = k - first
   if at < 0 { KeepSetting } else if at < THEME_NAMES.len() { UseTheme(THEME_NAMES[at]) } else if at - THEME_NAMES.len() < s.themes.len() {
@@ -150,7 +150,7 @@ let theme_picked = pure (s: Settings, k: i64) -> SettingsEvent => {
 }
 
 /// Whether the theme in use is one the user saved.
-let is_saved = pure (s: Settings) -> bool => saved_colors(s.themes, s.theme_name) != None
+let is_saved = pure (s: ref Settings) -> bool => saved_colors(s.themes, s.theme_name) != None
 
 /// A swatch's colour as the settings keep it: `0xRRGGBB`, how transparent in the top byte.
 let rgb_of_color = pure (c: Color) -> u32 =>
@@ -209,7 +209,7 @@ const COLOR_GROUPS = [
 ]
 
 /// From settings_page.lui, line 214.
-pub let settings_page = pure (s: Settings, families: []FontFamily, typed: string, open: string) -> Node<SettingsEvent> =>
+pub let settings_page = pure (s: ref Settings, families: []FontFamily, typed: string, open: string) -> Node<SettingsEvent> =>
   component_of("settings_page", settings_page_sheet, [
     column([ // settings_page.lui:234
       expanded(column([ // settings_page.lui:235
@@ -305,7 +305,7 @@ pub let settings_page = pure (s: Settings, families: []FontFamily, typed: string
   ])
 
 /// From settings_page.lui, line 348.
-pub let color_field = pure (s: Settings, label: string, field: string, open: string) -> Node<SettingsEvent> =>
+pub let color_field = pure (s: ref Settings, label: string, field: string, open: string) -> Node<SettingsEvent> =>
   component_of("color_field", color_field_sheet, [
     row([ // settings_page.lui:354
       swatch(swatch_color(color_named(s.colors, field)), open == field, OpenSwatch(field), (c: Color) -> SettingsEvent => SetColor(field, rgb_of_color(c)), CloseSwatch, !(!may_be_clear(field)), [ // settings_page.lui:355
@@ -337,13 +337,13 @@ pub let color_field = pure (s: Settings, label: string, field: string, open: str
   ])
 
 /// From settings_page.lui, line 389.
-pub let ansi_field = pure (s: Settings, k: i64, open: string) -> Node<SettingsEvent> =>
+pub let ansi_field = pure (s: ref Settings, k: i64, open: string) -> Node<SettingsEvent> =>
   component("ansi_field", Sheet {}, [
     swatch(swatch_color(s.colors.ansi[k]), open == "ansi ${k}", OpenSwatch("ansi ${k}"), (c: Color) -> SettingsEvent => SetAnsi(k, rgb_of_color(c)), CloseSwatch, false), // settings_page.lui:390
   ])
 
 /// From settings_page.lui, line 402.
-pub let fill_editor = pure (s: Settings, label: string, field: string, open: string) -> Node<SettingsEvent> =>
+pub let fill_editor = pure (s: ref Settings, label: string, field: string, open: string) -> Node<SettingsEvent> =>
   component_of("fill_editor", fill_editor_sheet, [
     column([ // settings_page.lui:408
       row([ // settings_page.lui:409

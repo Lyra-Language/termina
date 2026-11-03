@@ -239,17 +239,17 @@ impl Screen {
   /// The absolute number of everything's line `i` ([line]'s numbering): it counts lines
   /// from the first the screen ever had, so it names the same line however much has
   /// scrolled since — until it leaves the scrollback, when [line_at] answers `None`.
-  pub let absolute = pure (self, i: i64) -> i64 => i + self.dropped
+  pub let absolute = pure (self: ref, i: i64) -> i64 => i + self.dropped
 
   /// The line whose absolute number is `n`, as an index for [line]; `None` once it has left
   /// the scrollback.
-  pub let line_at = pure (self, n: i64) -> Maybe<i64> => {
+  pub let line_at = pure (self: ref, n: i64) -> Maybe<i64> => {
     let i = n - self.dropped
     if i < 0 || i >= self.scrollback.len() + self.rows { None } else { Some(i) }
   }
 
   /// The cursor's absolute line.
-  pub let cursor_line = pure (self) -> i64 =>
+  pub let cursor_line = pure (self: ref) -> i64 =>
     self.dropped + self.scrollback.len() + self.y
 
   /// The hyperlink at absolute line `n`, column `x`; `None` when there is none. Lines in
@@ -265,12 +265,12 @@ impl Screen {
   }
 
   /// How many lines there are above the screen.
-  pub let scrollback_len = pure (self) -> i64 => self.scrollback.len()
+  pub let scrollback_len = pure (self: ref) -> i64 => self.scrollback.len()
 
   /// How many of the screen's rows are in use: down to the last with anything on it — a
   /// character, or a background of its own — or the cursor's, whichever is lower. The
   /// blank rows below are the screen's, not yet the program's.
-  pub let used_rows = pure (self) -> i64 => {
+  pub let used_rows = pure (self: ref) -> i64 => {
     var last = self.y
     var y = self.rows - 1
     while y > last {
@@ -283,7 +283,7 @@ impl Screen {
   }
 
   /// Line `i` of everything — the scrollback's, oldest first, then the screen's.
-  pub let line = pure (self, i: i64) -> []Cell => {
+  pub let line = pure (self: ref, i: i64) -> []Cell => {
     let n = self.scrollback.len()
     if i < n { self.scrollback[(self.scrollback_start + i) % n] }
     else { self.lines[i - n] }
@@ -680,7 +680,7 @@ impl Screen {
   }
 
   // A private mode's state for DECRQM: 1 set, 2 reset, 0 a mode this terminal does not have.
-  let mode_state = pure (self, mode: i64) -> i64 => {
+  let mode_state = pure (self: ref, mode: i64) -> i64 => {
     let set = if mode == 1 { Some(self.cursor_keys) }
     else if mode == 7 { Some(self.autowrap) }
     else if mode == 25 { Some(self.cursor_visible) }
@@ -802,7 +802,7 @@ impl Screen {
 
   // The first line the cursor has not written on: its own when it is at the line's start,
   // else the next.
-  let next_line = pure (self) -> i64 =>
+  let next_line = pure (self: ref) -> i64 =>
     if self.x > 0 || self.wrap_pending { self.cursor_line() + 1 } else { self.cursor_line() }
 
   let erase_display = (self: mut, mode: i64) -> void => {
