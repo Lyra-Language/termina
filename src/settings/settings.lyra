@@ -151,7 +151,7 @@ pub struct SavedTab {
 
 /// The saved session as the file holds it: an array of tabs, in order, each with the
 /// program that opened it (or `[]` for the login shell) and the directory it was in.
-pub let pure saved_to_json = (tabs: []SavedTab) -> JsonValue => {
+pub let saved_to_json = pure (tabs: []SavedTab) -> JsonValue => {
   var arr: []JsonValue = []
   for t in tabs {
     var cmd_arr: []JsonValue = []
@@ -168,7 +168,7 @@ pub let pure saved_to_json = (tabs: []SavedTab) -> JsonValue => {
 
 /// Saved tabs from the file: a lenient read — each element must have a command array (which
 /// may be empty), and a `dir` where present. Anything else is skipped.
-pub let pure saved_from_json = (v: Maybe<JsonValue>) -> []SavedTab => {
+pub let saved_from_json = pure (v: Maybe<JsonValue>) -> []SavedTab => {
   let Some(doc) = v else { return [] }
   var out: []SavedTab = []
   for item in doc.elements() {
@@ -859,7 +859,10 @@ pub let families_of = pure (files: []string) -> []FontFamily => {
 
 /// The faces the settings choose: the chosen file's alone when there is one, else the family
 /// named (the first of `families` when it is not installed).
-pub let family_for = pure (s: ref Settings, families: []FontFamily) -> Maybe<FontFamily> => {
+pub let family_for = pure (
+  s: ref Settings,
+  families: []FontFamily
+) -> Maybe<FontFamily> => {
   if s.font_file != "" { return Some(file_family(s.font_file)) }
   family_named(families, s.font_family)
 }
