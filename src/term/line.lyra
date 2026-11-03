@@ -54,7 +54,7 @@ import editor.{
   command_words,
 }
 import vt.{ Completion }
-import std.collections.{ HashMap, hashmap_new }
+import std.collections.{ HashMap }
 
 /// The command line's state between frames: the editor, the history being walked, and a
 /// drag under way.
@@ -151,7 +151,7 @@ pub let command_line = pure (history: []string) -> CommandLine => CommandLine {
   menu_keys: false,
   suffix_left: None,
   searching: None,
-  known: hashmap_new(),
+  known: HashMap.new(),
   asking: false,
   known_at: (-1, -1),
 }
@@ -426,7 +426,7 @@ impl CommandLine {
   /// again does not.
   pub let prompt_at = (self: mut, line: i64, col: i64) -> void => {
     if self.known_at == (line, col) { return }
-    self.known = hashmap_new()
+    self.known = HashMap.new()
     self.asking = false
     self.known_at = (line, col)
   }

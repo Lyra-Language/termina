@@ -84,7 +84,7 @@ import vt.{ HYPERLINK, width_of, SPACER }
 import settings.{ Settings, FontFamily, defaults, PlainBacking }
 import settings_page.{ SettingsEvent, settings_page }
 import ui.style.{ Style }
-import std.collections.{ HashMap, hashmap_new }
+import std.collections.{ HashMap }
 
 /// The window: its tabs and each one's view, the one shown, the next tab's identity, the home
 /// directory (a tab's name for it), the theme and the grid's font, the painter's size, the
@@ -217,7 +217,7 @@ pub let term_of = (
     views: [s in tabs | View {}],
     next_id: tabs.len(),
     home: home,
-    images: hashmap_new(),
+    images: HashMap.new(),
     theme: theme,
     grid: grid,
     default_size: grid.font.size,

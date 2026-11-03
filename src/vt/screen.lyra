@@ -9,7 +9,7 @@ module vt
 //! the alternate screen, application cursor keys, autowrap, the cursor's shape and
 //! visibility, bracketed paste and the mouse's reporting modes.
 
-import std.collections.{ HashMap, hashmap_new }
+import std.collections.{ HashMap }
 
 /// The screen, its cursor and its scrollback.
 pub struct Screen {
@@ -177,7 +177,7 @@ pub let screen = pure (cols: i64, rows: i64) -> Screen => Screen {
   fg_report: "e6e6/e1e1/dcdc",
   bg_report: "1818/1a1a/1e1e",
   combining: [""],
-  combining_ids: hashmap_new(),
+  combining_ids: HashMap.new(),
 }
 
 /// The most lines kept above the screen.
