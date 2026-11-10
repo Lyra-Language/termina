@@ -120,7 +120,7 @@ each tab a painter taking input raw, under `ui`'s tab bar, menus and Settings ta
 
 | file | what |
 |---|---|
-| `src/termina.lyra` | `main`: the fonts (the settings' family as `mono`, the fallbacks), the window on the GPU — at its remembered place, see-through if the background is — or played headless by `--script` through SDL's 2D renderer, a `wait:` taking real time in slices so the shell is heard; `--print`, `--png`, `--header`; on Linux the window's id and an AppImage's desktop entry |
+| `src/termina.lyra` | `main`: the fonts (the settings' family as `mono`, the fallbacks), the window on the GPU — at its remembered place, see-through if the background is — or played headless by `--script` through SDL's 2D renderer, a `wait:` taking real time in slices so the shell is heard; `--print`, `--png`, `--header` — its flags read by std's `parse_command` up to the program to run (or a `--`), whose own arguments are left alone; on Linux the window's id and an AppImage's desktop entry |
 | `package.sh`, `tools/sdl3.sh`, `tools/sdl3_image.sh`, `tools/textlibs.sh`, `tools/appimagetool.sh` | a release archive with SDL3 inside — the Mac app signed and notarized when given an identity and key, an AppImage on Linux — SDL3, and static SDL3_image, FreeType and HarfBuzz, built from source for it, and the pinned appimagetool (Releases, above) |
 | `tools/check.sh` | the window's checks: scripted runs, each in a `HOME` of its own, their screens or settings compared — tabs, menus, the Settings tab, and the command line at zsh's prompt |
 | `assets/` | the icon: `termina.svg` the source; `Termina.icns` (the app's) and `termina.png` made from it (`assets/README.md`); `Termina.entitlements`, what the signed app's commands may ask for (Releases, above) |

@@ -40,6 +40,7 @@ import ui.layout.{ paint }
 import bindings.sdl3.{ platform, set_hint }
 import bindings.freetype.{ HintNone, HintLight }
 import std.env.{ lookup, program_args }
+import std.collections.{ parse_command }
 import std.io.{ write_bytes, sleep_ms, read_file, write_file, create_dir_all }
 import std.path.{ parent }
 import std.png.{ write_png }
@@ -96,24 +97,23 @@ const HEIGHT: f32 = 600.0
 const SLICE_MS: i64 = 10
 
 let main = () -> u8 => {
-  var args = program_args().slice(1, program_args().len())
-  var printing = false
-  var header = false
-  var script: Maybe<string> = None
-  var png: Maybe<string> = None
-  while args.len() > 0 && args[0].starts_with("--") {
-    let flag = args[0]
-    if flag == "--print" || flag == "--header" {
-      if flag == "--print" { printing = true } else { header = true }
-      args = args.slice(1, args.len())
-    } else if (flag == "--script" || flag == "--png") && args.len() > 1 {
-      if flag == "--script" { script = Some(args[1]) } else { png = Some(args[1]) }
-      args = args.slice(2, args.len())
-    } else {
-      println("termina: ${flag}? (--print, --header, --script STEPS, --png FILE)")
+  // Termina's flags, then the program to run and its own arguments, untouched.
+  let parsed = match parse_command(
+    program_args(),
+    ["--print", "--header"],
+    ["--script", "--png"]
+  ) {
+    Ok(p) => p,
+    Err(why) => {
+      println("termina: ${why} (--print, --header, --script STEPS, --png FILE)")
       return 2
-    }
+    },
   }
+  let args = parsed.positional
+  let printing = parsed.has("--print")
+  let header = parsed.has("--header")
+  let script = parsed.value("--script")
+  let png = parsed.value("--png")
   // On Linux, the id the desktop knows the window by — so the dock shows the entry's icon —
   // and, run as an AppImage, that entry installed for the launcher to find.
   if platform() == "Linux" {
