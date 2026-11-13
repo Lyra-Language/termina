@@ -295,7 +295,7 @@ let applied = (t: mut Term, faces_were: string) -> []Command<TermEvent> => {
 /// The window see-through while the background is not opaque, and what is behind it blurred
 /// as the settings say: asked of the system each change (on Linux a window is see-through only
 /// if it opened so, which the next start does).
-pub let see_through = pure (t: Term) -> []Command<TermEvent> => {
+pub let see_through = pure (t: ref Term) -> []Command<TermEvent> => {
   let on = (t.theme.bg >> 24) != 0xFF
   [WindowSeeThrough(on), WindowBlur(if on { t.settings.background_blur } else { 0.0 })]
 }
@@ -315,14 +315,14 @@ pub let settings_opened = (t: mut Term) -> []Command<TermEvent> => {
 }
 
 /// The name the settings' faces are loaded as: the family's, or the file's.
-let faces_of = pure (t: Term) -> string => match family_for(t.settings, t.families) {
+let faces_of = pure (t: ref Term) -> string => match family_for(t.settings, t.families) {
   Some(f) => "family ${f.name} ${f.regular}",
   None => t.grid.font.family,
 }
 
 /// The settings' family's faces as files to load as `name`: its regular, bold, italic and
 /// bold italic where it has them.
-let family_files = pure (t: Term, name: string) -> []FontFile => {
+let family_files = pure (t: ref Term, name: string) -> []FontFile => {
   let Some(f) = family_for(t.settings, t.families) else { return [] }
   [
     face in [

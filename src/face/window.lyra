@@ -160,7 +160,7 @@ let faded_by = pure (c: Color, opacity: f32) -> Color =>
 /// The tab bar: a tab a session, labelled with its title, closed by its ×, dragged into a new
 /// order; the Settings tab at its end while it is open, out of the order; and on a Mac `+`
 /// after them, the header bar holding it elsewhere.
-pub let tab_strip = pure (t: Term) -> Node<TermEvent> => {
+pub let tab_strip = pure (t: ref Term) -> Node<TermEvent> => {
   let n = t.tabs.len()
   let settings_tab = if t.settings_open { [TabSpec {
     label: "Settings",
@@ -186,7 +186,7 @@ pub let tab_rule = pure (theme: Theme) -> Node<TermEvent> =>
 
 /// The header bar, off a Mac: `+`, the shown tab's title in the middle, ☰ and the window's
 /// buttons; its empty stretch moves the window.
-pub let header_bar = pure (t: Term) -> Node<TermEvent> => {
+pub let header_bar = pure (t: ref Term) -> Node<TermEvent> => {
   let title = if t.on_settings { "Settings" } else if t.tabs.len() > 0 { tab_title(
     t.tabs[t.active],
     t.home
@@ -212,7 +212,7 @@ pub let menus_of = pure (t: Term) -> []Menu<TermEvent> => [
 ]
 
 /// The header bar's ☰: the most used items first, then the menus as submenus, then Quit.
-pub let header_entries = pure (t: Term) -> []MenuEntry<TermEvent> => [
+pub let header_entries = pure (t: ref Term) -> []MenuEntry<TermEvent> => [
   item("New Tab", TabAsked(NewTab), Some(own(t, 't'))),
   item("Settings…", TabAsked(OpenSettings), Some(primary(','))),
   MenuSeparator,
@@ -226,7 +226,7 @@ pub let header_entries = pure (t: Term) -> []MenuEntry<TermEvent> => [
 ]
 
 /// Shell's items: a new tab, the tabs before and after the shown one, closing it.
-let shell_items = pure (t: Term) -> []MenuEntry<TermEvent> => {
+let shell_items = pure (t: ref Term) -> []MenuEntry<TermEvent> => {
   let n = t.tabs.len().max(1)
   let several = t.tabs.len() > 1
   [
@@ -251,7 +251,7 @@ let shell_items = pure (t: Term) -> []MenuEntry<TermEvent> => {
 
 /// Edit's items, greyed where the shown tab would do nothing. Off a Mac, Undo and Redo show no
 /// key: Ctrl+Z is the command line's own, and a running program's.
-let edit_items = pure (t: Term) -> []MenuEntry<TermEvent> => {
+let edit_items = pure (t: ref Term) -> []MenuEntry<TermEvent> => {
   // On the Settings tab, a text field's (`field_edit`), whichever has the focus.
   let can = (a: EditAction) -> bool =>
     if t.on_settings { field_edit(a).is_some() } else { t.tabs.len() > 0 && t.tabs[t.active].can(a) }
@@ -278,7 +278,7 @@ let edit_items = pure (t: Term) -> []MenuEntry<TermEvent> => {
 }
 
 /// View's items: the font's size.
-let view_items = pure (t: Term) -> []MenuEntry<TermEvent> => [
+let view_items = pure (t: ref Term) -> []MenuEntry<TermEvent> => [
   item("Default Font Size", TabAsked(FontDefault), Some(own(t, '0'))),
   item("Bigger", TabAsked(FontBigger), Some(own(t, '='))),
   item("Smaller", TabAsked(FontSmaller), Some(own(t, '-'))),
@@ -286,7 +286,7 @@ let view_items = pure (t: Term) -> []MenuEntry<TermEvent> => [
 
 /// Block's items, on the block the pointer last was over: take it whole, or fold its output
 /// (unfold it back) — a card's gutter click folds and unfolds too.
-let block_items = pure (t: Term) -> []MenuEntry<TermEvent> => {
+let block_items = pure (t: ref Term) -> []MenuEntry<TermEvent> => {
   let over = t.tabs.len() > 0 && !t.on_settings
   let sel_ok = if over { t.tabs[t.active]
       .block_at(t.last_grid_line)
@@ -304,7 +304,7 @@ let block_items = pure (t: Term) -> []MenuEntry<TermEvent> => {
 
 /// Window's items, off a Mac: the window's own, then the tabs, the shown one checked, as a
 /// Mac's Window menu lists windows; the first nine with Alt and their number.
-let window_items = pure (t: Term) -> []MenuEntry<TermEvent> => [
+let window_items = pure (t: ref Term) -> []MenuEntry<TermEvent> => [
   item("Minimize", Minimize, None),
   item(if t.maximized { "Restore" } else { "Maximize" }, ToggleMaximize, None),
   MenuSeparator,
@@ -333,7 +333,7 @@ let primary = pure (c: rune) -> Chord =>
 
 /// The terminal's own key: ⌘ and `c` on a Mac, Ctrl+Shift and it elsewhere — Ctrl alone is the
 /// shell's, so GNOME Terminal and Konsole add Shift.
-let own = pure (t: Term, c: rune) -> Chord =>
+let own = pure (t: ref Term, c: rune) -> Chord =>
   if t.mac { primary(c) } else { with_shift(primary(c)) }
 
 /// `c` with Shift too.

@@ -127,7 +127,7 @@ pub let color = pure (abgr: u32) -> Color => Color {
 /// with the grid `g` in theme `theme`, `area` the painter's. The block under `pointer` shows
 /// its copy button, saying "Copied" when it is the block whose prompt is on line `copied`.
 pub let paint_tab = pure (
-  s: Session,
+  s: ref Session,
   f: FrameLayout,
   g: Grid,
   theme: Theme,
@@ -543,7 +543,7 @@ let fold_line = (
 /// The block under the painter's point `at`, on the grid's lines above the box; `None` off
 /// one, in the box, and on the alternate screen.
 pub let hovered_block = pure (
-  s: Session,
+  s: ref Session,
   f: FrameLayout,
   g: Grid,
   at: Point
@@ -558,7 +558,7 @@ pub let hovered_block = pure (
 /// Where block `b`'s copy button is: in its card's right margin, on its first output line in
 /// view, placed as the fold chevron is in the left — `None` where none of its output is in view.
 pub let copy_button = pure (
-  s: Session,
+  s: ref Session,
   f: FrameLayout,
   g: Grid,
   b: Block
@@ -629,7 +629,7 @@ const COPY_LABEL_PAD: f32 = 6.0
 /// does not fold (running, or its output a line or none) or whose first output line is out of
 /// view.
 pub let fold_toggle = pure (
-  s: Session,
+  s: ref Session,
   f: FrameLayout,
   g: Grid,
   b: Block
@@ -678,7 +678,7 @@ const CHEVRON_SCALE: f32 = 1.5
 /// `running`: it has no end yet, and its card reaches the grid's foot (`b.end`).
 let card = (
   ops: mut []PaintOp,
-  s: Session,
+  s: ref Session,
   theme: Theme,
   fills: Fills,
   g: Grid,
@@ -744,7 +744,7 @@ let card = (
 /// failed its status, red — where the row's own text leaves room.
 let note = (
   ops: mut []PaintOp,
-  s: Session,
+  s: ref Session,
   theme: Theme,
   g: Grid,
   f: FrameLayout,
@@ -831,7 +831,7 @@ let frame_box = (
 /// began on it to the input's column on the last — a right prompt, and the command line.
 let prompt_box = (
   ops: mut []PaintOp,
-  s: Session,
+  s: ref Session,
   f: FrameLayout,
   g: Grid,
   theme: Theme,
@@ -910,7 +910,7 @@ pub let place_of = pure (f: FrameLayout, g: Grid) -> Place => Place {
 /// — the caret when focused, and the completion menu.
 let command_line = (
   ops: mut []PaintOp,
-  line: CommandLine,
+  line: ref CommandLine,
   at: Place,
   g: Grid,
   theme: Theme,
@@ -1000,7 +1000,7 @@ let kind_color = pure (theme: Theme, kind: Kind) -> u32 => match kind {
 /// descriptions fainter.
 let menu = (
   ops: mut []PaintOp,
-  line: CommandLine,
+  line: ref CommandLine,
   at: Place,
   g: Grid,
   theme: Theme

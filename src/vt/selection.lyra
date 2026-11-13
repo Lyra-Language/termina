@@ -28,7 +28,7 @@ pub let selected_on = pure (a: Spot, b: Spot, line: i64, cols: i64) -> (i64, i64
 /// break between lines — except after a line that wrapped onto the next ([WRAPPED]),
 /// which goes on into it whole, as the one line the program wrote. Lines scrolled out of
 /// the scrollback are skipped.
-pub let selection_text = pure (s: Screen, a: Spot, b: Spot) -> string => {
+pub let selection_text = pure (s: ref Screen, a: Spot, b: Spot) -> string => {
   let (from, to) = ordered(a, b)
   var out = ""
   var joined = false
@@ -70,7 +70,7 @@ pub let selection_text = pure (s: Screen, a: Spot, b: Spot) -> string => {
 /// The word around the cell at column `col` of line `line` (absolute), as columns `(start,
 /// end)`: a run of letters, digits and `_`, or of punctuation, or of blanks — what a
 /// double-click selects. `(col, col)` when the line is gone.
-pub let word_span = pure (s: Screen, line: i64, col: i64) -> (i64, i64) => {
+pub let word_span = pure (s: ref Screen, line: i64, col: i64) -> (i64, i64) => {
   let Some(i) = s.line_at(line) else { return (col, col) }
   let cells = s.line(i)
   if cells.len() == 0 { return (0, 0) }

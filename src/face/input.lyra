@@ -248,7 +248,7 @@ pub let pointer_heard = (t: mut Term, p: PointerInput) -> []Command<TermEvent> =
 
 /// The grid's place under `at`: the absolute line, the cell, and the column boundary nearest.
 let grid_spot = pure (
-  s: Session,
+  s: ref Session,
   f: FrameLayout,
   g: Grid,
   at: Point
@@ -325,7 +325,7 @@ let button_code = pure (b: PointerButton) -> i64 => match b {
 /// character (Ctrl+Space NUL); Alt and a key, off a Mac, Escape and the key (a letter shifted
 /// with Shift), Alt+Backspace Escape and DEL; a named key its sequence (`session.key_sequence`).
 /// Keys that type nothing else send nothing here — their text does.
-let key_bytes = pure (t: Term, s: Session, k: KeyInput) -> []u8 => {
+let key_bytes = pure (t: ref Term, s: ref Session, k: KeyInput) -> []u8 => {
   let mods = k.mods
   if mods.control && !t.mac || (t.mac && mods.control) {
     if let Character(c) = k.key { return control_bytes(c) }
@@ -344,7 +344,7 @@ let key_bytes = pure (t: Term, s: Session, k: KeyInput) -> []u8 => {
 }
 
 /// Whether `mods` is the terminal's own chord: ⌘ on a Mac, Ctrl+Shift elsewhere.
-let edit_chord = pure (t: Term, mods: Modifiers) -> bool =>
+let edit_chord = pure (t: ref Term, mods: Modifiers) -> bool =>
   if t.mac { mods.command } else { mods.control && mods.shift }
 
 /// What the command line asked for, carried out: the clipboard's part as commands, the rest by

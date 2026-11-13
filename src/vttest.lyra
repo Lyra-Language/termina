@@ -1297,17 +1297,17 @@ let full_screen = (
 }
 
 /// The screen's row ending in less's `(END)`, or -1.
-let end_row = pure (s: Screen) -> i64 => {
+let end_row = pure (s: ref Screen) -> i64 => {
   for y in 0..<s.rows { if screen_row(s, y).ends_with("(END)") { return y } }
   -1
 }
 
 /// Row `y` of the screen (not the scrollback), its trailing blanks off.
-let screen_row = pure (s: Screen, y: i64) -> string =>
+let screen_row = pure (s: ref Screen, y: i64) -> string =>
   line_text(s.line(s.scrollback_len() + y)).trim_end()
 
 /// How many of the screen's rows have something on them.
-let drawn_rows = pure (s: Screen) -> i64 =>
+let drawn_rows = pure (s: ref Screen) -> i64 =>
   [y in 0..<s.rows | screen_row(s, y) != "" | 1].len()
 
 let describe_marks = (s: mut Screen) -> string => [m in s.take_marks() | match m {
@@ -1956,7 +1956,7 @@ let describe_fill = pure (b: Backing) -> string => match b {
 }
 
 /// The option and the place, as a check compares them.
-let describe_place = pure (s: Settings) -> string => {
+let describe_place = pure (s: ref Settings) -> string => {
   let option = if s.remember_window { "on" } else { "off" }
   match s.window {
     Some(w) => "${option} ${if w.placed { "${w.x},${w.y}" } else { "nowhere" }} ${w.width}×${w.height}${if w.maximized { " maximized" } else { "" }}",
@@ -2009,7 +2009,7 @@ let run = pure (cols: i64, rows: i64, input: string) -> Screen => {
   s
 }
 
-let rows = pure (s: Screen) -> string =>
+let rows = pure (s: ref Screen) -> string =>
   [y in 0..<s.rows | line_text(s.line(s.scrollback_len() + y))].join("|")
 
 /// A screen line's text.

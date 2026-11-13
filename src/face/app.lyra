@@ -227,7 +227,7 @@ pub let term_of = (
 }
 
 /// Where everything of the shown tab goes in a painter `size` large, as it is scrolled.
-pub let layout_at = pure (t: Term, size: Size) -> FrameLayout => {
+pub let layout_at = pure (t: ref Term, size: Size) -> FrameLayout => {
   let scroll = t.views[t.active].scroll
   frame_layout(
     t.tabs[t.active],
@@ -343,7 +343,7 @@ pub let view = pure (t: Term) -> Node<TermEvent> => {
 
 /// Where typed text goes — the command line's caret at a prompt, the cursor otherwise — for the
 /// input method's window.
-let caret_of = pure (t: Term) -> Rect => {
+let caret_of = pure (t: ref Term) -> Rect => {
   let s = t.tabs[t.active]
   let f = layout_at(t, t.size)
   let g = t.grid
@@ -616,7 +616,7 @@ let resized = (t: mut Term, size: f32) -> []Command<TermEvent> => {
 
 /// A tab's lines — its scrollback and the screen's rows in use — as text, trailing blanks
 /// dropped.
-pub let screen_text = pure (s: Session) -> []string => {
+pub let screen_text = pure (s: ref Session) -> []string => {
   var out: []string = []
   for i in 0..<(s.shown.scrollback_len() + s.shown.used_rows()) {
     var runes: []rune = []

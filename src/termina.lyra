@@ -160,7 +160,7 @@ let main = () -> u8 => {
 let windowed = (
   app: App<Term, TermEvent>,
   args: []string,
-  settings: Settings,
+  settings: ref Settings,
   theme: Theme,
   given: Fonts,
   mac: bool
@@ -219,7 +219,7 @@ let windowed = (
 let restore_tabs_enabled = (
   args: []string,
   saved_tabs: []SavedTab,
-  settings: Settings,
+  settings: ref Settings,
 ) -> bool =>
   args.len() == 0 && settings.restore_tabs && saved_tabs.len() > 0
 
@@ -229,7 +229,7 @@ let restore_tabs_enabled = (
 let open_from_saved = (
   saved_tabs: []SavedTab,
   args: []string,
-  settings: Settings,
+  settings: ref Settings,
   theme: Theme,
   given: Fonts,
   mac: bool,
@@ -350,7 +350,7 @@ let scripted = (
   steps: string,
   png: Maybe<string>,
   args: []string,
-  settings: Settings,
+  settings: ref Settings,
   theme: Theme,
   given: Fonts,
   mac: bool
@@ -434,7 +434,7 @@ let sliced = pure (steps: []Step) -> []Step => {
 /// before the program starts, so one reading its size at once sees what it will have.
 let started = (
   args: []string,
-  settings: Settings,
+  settings: ref Settings,
   theme: Theme,
   fonts: mut Fonts,
   scale: f32,
@@ -470,7 +470,7 @@ let started = (
 
 /// A window of no tabs, for a status returned before any opened: nothing is drawn in it, so
 /// its font is not measured.
-let empty_term = (theme: Theme, settings: Settings) -> Term => {
+let empty_term = (theme: Theme, settings: ref Settings) -> Term => {
   let spec = FontSpec { family: "mono", size: settings.font_size }
   term_of(
     [],
@@ -510,7 +510,7 @@ let save = (
 
 /// The settings' family — a chosen font file's, else the family named, else the first found —
 /// as `mono`'s faces: its regular, bold, italic and bold italic where it has them.
-let add_family = (fonts: mut Fonts, s: Settings) -> void => {
+let add_family = (fonts: mut Fonts, s: ref Settings) -> void => {
   let Some(family) = family_for(s, font_families()) else { return }
   for (path, weight, italic) in [
     (family.regular, 400, false),
@@ -524,7 +524,7 @@ let add_family = (fonts: mut Fonts, s: Settings) -> void => {
 
 /// The shown tab's screen, a line a row, trailing blanks dropped — or, with every tab closed,
 /// the one the last tab's program left.
-let print_last = (t: Term) -> void => {
+let print_last = (t: ref Term) -> void => {
   let lines = if t.tabs.len() > 0 { screen_text(t.tabs[t.active]) } else { t.closed_screen }
   println("termina: ${lines.len()} lines")
   for line in lines { println(line) }
