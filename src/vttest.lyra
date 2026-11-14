@@ -521,7 +521,7 @@ let check_reports = () -> i64 => {
   failed += check("DA1", replies("\e[c"), "\\e[?62;22c")
   failed += check("DA1 with a 0", replies("\e[0c"), "\\e[?62;22c")
   failed += check("DA2", replies("\e[>c"), "\\e[>1;1;0c")
-  failed += check("XTVERSION", replies("\e[>q"), "\\eP>|Termina 0.4.1\\e\\")
+  failed += check("XTVERSION", replies("\e[>q"), "\\eP>|Termina 0.4.2\\e\\")
   failed += check("DSR status", replies("\e[5n"), "\\e[0n")
   failed += check("cursor position", replies("ab\r\nc\e[6n"), "\\e[2;2R")
   failed += check("DECRQM set", replies("\e[?2004h\e[?2004$p"), "\\e[?2004;1$y")
@@ -1649,14 +1649,16 @@ let check_sessions = () -> i64 => {
     return check("open a tab", "failed", "opened")
   }
   var g = dead
-  for _ in 0..<4000000 {
+  // Up to ten seconds, not a count of steps: a loaded machine reaps the shell later.
+  let deadline = wall_clock_nanos() + 10000000000
+  while wall_clock_nanos() < deadline {
     if !g.alive && g.blocks.len() > 0 { break }
     g.step(true)
   }
   failed += check("the program's status", "${g.exit ?? -1}", "3")
   failed += check(
     "the block left open ends with it",
-    "${g.blocks.len()}|${g.blocks[0].status}",
+    if g.blocks.len() > 0 { "${g.blocks.len()}|${g.blocks[0].status}" } else { "0|none" },
     "1|3"
   )
   close_session(g)
