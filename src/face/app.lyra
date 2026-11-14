@@ -36,7 +36,7 @@ import ui.interact.{
 }
 import ui.draw.{ Size, Point, Rect, radius }
 import ui.backend.{ Modifiers, Character, PageUp, PageDown, WindowState }
-import ui.backend.{ Cursor, Hand }
+import ui.backend.{ Arrow, Hand }
 import ui.text.{ FontSpec, FontMetrics }
 import ui.layout.{
   Node,
@@ -257,11 +257,11 @@ pub let view = pure (t: Term) -> Node<TermEvent> => {
     if rel_x >= 0 && p.y >= f.rows.origin_y {
       let col = i64((rel_x / grid.cell_x).floor())
       if col >= 0 && col < shown.cols {
-        var row = 0
-        while row < shown.used_rows() {
-          let y = f.rows.y_of(row + shown.scrollback_len())
+        var grid_row = 0
+        while grid_row < shown.used_rows() {
+          let y = f.rows.y_of(grid_row + shown.scrollback_len())
           if p.y >= y && p.y < y + grid.cell_y {
-            let cells = shown.line(row)
+            let cells = shown.line(grid_row)
             // Extend to find the full hyperlink span
             var start = col
             while start > 0 && cells[start - 1].attrs & HYPERLINK != 0 { start -= 1 }
@@ -282,7 +282,7 @@ pub let view = pure (t: Term) -> Node<TermEvent> => {
               m += 1
             }
           }
-          row += 1
+          grid_row += 1
         }
       }
     }

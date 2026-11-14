@@ -257,11 +257,11 @@ impl Screen {
   /// URLs detected when text is printed are stored in the cells' [Cell.link], so this resolves
   /// them through scrollback just like the glyph ([Screen.line]).
   pub let link_at = pure (self: ref, n: i64, x: i64) -> Maybe<string> => {
-    let Some(line) = self.line_at(n) else { return None }
-    let y = if line < self.scrollback.len() { line } else { line - self.scrollback.len() }
+    let Some(index) = self.line_at(n) else { return None }
+    let y = if index < self.scrollback.len() { index } else { index - self.scrollback.len() }
     if y < 0 || y >= self.rows || x < 0 || x >= self.cols { return None }
-    let cell = if y < self.scrollback.len() { self.scrollback[y][x] } else { self.lines[y - self.scrollback.len()][x] }
-    cell.link
+    let linked = if y < self.scrollback.len() { self.scrollback[y][x] } else { self.lines[y - self.scrollback.len()][x] }
+    linked.link
   }
 
   /// How many lines there are above the screen.
@@ -435,10 +435,10 @@ impl Screen {
   // there with the wrap pending (without autowrap, to be written over).
   let put = (self: mut, r: rune, w: i64) -> void => {
     self.clear_wide_at(self.y, self.x)
-    let mut cell = self.pen.cell(r)
-    cell.link = self.current_link
-    if self.current_link.is_some() { cell.attrs = cell.attrs | HYPERLINK }
-    self.lines[self.y][self.x] = cell
+    let mut written = self.pen.cell(r)
+    written.link = self.current_link
+    if self.current_link.is_some() { written.attrs = written.attrs | HYPERLINK }
+    self.lines[self.y][self.x] = written
     if w == 2 {
       self.clear_wide_at(self.y, self.x + 1)
       let mut spacer = self.pen.cell(SPACER)

@@ -48,10 +48,6 @@ import std.json.{
   parse_json,
   JsonObject,
   JsonMember,
-  JsonString,
-  JsonNumber,
-  JsonBool,
-  JsonArray,
 }
 import settings.{
   WindowPlace,
@@ -72,7 +68,6 @@ import term.{ Theme, theme_of }
 import desktop.{ APP_ID, install_desktop_entry }
 import face.{
   Term,
-  View,
   fill_images,
   TermEvent,
   term_of,
@@ -216,7 +211,7 @@ let windowed = (
 
 /// Whether args, saved_tabs, and settings allow restore: args is empty, `restore_tabs` is
 /// on, and saved_tabs is non-empty. `true` when we should restore.
-let restore_tabs_enabled = (
+let restore_tabs_enabled = pure (
   args: []string,
   saved_tabs: []SavedTab,
   settings: ref Settings,
@@ -322,7 +317,7 @@ let save_tabs = (tabs: []Session) -> void => {
 }
 
 /// The saved tabs as JSON: `{ "tabs": [...] }`.
-let tab_json = (tabs: []SavedTab) -> string => JsonObject([
+let tab_json = pure (tabs: []SavedTab) -> string => JsonObject([
   JsonMember { key: "tabs", value: saved_to_json(tabs) },
 ]).to_json_pretty()
 

@@ -352,12 +352,12 @@ let line = (
     if col < 0 || col >= n { return false }
     if cells[col].attrs & HYPERLINK == 0 { return false }
     // Find span
-    var start = col
-    while start > 0 && cells[start - 1].attrs & HYPERLINK != 0 { start -= 1 }
-    var end_sp = start
+    var span_start = col
+    while span_start > 0 && cells[span_start - 1].attrs & HYPERLINK != 0 { span_start -= 1 }
+    var end_sp = span_start
     while end_sp < n && cells[end_sp].attrs & HYPERLINK != 0 { end_sp += 1 }
     // Check pointer against any non-space cell in the span
-    var m = start
+    var m = span_start
     while m < end_sp {
       let sc = cells[m]
       if sc.ch != SPACER && sc.ch != ' ' {
@@ -414,16 +414,16 @@ let line = (
     let c = cells[j]
     if c.attrs & HYPERLINK != 0 && c.ch != SPACER && c.ch != ' ' && hyperlink_hovered(j) {
       // Find this span to draw the full-width underline
-      var start = j
-      while start > 0 && cells[start - 1].attrs & HYPERLINK != 0 { start -= 1 }
-      var end_sp = start
+      var span_start = j
+      while span_start > 0 && cells[span_start - 1].attrs & HYPERLINK != 0 { span_start -= 1 }
+      var end_sp = span_start
       while end_sp < n && cells[end_sp].attrs & HYPERLINK != 0 { end_sp += 1 }
       // Draw underline from span start to end, skipping spaces
       let under = baseline + g.metrics.underline_y
       let thick = g.metrics.underline_thickness.max(1.0)
-      var x0 = at.x + f32(start) * g.cell_x
+      var x0 = at.x + f32(span_start) * g.cell_x
       var w: f32 = 0.0
-      var m = start
+      var m = span_start
       while m < end_sp {
         let sc = cells[m]
         if sc.ch != SPACER && sc.ch != ' ' {
