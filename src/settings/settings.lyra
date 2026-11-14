@@ -11,7 +11,7 @@ module settings
 //! A color is `0xRRGGBB` here, as people write them; `#rrggbb` in the file.
 
 import std.env.{ lookup }
-import std.io.{ read_file, write_file, create_dir_all, read_dir }
+import std.io.{ read_file, write_file, create_dir_all, read_dir, walk_dir }
 import std.json.{
   parse_json,
   JsonValue,
@@ -808,7 +808,7 @@ pub let font_families = () -> []FontFamily => {
   // Every other font file, but those a family above already has.
   var files: []string = []
   for dir in font_dirs() {
-    for path in font_files(dir, 2) {
+    for path in font_files(dir) {
       var known = false
       for k in known_files { if k == path { known = true } }
       if !known { files.push(path) }
@@ -936,20 +936,35 @@ let font_dirs = () -> []string => {
   ]
 }
 
-/// The font files in `dir` and its subdirectories, `depth` levels down.
-let font_files = (dir: string, depth: i64) -> []string => {
-  let Some(names) = read_dir(dir) else { return [] }
+/// The font files in `dir` and its subdirectories, at most `FONT_DEPTH` directories down — a
+/// directory told by a name with no `.` in it, as fonts' folders are. Walked by `walk_dir`,
+/// which lists a link to a font but walks no linked folder: no font directory on macOS or
+/// Debian reaches a font through one (11/13).
+let font_files = (dir: string) -> []string => {
+  let keep = (path: string) -> bool =>
+    is_font(path) || (!path.base().contains(".") && depth_below(dir, path) <= FONT_DEPTH)
+  let Some(paths) = walk_dir(dir, keep) else { return [] }
   var out: []string = []
-  for n in names {
-    let path = dir.join(n)
-    let ext = (n.extension() ?? "").to_ascii_lower()
-    if ext == "ttf" || ext == "otf" || ext == "ttc" { out.push(path) }
-    else if depth > 0 && !n.contains(".") { out = [
-      ...out,
-      ...font_files(path, depth - 1)
-    ] }
-  }
+  for path in paths { if is_font(path) { out.push(path) } }
   out
+}
+
+/// How many directories down from a font directory `font_files` looks.
+const FONT_DEPTH: i64 = 2
+
+/// Whether `path` is a font file Termina reads: `.ttf`, `.otf` or `.ttc`, in any case.
+let is_font = pure (path: string) -> bool => {
+  let ext = (path.base().extension() ?? "").to_ascii_lower()
+  ext == "ttf" || ext == "otf" || ext == "ttc"
+}
+
+/// How many names `path` is below `root`: 1 for an entry of `root`, 2 for one of its
+/// subdirectories'.
+let depth_below = pure (root: string, path: string) -> i64 => {
+  let rest = path.strip_prefix(root) ?? path
+  var n = 0
+  for c in rest { if c == '/' { n += 1 } }
+  n
 }
 
 /// Whether a file is at `path` — asked of its directory, since reading a font to find out
