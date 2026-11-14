@@ -11,7 +11,7 @@ module settings
 //! A color is `0xRRGGBB` here, as people write them; `#rrggbb` in the file.
 
 import std.env.{ lookup }
-import std.io.{ read_file, write_file, create_dir_all, read_dir, walk_dir }
+import std.io.{ read_file, write_file, create_dir_all, walk_dir, exists }
 import std.json.{
   parse_json,
   JsonValue,
@@ -965,16 +965,6 @@ let depth_below = pure (root: string, path: string) -> i64 => {
   var n = 0
   for c in rest { if c == '/' { n += 1 } }
   n
-}
-
-/// Whether a file is at `path` — asked of its directory, since reading a font to find out
-/// would read all of it.
-let exists = (path: string) -> bool => {
-  let Some(dir) = path.parent() else { return false }
-  let Some(names) = read_dir(dir) else { return false }
-  let name = path.base()
-  for n in names { if n == name { return true } }
-  false
 }
 
 /// Whether a file's stem names a monospaced font: `Mono`, `Code`, `Courier` or `Consol` in it,
