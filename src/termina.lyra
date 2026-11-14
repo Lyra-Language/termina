@@ -190,7 +190,17 @@ let windowed = (
   // Restore tabs if the user has them on, has saved tabs, and did not pass a program:
   // the default tab is replaced with the first saved tab, the rest are added.
   let saved_tabs = load_saved_tabs()
-  let start = open_from_saved(saved_tabs, args, settings, theme, fonts, mac, saved_tabs.len(), platform_.scale(MAIN_WINDOW), platform_.window_size(MAIN_WINDOW))
+  let start = open_from_saved(
+    saved_tabs,
+    args,
+    settings,
+    theme,
+    fonts,
+    mac,
+    saved_tabs.len(),
+    platform_.scale(MAIN_WINDOW),
+    platform_.window_size(MAIN_WINDOW)
+  )
   let Some(start) = start else {
     gpu.close(platform_, renderer)
     fonts.close()
@@ -335,8 +345,6 @@ let load_saved_tabs = () -> []SavedTab => {
     None => [],
   }
 }
-
-
 
 /// `steps` played headless through SDL's 2D renderer, the last frame written to `png`: its
 /// status, and the window as the script left it.

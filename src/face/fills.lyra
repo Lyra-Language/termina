@@ -68,7 +68,10 @@ pub let fill_ops = pure (
 /// A setting's gradient as `ui`'s, each stop's opacity times `opacity`.
 let ui_gradient = pure (g: BackingGradient, opacity: f32) -> Gradient => Gradient {
   kind: if g.radial { RadialGradient(g.circle) } else { LinearGradient(g.angle) },
-  stops: [s in g.stops | ColorStop { color: stop_color(s.color, opacity), at: Some(s.at) }],
+  stops: [s in g.stops | ColorStop {
+    color: stop_color(s.color, opacity),
+    at: Some(s.at)
+  }],
 }
 
 /// A setting's color (`0xRRGGBB`, how transparent in the top byte) as `ui`'s, at `opacity`.

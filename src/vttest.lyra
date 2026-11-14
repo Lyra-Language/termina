@@ -199,7 +199,11 @@ let check_syntax = () -> i64 => {
   // The command words the shell is asked about: whole and plain ones only.
   failed += check("words: a pipe's two", words("ls -la | grp x"), "ls|grp")
   failed += check("words: after sudo", words("sudo nosuch -f"), "sudo|nosuch")
-  failed += check("words: past an assignment, not a variable", words("X=1 make && $ED f"), "make")
+  failed += check(
+    "words: past an assignment, not a variable",
+    words("X=1 make && $ED f"),
+    "make"
+  )
   failed += check("words: not quoted", words("\"ec\"ho x; e'c'ho"), "")
   failed += check("words: not a ~ path, a ./ one", words("~/bin/x; ./run"), "./run")
   failed += check("words: inside $(…)", words("echo $(whoami)"), "echo|whoami")
@@ -977,7 +981,15 @@ let check_commands = (shell: string) -> i64 => {
   }
   var p = parser()
   var s = screen(80, 10)
-  let asks = ["ls", "cd", "if", "termina_alias", "termina_fn", "termina_no_such", "./termina_nope"]
+  let asks = [
+    "ls",
+    "cd",
+    "if",
+    "termina_alias",
+    "termina_fn",
+    "termina_no_such",
+    "./termina_nope"
+  ]
   var heard: []string = []
   var prompts = 0
   var defined = false
@@ -1452,7 +1464,11 @@ let check_sessions = () -> i64 => {
   failed += check("a block's output", "${e.block_copy_at(1) ?? "none"}", "out")
   failed += check("off a block", "${e.block_copy_at(2) ?? "none"}", "none")
   // Selecting the block whole takes the command (past the prompt) and the output.
-  failed += check("a block selected whole", "${e.select_block_at(1)} ${e.selected_text()}", "true ls\nout")
+  failed += check(
+    "a block selected whole",
+    "${e.select_block_at(1)} ${e.selected_text()}",
+    "true ls\nout"
+  )
   // A one-line output is not foldable; the fold stays off.
   failed += check("a line's output not foldable", "${fold_str(e.fold_at(1))}", "none")
   failed += check("fold refused on a line", "${e.toggle_fold_at(1)}", "false")
@@ -1485,7 +1501,11 @@ let check_sessions = () -> i64 => {
   // Two more of the marks' cases: a command of two lines and an output of two lines — each
   // copied whole, the prompt's `$` out of the command's.
   let long_marks = "printf '\\033]133;A\\007$ \\033]133;B\\007echo a b\\r\\nc d\\r\\n\\033]133;C\\007one\\r\\ntwo\\r\\n\\033]133;D;0\\007'"
-  let Some(longed) = open_session(["/bin/sh", "-c", "${long_marks}; sleep 2"], None, 8) else {
+  let Some(longed) = open_session(
+    ["/bin/sh", "-c", "${long_marks}; sleep 2"],
+    None,
+    8
+  ) else {
     return check("open a tab", "failed", "opened")
   }
   var m = longed
@@ -1545,7 +1565,11 @@ let check_sessions = () -> i64 => {
     r.step(true)
   }
   failed += check("a running block's command", "${r.block_copy_at(0) ?? "none"}", "long")
-  failed += check("a running block's output", "${r.block_copy_at(1) ?? "none"}", "working")
+  failed += check(
+    "a running block's output",
+    "${r.block_copy_at(1) ?? "none"}",
+    "working"
+  )
   // A running block is selected whole through its output so far, but is not foldable.
   failed += check(
     "a running block, selected whole",
@@ -1614,7 +1638,11 @@ let check_sessions = () -> i64 => {
   // A program that ends without its shell's `D` mark: the block it left open ends with the
   // program's status, once the program can be reaped.
   let Some(dead) = open_session(
-    ["/bin/sh", "-c", "printf '\\033]133;A\\007$ \\033]133;B\\007x\\r\\n\\033]133;C\\007out\\n'; exit 3"],
+    [
+      "/bin/sh",
+      "-c",
+      "printf '\\033]133;A\\007$ \\033]133;B\\007x\\r\\n\\033]133;C\\007out\\n'; exit 3"
+    ],
     None,
     7
   ) else {
@@ -1972,7 +2000,10 @@ let check_desktop_entry = () -> i64 => {
   let entry = desktop_entry("/home/me/Apps/Termina.AppImage")
   failed += check(
     "the entry's keys",
-    [l in entry.lines() | l.starts_with("Exec=") || l.starts_with("TryExec=") || l.starts_with("Icon=") || l.starts_with("StartupWMClass=") | l].join("|"),
+    [l in entry.lines() | l.starts_with("Exec=") ||
+        l.starts_with("TryExec=") ||
+        l.starts_with("Icon=") ||
+        l.starts_with("StartupWMClass=") | l].join("|"),
     "Exec=\"/home/me/Apps/Termina.AppImage\"|TryExec=/home/me/Apps/Termina.AppImage|Icon=${APP_ID}|StartupWMClass=${APP_ID}"
   )
   failed += check(

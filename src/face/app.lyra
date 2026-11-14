@@ -334,7 +334,14 @@ pub let view = pure (t: Term) -> Node<TermEvent> => {
     PlainBacking => root.with_style(Style { background: Some(color(t.theme.bg)) }),
     fill => stack([
       painted::<TermEvent>((area: PaintArea) -> []PaintOp =>
-        fill_ops(fill, t.theme.bg, Rect { w: area.size.w, h: area.size.h }, radius(0.0), t.images, area.scale)),
+        fill_ops(
+          fill,
+          t.theme.bg,
+          Rect { w: area.size.w, h: area.size.h },
+          radius(0.0),
+          t.images,
+          area.scale
+        )),
       root,
     ]),
   }
@@ -521,7 +528,9 @@ let tab_asked = (t: mut Term, c: TabCommand) -> []Command<TermEvent> => match c 
     [FocusKeyed("term")]
   },
   // ⌘W on the Settings tab closes it, not the terminal behind it.
-  CloseTab => if t.on_settings { settings_closed(t) } else if t.tabs.len() > 0 { close_tab(t, t.active) } else { [] },
+  CloseTab => if t.on_settings {
+    settings_closed(t)
+  } else if t.tabs.len() > 0 { close_tab(t, t.active) } else { [] },
   ShowTab(i) => {
     if i >= 0 && i < t.tabs.len() {
       t.active = i

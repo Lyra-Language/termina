@@ -221,7 +221,12 @@ pub let paint_tab = pure (
       let (a, b) = selected_on(s.sel_a, s.sel_b, s.shown.absolute(i), cols)
       if b > a {
         ops.push(PaintDraw(Fill(
-          Rect { x: INSET + f32(a) * g.cell_x, y: rows.y_of(i), w: f32(b - a) * g.cell_x, h: g.cell_y },
+          Rect {
+            x: INSET + f32(a) * g.cell_x,
+            y: rows.y_of(i),
+            w: f32(b - a) * g.cell_x,
+            h: g.cell_y
+          },
           radius(0.0),
           color(theme.selection)
         )))
@@ -245,7 +250,19 @@ pub let paint_tab = pure (
   if boxed { ops.push(PaintDraw(PopClip)) }
   match f.prompt {
     Some((i, prompt_end)) =>
-      prompt_box(ops, s, f, g, theme, fills, input_theme, i, prompt_end, focused, pointer),
+      prompt_box(
+        ops,
+        s,
+        f,
+        g,
+        theme,
+        fills,
+        input_theme,
+        i,
+        prompt_end,
+        focused,
+        pointer
+      ),
     None => {
       if f.running_box {
         // The command running, greyed, its first line, as wide as the box.
@@ -305,7 +322,10 @@ let hyperlink_at = pure (
   if c.attrs & HYPERLINK == 0 || c.ch == SPACER || c.ch == ' ' { return false }
   let cell_w = width_of(c.ch).max(1)
   let cx = at_x + f32(column) * cell_x
-  pointer.x >= cx && pointer.x < cx + f32(cell_w) * cell_x && pointer.y >= line_y && pointer.y < line_y + cell_y
+  pointer.x >= cx &&
+    pointer.x < cx + f32(cell_w) * cell_x &&
+    pointer.y >= line_y &&
+    pointer.y < line_y + cell_y
 }
 
 /// A screen line's first `upto` cells drawn from `at` (its first cell's top left): its
@@ -333,7 +353,12 @@ let line = (
     while stop < n && theme.colors(cells[stop]).1 == bg { stop += 1 }
     if let Some(c) = bg {
       ops.push(PaintDraw(Fill(
-        Rect { x: at.x + f32(start) * g.cell_x, y: at.y, w: f32(stop - start) * g.cell_x, h: g.cell_y },
+        Rect {
+          x: at.x + f32(start) * g.cell_x,
+          y: at.y,
+          w: f32(stop - start) * g.cell_x,
+          h: g.cell_y
+        },
         radius(0.0),
         color(c)
       )))
@@ -596,7 +621,10 @@ let copy_icon = (
     ops.push(PaintDraw(Fill(pill, radius(5.0), back)))
     ops.push(PaintDraw(Border(pill, radius(5.0), 1.0, edge)))
     ops.push(PaintText(
-      Point { x: pill.x + COPY_LABEL_PAD, y: pill.y + (pill.h - g.cell_y) / 2.0 + g.baseline },
+      Point {
+        x: pill.x + COPY_LABEL_PAD,
+        y: pill.y + (pill.h - g.cell_y) / 2.0 + g.baseline
+      },
       label,
       g.font,
       ink
@@ -879,7 +907,10 @@ let prompt_box = (
       ops,
       input_theme,
       g,
-      Point { x: INSET + BOX_INSET + f32(f.wrap.cols - width) * g.cell_x, y: row_y(f.prompt_rows - 1) },
+      Point {
+        x: INSET + BOX_INSET + f32(f.wrap.cols - width) * g.cell_x,
+        y: row_y(f.prompt_rows - 1)
+      },
       cells.slice(from, to),
       s.shown.combining,
       width,
@@ -1010,7 +1041,12 @@ let menu = (
   let pad = at.cell.x * 0.5
   let w = f32(width) * at.cell.x + 2.0 * pad
   ops.push(PaintDraw(Fill(
-    Rect { x: top.x - pad, y: top.y - MENU_PAD, w: w, h: f32(shown_rows) * at.cell.y + 2.0 * MENU_PAD },
+    Rect {
+      x: top.x - pad,
+      y: top.y - MENU_PAD,
+      w: w,
+      h: f32(shown_rows) * at.cell.y + 2.0 * MENU_PAD
+    },
     radius(6.0),
     color(theme.menu)
   )))

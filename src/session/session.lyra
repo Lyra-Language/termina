@@ -719,7 +719,9 @@ pub let frame_layout = pure (
   // input's line or a few above it; else the input's line from its start.
   let (first, first_col) = match prompt {
     Some((i, _)) => match s.shown.line_at(s.prompt_from.0) {
-      Some(a) => if a <= i && i - a < PROMPT_ROWS { (a, s.prompt_from.1.min(cols)) } else { (i, 0) },
+      Some(a) => if a <= i && i - a < PROMPT_ROWS {
+        (a, s.prompt_from.1.min(cols))
+      } else { (i, 0) },
       None => (i, 0),
     },
     None => (-1, 0),

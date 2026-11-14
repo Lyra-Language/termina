@@ -520,7 +520,9 @@ pub let settings_to_json = pure (s: ref Settings) -> string => JsonObject([
   member("font_size", JsonNumber(f64(s.font_size))),
   member("line_spacing", JsonNumber(f64(s.line_spacing))),
   member("theme", JsonString(s.theme_name)),
-  ...(if s.edited_from == "" { [] } else { [member("edited_from", JsonString(s.edited_from))] }),
+  ...(if s.edited_from == "" {
+    []
+  } else { [member("edited_from", JsonString(s.edited_from))] }),
   member("bold_is_bright", JsonBool(s.bold_is_bright)),
   member("colors", colors_to_json(s.colors)),
   member("themes", JsonArray([t in s.themes | JsonObject([
@@ -535,7 +537,9 @@ pub let settings_to_json = pure (s: ref Settings) -> string => JsonObject([
   member("restore_tabs", JsonBool(s.restore_tabs)),
   ...(match s.window {
     Some(w) => [member("window", JsonObject([
-      ...(if w.placed { [member("x", JsonNumber(f64(w.x))), member("y", JsonNumber(f64(w.y)))] } else { [] }),
+      ...(if w.placed {
+        [member("x", JsonNumber(f64(w.x))), member("y", JsonNumber(f64(w.y)))]
+      } else { [] }),
       member("width", JsonNumber(f64(w.width))),
       member("height", JsonNumber(f64(w.height))),
       member("maximized", JsonBool(w.maximized)),
@@ -574,7 +578,10 @@ pub let settings_from_json = pure (text: string) -> Settings => {
   Settings {
     font_family: text_field(doc, "font_family") ?? d.font_family,
     font_file: text_field(doc, "font_file") ?? d.font_file,
-    font_size: f32(number_field(doc, "font_size") ?? f64(d.font_size)).clamp(FONT_SIZE_RANGE.0, FONT_SIZE_RANGE.1),
+    font_size: f32(number_field(doc, "font_size") ?? f64(d.font_size)).clamp(
+      FONT_SIZE_RANGE.0,
+      FONT_SIZE_RANGE.1
+    ),
     line_spacing: f32(number_field(doc, "line_spacing") ?? f64(d.line_spacing)).clamp(
       LINE_SPACING_RANGE.0,
       LINE_SPACING_RANGE.1
@@ -589,9 +596,18 @@ pub let settings_from_json = pure (text: string) -> Settings => {
     colors: colors_from_json(colors_in(doc), base),
     themes: themes,
     bold_is_bright: (doc.field("bold_is_bright") ?? JsonBool(d.bold_is_bright)).as_bool() ?? d.bold_is_bright,
-    background_blur: f32(number_field(doc, "background_blur") ?? 0.0).clamp(BLUR_RANGE.0, BLUR_RANGE.1),
-    input_blur: f32(number_field(doc, "input_blur") ?? f64(d.input_blur)).clamp(BLUR_RANGE.0, BLUR_RANGE.1),
-    output_blur: f32(number_field(doc, "output_blur") ?? f64(d.output_blur)).clamp(BLUR_RANGE.0, BLUR_RANGE.1),
+    background_blur: f32(number_field(doc, "background_blur") ?? 0.0).clamp(
+      BLUR_RANGE.0,
+      BLUR_RANGE.1
+    ),
+    input_blur: f32(number_field(doc, "input_blur") ?? f64(d.input_blur)).clamp(
+      BLUR_RANGE.0,
+      BLUR_RANGE.1
+    ),
+    output_blur: f32(number_field(doc, "output_blur") ?? f64(d.output_blur)).clamp(
+      BLUR_RANGE.0,
+      BLUR_RANGE.1
+    ),
     tab_rule_width: rule_width.clamp(RULE_WIDTH_RANGE.0, RULE_WIDTH_RANGE.1),
     remember_window: (doc.field("remember_window") ?? JsonBool(d.remember_window)).as_bool() ?? d.remember_window,
     restore_tabs: (doc.field("restore_tabs") ?? JsonBool(d.restore_tabs)).as_bool() ?? d.restore_tabs,
@@ -678,9 +694,15 @@ let colors_from_json = pure (c: JsonValue, base: Colors) -> Colors => {
     menu: color_field(c, "menu") ?? base.menu,
     menu_chosen: color_field(c, "menu_chosen") ?? base.menu_chosen,
     ansi: ansi,
-    bg_fill: if c.field("background_fill").is_some() { backing_from_json(c.field("background_fill")) } else { base.bg_fill },
-    input_fill: if c.field("input_fill").is_some() { backing_from_json(c.field("input_fill")) } else { base.input_fill },
-    output_fill: if c.field("output_fill").is_some() { backing_from_json(c.field("output_fill")) } else { base.output_fill },
+    bg_fill: if c
+      .field("background_fill")
+      .is_some() { backing_from_json(c.field("background_fill")) } else { base.bg_fill },
+    input_fill: if c
+      .field("input_fill")
+      .is_some() { backing_from_json(c.field("input_fill")) } else { base.input_fill },
+    output_fill: if c
+      .field("output_fill")
+      .is_some() { backing_from_json(c.field("output_fill")) } else { base.output_fill },
   })
 }
 
@@ -911,7 +933,13 @@ const KNOWN: []FontFamily = [
     italic: "/System/Library/Fonts/SFNSMonoItalic.ttf",
     bold_italic: "",
   },
-  FontFamily { name: "Menlo", regular: "/System/Library/Fonts/Menlo.ttc", bold: "", italic: "", bold_italic: "" },
+  FontFamily {
+    name: "Menlo",
+    regular: "/System/Library/Fonts/Menlo.ttc",
+    bold: "",
+    italic: "",
+    bold_italic: ""
+  },
   FontFamily {
     name: "DejaVu Sans Mono",
     regular: "/usr/share/fonts/truetype/dejavu/DejaVuSansMono.ttf",

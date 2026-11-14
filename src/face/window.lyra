@@ -93,7 +93,10 @@ pub let chrome_sheet = pure (theme: Theme) -> Sheet => {
       // (`ui`'s strip narrows its gap before it shrinks a tab).
       Rule {
         selector: "TabBar",
-        style: Style { gap: Some(6.0), padding: Some(Insets { top: 8.0, left: PAD, right: PAD }) },
+        style: Style {
+          gap: Some(6.0),
+          padding: Some(Insets { top: 8.0, left: PAD, right: PAD })
+        },
       },
       Rule {
         selector: "Tab",
@@ -103,10 +106,17 @@ pub let chrome_sheet = pure (theme: Theme) -> Sheet => {
           corners: Some(Radii { top_left: 6.0, top_right: 6.0 }),
         },
       },
-      Rule { selector: "Tab:hover", style: Style { background: Some(color(theme.tab_hovered)) } },
+      Rule {
+        selector: "Tab:hover",
+        style: Style { background: Some(color(theme.tab_hovered)) }
+      },
       Rule {
         selector: "Tab:checked",
-        style: Style { background: Some(color(theme.tab_selected)), color: Some(fg), border_width: Some(0.0) },
+        style: Style {
+          background: Some(color(theme.tab_selected)),
+          color: Some(fg),
+          border_width: Some(0.0)
+        },
       },
       // Text on the chosen row's colour is the text's colour: a light theme's chosen row is
       // light, and ui's white on it unreadable.
@@ -131,19 +141,36 @@ pub let chrome_sheet = pure (theme: Theme) -> Sheet => {
       },
       Rule { selector: ".title", style: Style { color: Some(fg) } },
       // Under the tabs, the window's width (`tab_rule`).
-      Rule { selector: ".tab-rule", style: Style { background: Some(color(theme.tab_rule)) } },
+      Rule {
+        selector: ".tab-rule",
+        style: Style { background: Some(color(theme.tab_rule)) }
+      },
       // The Settings tab's controls on a panel of the output section's colour, rounded as a
       // block's card: over a background clear enough to show the desktop, they are hard to read.
       Rule {
         selector: ".panel",
-        style: Style { background: Some(color(theme.output)), radius: Some(BLOCK_ROUNDING) },
+        style: Style {
+          background: Some(color(theme.output)),
+          radius: Some(BLOCK_ROUNDING)
+        },
       },
       Rule {
         selector: "Button.chrome, MenuButton",
-        style: Style { background: Some(clear), color: Some(fg), padding: Some(insets_xy(10.0, 4.0)), radius: Some(6.0) },
+        style: Style {
+          background: Some(clear),
+          color: Some(fg),
+          padding: Some(insets_xy(10.0, 4.0)),
+          radius: Some(6.0)
+        },
       },
-      Rule { selector: "Button.chrome:hover, MenuButton:hover, MenuButton:open", style: Style { background: Some(color(theme.tab_hovered)) } },
-      Rule { selector: "Button.chrome:active", style: Style { background: Some(color(theme.tab_selected)) } },
+      Rule {
+        selector: "Button.chrome:hover, MenuButton:hover, MenuButton:open",
+        style: Style { background: Some(color(theme.tab_hovered)) }
+      },
+      Rule {
+        selector: "Button.chrome:active",
+        style: Style { background: Some(color(theme.tab_selected)) }
+      },
     ],
   }
 }
@@ -168,13 +195,18 @@ pub let tab_strip = pure (t: ref Term) -> Node<TermEvent> => {
     movable: false
   }] } else { [] }
   tab_bar(TabsSpec {
-    tabs: [...[s in t.tabs | TabSpec { label: tab_title(s, t.home), key: "tab ${s.id}" }], ...settings_tab],
+    tabs: [
+      ...[s in t.tabs | TabSpec { label: tab_title(s, t.home), key: "tab ${s.id}" }],
+      ...settings_tab
+    ],
     selected: if t.on_settings { n } else { t.active },
     on_select: (i: i64) -> TermEvent =>
       if i == n { ShowSettings } else { TabAsked(ShowTab(i)) },
     on_close: (i: i64) -> TermEvent => if i == n { CloseSettings } else { TabClosed(i) },
     on_move: TabMoved,
-    after: if t.mac { [button("+", TabAsked(NewTab)).with_class("chrome").keyed("new")] } else { [] },
+    after: if t.mac {
+      [button("+", TabAsked(NewTab)).with_class("chrome").keyed("new")]
+    } else { [] },
   })
 }
 
@@ -204,7 +236,10 @@ pub let header_bar = pure (t: ref Term) -> Node<TermEvent> => {
 /// The menus for the Mac's own bar: Termina (Settings…; the application menu, which macOS
 /// gives Quit), Shell, Edit and View — macOS adds its Window menu after the last.
 pub let menus_of = pure (t: Term) -> []Menu<TermEvent> => [
-  Menu { label: "Termina", entries: [item("Settings…", TabAsked(OpenSettings), Some(primary(','))) ] },
+  Menu {
+    label: "Termina",
+    entries: [item("Settings…", TabAsked(OpenSettings), Some(primary(','))) ]
+  },
   Menu { label: "Shell", entries: shell_items(t) },
   Menu { label: "Edit", entries: edit_items(t) },
   Menu { label: "Block", entries: block_items(t) },
@@ -235,13 +270,17 @@ let shell_items = pure (t: ref Term) -> []MenuEntry<TermEvent> => {
     MenuItemEntry(MenuItem {
       label: "Show Previous Tab",
       on_select: TabAsked(ShowTab((t.active - 1) %% n)),
-      shortcut: Some(if t.mac { with_shift(own(t, '[')) } else { Chord { key: PageUp, mods: Modifiers { primary: true } } }),
+      shortcut: Some(if t.mac {
+        with_shift(own(t, '['))
+      } else { Chord { key: PageUp, mods: Modifiers { primary: true } } }),
       enabled: several,
     }),
     MenuItemEntry(MenuItem {
       label: "Show Next Tab",
       on_select: TabAsked(ShowTab((t.active + 1) %% n)),
-      shortcut: Some(if t.mac { with_shift(own(t, ']')) } else { Chord { key: PageDown, mods: Modifiers { primary: true } } }),
+      shortcut: Some(if t.mac {
+        with_shift(own(t, ']'))
+      } else { Chord { key: PageDown, mods: Modifiers { primary: true } } }),
       enabled: several,
     }),
     MenuSeparator,
@@ -297,8 +336,18 @@ let block_items = pure (t: ref Term) -> []MenuEntry<TermEvent> => {
     _ => "Fold Block",
   }
   [
-    MenuItemEntry(MenuItem { label: "Select Block", on_select: SelectBlock, shortcut: None, enabled: sel_ok }),
-    MenuItemEntry(MenuItem { label: fold_label, on_select: FoldBlock, shortcut: None, enabled: fold.is_some() }),
+    MenuItemEntry(MenuItem {
+      label: "Select Block",
+      on_select: SelectBlock,
+      shortcut: None,
+      enabled: sel_ok
+    }),
+    MenuItemEntry(MenuItem {
+      label: fold_label,
+      on_select: FoldBlock,
+      shortcut: None,
+      enabled: fold.is_some()
+    }),
   ]
 }
 
@@ -313,7 +362,12 @@ let window_items = pure (t: ref Term) -> []MenuEntry<TermEvent> => [
       MenuItemEntry(MenuItem {
         label: tab_title(t.tabs[k], t.home),
         on_select: TabAsked(ShowTab(k)),
-        shortcut: if k < 9 { Some(Chord { key: Character(rune(i64('1') + k)), mods: Modifiers { alt: true } }) } else { None },
+        shortcut: if k < 9 {
+          Some(Chord {
+            key: Character(rune(i64('1') + k)),
+            mods: Modifiers { alt: true }
+          })
+        } else { None },
         checked: k == t.active,
       })
   ],

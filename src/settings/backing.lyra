@@ -156,7 +156,10 @@ pub let with_backing_kind = pure (c: Colors, field: string, kind: i64) -> Colors
   if backing_kind(now) == kind { return c }
   let base = color_named(c, field)
   let fill = match kind {
-    1 => GradientBacking(gradient_between(base, mix(base & 0xFFFFFF, 0x000000, 0.5) | (base & 0xFF000000))),
+    1 => GradientBacking(gradient_between(
+      base,
+      mix(base & 0xFFFFFF, 0x000000, 0.5) | (base & 0xFF000000)
+    )),
     2 => ImageBacking(BackingImage { path: "" }),
     _ => PlainBacking,
   }
