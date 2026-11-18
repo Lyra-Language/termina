@@ -135,7 +135,7 @@ pub let chrome_sheet = pure (theme: Theme) -> Sheet => {
         style: Style {
           gap: Some(4.0),
           padding: Some(insets_xy(6.0, 4.0)),
-          height: Some(HEADER_HEIGHT),
+          height: Some(Px(HEADER_HEIGHT)),
           background: Some(Color { color(theme.bg) | a: 255 }),
         },
       },
