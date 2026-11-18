@@ -235,7 +235,7 @@ pub let header_bar = pure (t: ref Term) -> Node<TermEvent> => {
 
 /// The menus for the Mac's own bar: Termina (Settings…; the application menu, which macOS
 /// gives Quit), Shell, Edit and View — macOS adds its Window menu after the last.
-pub let menus_of = pure (t: Term) -> []Menu<TermEvent> => [
+pub let menus_of = pure (t: ref Term) -> []Menu<TermEvent> => [
   Menu {
     label: "Termina",
     entries: [item("Settings…", TabAsked(OpenSettings), Some(primary(','))) ]
