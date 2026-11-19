@@ -139,7 +139,10 @@ let main = () -> u8 => {
     background: Color { r: 0, g: 0, b: 0, a: 0 },
     window_overflow: OverflowVisible,
     shortcuts: [Shortcuts { of: shortcuts }],
-    menus: if mac { [Menus { of: menus_of }] } else { [] },
+    // Through a lambda: `ui` calls `of` with the state by value, and `menus_of` takes a `ref`
+    // (lyra's todo.md: a function of a `ref` parameter is accepted as one of a value, and
+    // read the value as an address).
+    menus: if mac { [Menus { of: (t: Term) => menus_of(t) }] } else { [] },
     title_bar: if mac { SystemTitleBar } else { DrawnTitleBar },
   }
   let status = match script {
