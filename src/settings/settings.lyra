@@ -287,7 +287,7 @@ pub let theme_colors = pure (name: string) -> Colors => {
     )
   }
   // Termina Dark: the window's #181A1E behind #E6E1DC, an ANSI set in the spirit of One Dark.
-  colors_of(
+  let dark = colors_of(
     0xE6E1DC,
     0x181A1E,
     0xE6E1DC,
@@ -298,6 +298,12 @@ pub let theme_colors = pure (name: string) -> Colors => {
       0x5C6370, 0xF08A93, 0xB5E08F, 0xF2D49B, 0x84C3F5, 0xD79BE8, 0x7FCBD5, 0xF5F2EE,
     ]
   )
+  // Its tabs further towards the text than the input section's shade, which is hardly apart
+  // from so dark a window.
+  Colors {
+    dark | tab: mix(0x181A1E, 0xE6E1DC, 0.14),
+    tab_hovered: mix(0x181A1E, 0xE6E1DC, 0.22)
+  }
 }
 
 /// A theme from its own colors — text, background, cursor, selection, the sections' input

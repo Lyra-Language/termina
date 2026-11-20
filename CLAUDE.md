@@ -215,7 +215,8 @@ each tab a painter taking input raw, under `ui`'s tab bar, menus and Settings ta
   text is set `INSET` (`PAD + BOX_MARGIN`) in across, the cards and the box reaching
   `BOX_MARGIN` out from it, and the box ends `PAD` above the window's foot. Every place a
   column turns into an x, or back (the pointer, the caret), goes through `INSET`. The tabs
-  are rounded above only (`Style.corners`), 8 points below the title bar, and stand on a
+  are rounded above (`Style.corners`) and flare out below (`ui`'s `Style.flare`, `TAB_FLARE`,
+  their gap two flares), curving out to meet the rule, 8 points below the title bar, and stand on a
   rule across the whole window (`tab_rule`), past their margins: a theme's color
   (`Colors.tab_rule`, the text faint over the background to begin with) and
   `Settings.tab_rule_width` thick (1 point to begin with, 0 for none), both set in its

@@ -80,6 +80,9 @@ pub let chrome_theme = pure (theme: Theme) -> UiTheme => ui_theme_of(Palette {
   focus: faded_by(color(theme.menu_chosen), 0.6),
 })
 
+/// How far a tab's bottom corners curve out to meet the rule under the tabs, either side.
+pub const TAB_FLARE: f32 = 4.0
+
 /// The chrome's own rules: the tabs in the theme's three tab colours, a button, a chosen menu
 /// item and option in the text's colour on the chosen row's (a light theme's chosen row is
 /// light), a ticked box filled with the text's colour, and the header bar's quiet buttons.
@@ -88,13 +91,14 @@ pub let chrome_sheet = pure (theme: Theme) -> Sheet => {
   let clear = Color { r: 0, g: 0, b: 0, a: 0 }
   Sheet {
     rules: [
-      // The tabs stand on the terminal below them, rounded only above, and set in from the
-      // window's sides as the sections are ([PAD]); 6 apart, as close as 2 where they crowd
+      // The tabs stand on the terminal below them, rounded above and flared out below
+      // ([TAB_FLARE]) where they meet the rule, and set in from the window's sides as the
+      // sections are ([PAD]); 8 apart, room for two flares, as close as 2 where they crowd
       // (`ui`'s strip narrows its gap before it shrinks a tab).
       Rule {
         selector: "TabBar",
         style: Style {
-          gap: Some(6.0),
+          gap: Some(2.0 * TAB_FLARE),
           padding: Some(Insets { top: 8.0, left: PAD, right: PAD })
         },
       },
@@ -104,6 +108,7 @@ pub let chrome_sheet = pure (theme: Theme) -> Sheet => {
           background: Some(color(theme.tab)),
           color: Some(fg),
           corners: Some(Radii { top_left: 6.0, top_right: 6.0 }),
+          flare: Some(TAB_FLARE),
         },
       },
       Rule {
