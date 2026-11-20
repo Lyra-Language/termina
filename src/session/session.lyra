@@ -422,38 +422,6 @@ impl Session {
   /// `shown` says whether the tab is the one in view.
   pub let step = (self: mut, shown: bool) -> void => {
     let (alive, got) = drain(self.pty, self.parse, self.shown)
-    // Reading only ever ends a tab: one closed by the user stays closed though its program
-    // has not ended yet.
-    if !alive {
-      self.alive = false
-      // The terminal closes as the program ends, a moment before it can be reaped; once it
-      // can, the block it left open — the one its shell's `D` mark would have closed — ends
-      // with its status.
-      match self.exit {
-        None => match self.pty.exit_status() {
-          Some(status) => {
-            self.exit = Some(status)
-            match self.running_block {
-              Some(b) => {
-                self.blocks.push(Block {
-                  b | end: self.shown.used_rows().max(b.output),
-                  status: status,
-                  ended: wall_clock_nanos()
-                })
-                if self.blocks.len() > BLOCKS { self.blocks = self.blocks.slice(
-                  self.blocks.len() - BLOCKS,
-                  self.blocks.len()
-                ) }
-              },
-              None => {},
-            }
-            self.running_block = None
-          },
-          None => {},
-        },
-        Some(_) => {},
-      }
-    }
     self.got_output = got
     if got && !shown { self.unseen = true }
     if shown { self.unseen = false }
@@ -533,6 +501,40 @@ impl Session {
             None => {},
           }
         },
+      }
+    }
+    // Reading only ever ends a tab: one closed by the user stays closed though its program
+    // has not ended yet.
+    if !alive {
+      self.alive = false
+      // The terminal closes as the program ends, a moment before it can be reaped; once it
+      // can, the block it left open — the one its shell's `D` mark would have closed — ends
+      // with its status. After this read's marks, which may have opened that block: a step
+      // reading the program's last output, the terminal's close and the program reaped,
+      // all at once, otherwise ended no block, and never could again.
+      match self.exit {
+        None => match self.pty.exit_status() {
+          Some(status) => {
+            self.exit = Some(status)
+            match self.running_block {
+              Some(b) => {
+                self.blocks.push(Block {
+                  b | end: self.shown.used_rows().max(b.output),
+                  status: status,
+                  ended: wall_clock_nanos()
+                })
+                if self.blocks.len() > BLOCKS { self.blocks = self.blocks.slice(
+                  self.blocks.len() - BLOCKS,
+                  self.blocks.len()
+                ) }
+              },
+              None => {},
+            }
+            self.running_block = None
+          },
+          None => {},
+        },
+        Some(_) => {},
       }
     }
     // The program's questions answered (what terminal, where the cursor is, which colors).

@@ -32,7 +32,7 @@ import editor.{
   Comment,
 }
 import std.env.{ lookup }
-import std.io.{ create_dir_all, write_file, remove_file, is_executable }
+import std.io.{ create_dir_all, write_file, remove_file, is_executable, sleep_ms }
 import std.path
 import desktop.{ desktop_entry, exec_quoted, APP_ID }
 import settings.{
@@ -1649,6 +1649,10 @@ let check_sessions = () -> i64 => {
     return check("open a tab", "failed", "opened")
   }
   var g = dead
+  // Not read until the program has ended and can be reaped, so the first step reads its
+  // output, the terminal's close and its status at once — the order that once ended no block
+  // (`Session.step` handles the end after the marks), and the one a fast machine met by luck.
+  sleep_ms(500)
   // Up to ten seconds, not a count of steps: a loaded machine reaps the shell later.
   let deadline = wall_clock_nanos() + 10000000000
   while wall_clock_nanos() < deadline {

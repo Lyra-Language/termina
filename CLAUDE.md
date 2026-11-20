@@ -297,7 +297,8 @@ each tab a painter taking input raw, under `ui`'s tab bar, menus and Settings ta
   from the last prompt's `A` line (`OutputStart(line)`), `D` closes it
   (`CommandEnd(status, line)`, its line the first the output did not write on) — or, where the
   program ends without its `D`, the program's status does (`Session.exit`, kept once
-  `exit_status()` answers, its end the screen's used rows). The block also keeps where the
+  `exit_status()` answers, its end the screen's used rows) — **handled after that read's
+  marks**, since on Linux one step can read the output, the close and the status together. The block also keeps where the
   command's text began (`cmd_line`, `cmd_col`: where the input began, past the prompt — from the
   command line's send, the shell's `B` mark, or the prompt's line whole), so a right click on a
   block copies it: its command on the input's lines, its output on the output's
