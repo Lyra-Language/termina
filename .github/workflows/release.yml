@@ -1,6 +1,6 @@
 name: Release
 
-# A release is a tag: pushing `v0.4.3` builds Termina on each platform, runs its checks, and
+# A release is a tag: pushing `v0.4.4` builds Termina on each platform, runs its checks, and
 # publishes a GitHub release of that name with an archive per platform (package.sh). Run by
 # hand (Actions ▸ Release ▸ Run workflow), it builds and keeps the archives as the run's
 # artifacts, publishing nothing — a dry run before tagging.
@@ -241,19 +241,34 @@ jobs:
     permissions:
       contents: write
     steps:
+      # For CHANGELOG.md alone.
+      - name: Checkout termina
+        uses: actions/checkout@v7
+        with:
+          sparse-checkout: CHANGELOG.md
+          sparse-checkout-cone-mode: false
       - name: Fetch the archives
         uses: actions/download-artifact@v7
         with:
           path: archives
           merge-multiple: true
 
-      # The notes say what each archive was built from, lyra's commits among them, since a
-      # tag of Termina pins nothing of the compiler's.
+      # The notes give the version's section of CHANGELOG.md, then say what each archive was
+      # built from, lyra's commits among them, since a tag of Termina pins nothing of the
+      # compiler's.
       - name: Publish
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           {
+            # The version's section of CHANGELOG.md first: from its heading to the next.
+            awk -v v="## ${GITHUB_REF_NAME#v}" '$0 == v { on = 1; next } /^## / { on = 0 } on' \
+              CHANGELOG.md > changes.md
+            if grep -q . changes.md; then
+              echo "## What's changed"
+              cat changes.md
+              echo
+            fi
             echo "Built from:"
             echo
             for f in archives/built-with-*.txt; do echo "- $(cat "$f")"; done
