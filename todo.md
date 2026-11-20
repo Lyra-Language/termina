@@ -20,3 +20,5 @@ milestones are in `CLAUDE.md` § Plan; finished items move to `done.md`.
 - **[OPEN] A reopened tab's transcript** — keep a closed tab's screen and blocks (without its PTY) in its `ClosedTab`, and show them above the new prompt, marked as restored. Reopening brings back the directory and place only (11/20).
 
 ## Found along the way
+
+- **[OPEN] bash ran a pasted line twice on CI** (11/20) — vttest's `check_shell` saw «one,one,two» once, on the release's Linux x86_64 runner; 240 runs in Debian on arm64 and x86_64 never did. The check now prints its screen on failure: read that before guessing.

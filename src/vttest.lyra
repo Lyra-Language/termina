@@ -894,6 +894,13 @@ let check_shell = (shell: string) -> i64 => {
     "0|true"
   )
   failed += check("${name} ran both lines", output.join(","), "one,two")
+  // Seen once on CI's Linux x86_64 as «one,one,two» and never here: the screen, to tell why.
+  if output.join(",") != "one,two" {
+    for row in 0..<(s.scrollback_len() + s.rows) {
+      let t = line_text(s.line(row))
+      if t.trim() != "" { println("  |${t.trim_end()}") }
+    }
+  }
   failed
 }
 
@@ -992,6 +999,8 @@ let check_commands = (shell: string) -> i64 => {
   ]
   var heard: []string = []
   var prompts = 0
+  // Where the first prompt's input began, which the definition is sent from.
+  var first_at = (-1, -1)
   var defined = false
   var asked = false
   var ended = false
@@ -1017,7 +1026,13 @@ let check_commands = (shell: string) -> i64 => {
         if bytes.len() > 0 { s.apply(p.feed(bytes)) }
         for m in s.take_marks() {
           match m {
-            InputStart(_, _) => { prompts += 1 },
+            // The first prompt redrawn — after the definition's paste, by bash's readline as
+            // the bytes fall — is not the second: asked then, the key reaches the shell
+            // while the definition runs, and is taken as typed ahead.
+            InputStart(at, col) => if !(prompts >= 1 && (at, col) == first_at) {
+              prompts += 1
+              if prompts == 1 { first_at = (at, col) }
+            },
             _ => {},
           }
         }
