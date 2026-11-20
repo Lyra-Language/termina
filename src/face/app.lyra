@@ -68,6 +68,9 @@ import term.{
   TabCommand,
   NewTab,
   CloseTab,
+  ReopenTab,
+  ClosedTab,
+  CLOSED_KEPT,
   ShowTab,
   FontBigger,
   FontSmaller,
@@ -121,6 +124,8 @@ pub struct Term {
   copied_tab: i64 = -1,
   /// The last tab's screen as its program ended — what `termina --print` prints.
   closed_screen: []string = [],
+  /// The tabs closed, the last closed last, for Shell ▸ Reopen Closed Tab.
+  closed: []ClosedTab = [],
   /// The user's settings, the file they are kept in (`""` for none: nothing is written) and
   /// their text as last written, the font families on offer, and what is typed to save a
   /// theme as.
@@ -382,9 +387,9 @@ pub let subscriptions = pure (t: Term) -> []Subscription<TermEvent> => [
   OnWindowState(WindowChanged),
 ]
 
-/// The window's shortcuts, taken before the tab hears the key: on a Mac ⌘T, ⌘W, ⌘1–⌘9,
-/// ⌘⇧[ ⌘⇧], ⌘= ⌘- ⌘0; elsewhere Ctrl+Shift+T and W, Alt+1–9, Ctrl+PageUp/PageDown and
-/// Ctrl+Shift+= - 0, Ctrl alone being the shell's.
+/// The window's shortcuts, taken before the tab hears the key: on a Mac ⌘T, ⌘W, ⌘⇧T, ⌘1–⌘9,
+/// ⌘⇧[ ⌘⇧], ⌘= ⌘- ⌘0; elsewhere Ctrl+Shift+T and W, Ctrl+Alt+Shift+T, Alt+1–9,
+/// Ctrl+PageUp/PageDown and Ctrl+Shift+= - 0, Ctrl alone being the shell's.
 pub let shortcuts = pure (t: Term) -> []Shortcut<TermEvent> => {
   let n = t.tabs.len().max(1)
   let previous = ShowTab((t.active - 1) %% n)
@@ -397,6 +402,11 @@ pub let shortcuts = pure (t: Term) -> []Shortcut<TermEvent> => {
   var out: []Shortcut<TermEvent> = [
     Shortcut { key: Character('t'), mods: chord, event: TabAsked(NewTab) },
     Shortcut { key: Character('w'), mods: chord, event: TabAsked(CloseTab) },
+    Shortcut {
+      key: Character('t'),
+      mods: reopen_mods(t.mac),
+      event: TabAsked(ReopenTab)
+    },
     Shortcut { key: Character('='), mods: chord, event: TabAsked(FontBigger) },
     Shortcut { key: Character('-'), mods: chord, event: TabAsked(FontSmaller) },
     Shortcut { key: Character('0'), mods: chord, event: TabAsked(FontDefault) },
@@ -531,6 +541,7 @@ let tab_asked = (t: mut Term, c: TabCommand) -> []Command<TermEvent> => match c 
   CloseTab => if t.on_settings {
     settings_closed(t)
   } else if t.tabs.len() > 0 { close_tab(t, t.active) } else { [] },
+  ReopenTab => reopen_tab(t),
   ShowTab(i) => {
     if i >= 0 && i < t.tabs.len() {
       t.active = i
@@ -605,9 +616,17 @@ let settings_closed = (t: mut Term) -> []Command<TermEvent> => {
   [FocusKeyed("term")]
 }
 
-/// Tab `i` closed, its program hung up on; the window with the last.
+/// Tab `i` closed, its program hung up on, and kept to reopen; the window with the last.
 let close_tab = (t: mut Term, i: i64) -> []Command<TermEvent> => {
   if t.tabs.len() == 1 { t.closed_screen = screen_text(t.tabs[i]) }
+  t.closed.push(ClosedTab {
+    command: t.tabs[i].command,
+    dir: directory(t.tabs[i]),
+    place: i
+  })
+  if t.closed.len() > CLOSED_KEPT {
+    t.closed = t.closed.slice(t.closed.len() - CLOSED_KEPT, t.closed.len())
+  }
   close_session(t.tabs[i])
   t.tabs = [k in 0..<t.tabs.len() | k != i | t.tabs[k]]
   t.views = [k in 0..<t.views.len() | k != i | t.views[k]]
@@ -615,6 +634,34 @@ let close_tab = (t: mut Term, i: i64) -> []Command<TermEvent> => {
   t.active = t.active.min(t.tabs.len() - 1)
   [FocusKeyed("term")]
 }
+
+/// The tab closed last opened again — its program, or a new login shell, in its directory —
+/// at its place on the bar, and shown. A tab that will not open is let go.
+let reopen_tab = (t: mut Term) -> []Command<TermEvent> => {
+  if t.closed.len() == 0 { return [] }
+  let c = t.closed[t.closed.len() - 1]
+  t.closed = t.closed.slice(0, t.closed.len() - 1)
+  if let Some(opened) = open_session(c.command, c.dir, t.next_id) {
+    var s = opened
+    told_colors(s, t.theme)
+    let at = c.place.clamp(0, t.tabs.len())
+    t.tabs = [...t.tabs.slice(0, at), s, ...t.tabs.slice(at, t.tabs.len())]
+    t.views = [...t.views.slice(0, at), View {}, ...t.views.slice(at, t.views.len())]
+    t.next_id += 1
+    t.active = at
+    t.on_settings = false
+  }
+  [FocusKeyed("term")]
+}
+
+/// The modifiers reopening a closed tab takes with T: ⌘⇧ on a Mac; elsewhere Ctrl+Alt+Shift,
+/// Ctrl+Shift+T being the new tab's.
+pub let reopen_mods = pure (mac: bool) -> Modifiers =>
+  if mac { Modifiers { primary: true, shift: true } } else { Modifiers {
+    primary: true,
+    shift: true,
+    alt: true
+  } }
 
 /// The font at `size` points (between 6 and 72), measured again.
 let resized = (t: mut Term, size: f32) -> []Command<TermEvent> => {

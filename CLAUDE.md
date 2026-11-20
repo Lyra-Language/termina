@@ -13,7 +13,7 @@ workspace's `CLAUDE.md` rules apply here too. **macOS and Linux** — Windows wa
 ../lyra/build.sh            # the compiler, std/, bindings/, ui/ and lib/liblyra-*.a
 ./build.sh                  # -> build/: termina (and Termina.app on macOS), vttest
 build/termina               # the login shell ($SHELL -l) in a window of tabs: ⌘T new (in the
-                            #    shown tab's directory), ⌘W close, ⌘1–⌘9, ⌘⇧[ ⌘⇧]; a tab
+                            #    shown tab's directory), ⌘W close, ⌘⇧T reopen the last closed, ⌘1–⌘9, ⌘⇧[ ⌘⇧]; a tab
                             #    closes when its shell ends, the window with the last
 build/termina CMD [ARG…]    # that program instead (as xterm -e), no integration — a test
                             #    script's colors, say, seen without typing
@@ -248,6 +248,11 @@ each tab a painter taking input raw, under `ui`'s tab bar, menus and Settings ta
   is keyed by its session's id (`tab <id>`), which a changing title must not move. Past the
   strip's width the gap between tabs narrows from 6 to 2, then the tabs shrink, then the rest go
   into the strip's more-tabs menu.
+- **A closed tab can be reopened** (Shell ▸ Reopen Closed Tab: ⌘⇧T, Ctrl+Alt+Shift+T off a
+  Mac, where Ctrl+Shift+T is ⌘T): `Term.closed` keeps the last `CLOSED_KEPT` (10) closed tabs —
+  however they closed — as a `ClosedTab`: the command, the directory and the place on the bar.
+  Reopening starts a new shell (or the command again) there and shows it; the old program and
+  transcript are gone. Kept in memory only: open tabs at the next start are `tabs.json`'s.
 - **Edit's items are one path with their keys** (`EditAction`): `CommandLine.edit_action` at a
   prompt, and while a program runs only Paste, sent bracketed when the program set
   `?2004` (`session.pasted`). The Mac's bar holds ⌘Z/⌘X/⌘C/⌘V/⌘A and sends Edit's item

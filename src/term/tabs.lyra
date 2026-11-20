@@ -9,11 +9,24 @@ pub struct TabLabel {
   id: i64,
 }
 
+/// A tab closed, as reopening it needs: the program it ran (`[]` for the login shell), the
+/// directory it was in, and its place on the bar. Its program and transcript are gone.
+pub struct ClosedTab {
+  command: []string,
+  dir: Maybe<string>,
+  place: i64,
+}
+
+/// How many closed tabs a window keeps to reopen, the oldest let go first.
+pub const CLOSED_KEPT: i64 = 10
+
 /// A window's shortcut pressed (or menu item chosen) this frame.
 pub data TabCommand =
   NoCommand
   | NewTab
   | CloseTab
+  /// Open again the tab closed last ([ClosedTab]): a new shell where it was.
+  | ReopenTab
   /// Show the tab at this index.
   | ShowTab i64
   /// Open the settings window (⌘, from the menu bar; Ctrl+, without one).

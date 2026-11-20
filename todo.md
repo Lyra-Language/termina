@@ -15,4 +15,8 @@ milestones are in `CLAUDE.md` § Plan; finished items move to `done.md`.
 - [x] Fix Hand cursor alignment: `is_link` used `t.size` (window) for frame layout instead of painter area (`h - 2*PAD`), causing row y positions to misalign
 ## Settings
 
+## Tabs
+
+- **[OPEN] A reopened tab's transcript** — keep a closed tab's screen and blocks (without its PTY) in its `ClosedTab`, and show them above the new prompt, marked as restored. Reopening brings back the directory and place only (11/20).
+
 ## Found along the way

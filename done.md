@@ -41,6 +41,7 @@ Finished work, moved from `todo.md` with its section; the rules it left behind a
 - **[DONE 10/16] Copy from the grid** — the grid's selection; Edit ▸ Copy takes it when the command line has none.
 - **[DONE 10/19] The font's size from the keyboard** — View ▸ Bigger ⌘=, Smaller ⌘-, Default Font Size ⌘0 (Ctrl+Shift+= - 0 off macOS).
 - **[DONE 10/19] A menu bar off macOS** — the Mac's menus drawn as ImGui's main menu bar, its choices the same tags; Settings… is in it.
+- **[DONE 11/20] Reopen a closed tab** — Shell ▸ Reopen Closed Tab, ⌘⇧T (Ctrl+Alt+Shift+T off a Mac): a new shell, or the command again, in the closed tab's directory and at its place; the last 10 closes kept, without their transcript.
 - **[DONE 11/20] Tabs flare out at their foot** — each bottom corner curves outward 4 points to meet the rule (`ui`'s new `Style.flare`, a ring's corner clipped to the square beside it); the gap between tabs widened to 8 to hold two.
 - **[DONE 11/20] Termina Dark's tabs lighter** — an unselected tab 14% of the way from the window to the text (`#353639`), hovered 22%; the input section's shade they had was hardly apart from the window.
 

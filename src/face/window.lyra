@@ -52,6 +52,7 @@ import term.{
   Theme,
   NewTab,
   CloseTab,
+  ReopenTab,
   ShowTab,
   OpenSettings,
   FontBigger,
@@ -265,12 +266,18 @@ pub let header_entries = pure (t: ref Term) -> []MenuEntry<TermEvent> => [
   item("Quit", Quit, None),
 ]
 
-/// Shell's items: a new tab, the tabs before and after the shown one, closing it.
+/// Shell's items: a new tab, the closed one reopened, the tabs before and after the shown one, closing it.
 let shell_items = pure (t: ref Term) -> []MenuEntry<TermEvent> => {
   let n = t.tabs.len().max(1)
   let several = t.tabs.len() > 1
   [
     item("New Tab", TabAsked(NewTab), Some(own(t, 't'))),
+    MenuItemEntry(MenuItem {
+      label: "Reopen Closed Tab",
+      on_select: TabAsked(ReopenTab),
+      shortcut: Some(Chord { key: Character('t'), mods: reopen_mods(t.mac) }),
+      enabled: t.closed.len() > 0,
+    }),
     MenuSeparator,
     MenuItemEntry(MenuItem {
       label: "Show Previous Tab",

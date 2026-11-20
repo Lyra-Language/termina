@@ -69,7 +69,12 @@ one"
 check "a new tab, then the first chosen by its tab" "$(tabs 'click:20,57')" "$cat_screen"
 check "a new tab, then the first chosen by Alt+1" "$(tabs 'Alt+1')" "$cat_screen"
 check "the shown tab closed by ☰ ▸ Shell ▸ Close Tab" \
-  "$(tabs 'click:819,20 move:830,114 move:600,118 click:600,215')" "$cat_screen"
+  "$(tabs 'click:819,20 move:830,114 move:600,118 click:600,240')" "$cat_screen"
+# `cat`'s tab closed and reopened: a new `cat` at its place, shown, with nothing of the old.
+check "a closed tab reopened by Primary+Shift+Alt+t" \
+  "$(tabs "Alt+1 Primary+Shift+w wait:300 Primary+Shift+Alt+t wait:600 'two' Enter")" "termina: 2 lines
+two
+two"
 
 # The Settings tab, by its keys alone (its controls' places are the font's): Settings…, Tab to
 # the Theme list and Down to the next theme, the font a point bigger; then the file.
