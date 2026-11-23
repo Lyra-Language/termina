@@ -141,7 +141,7 @@ each tab a painter taking input raw, under `ui`'s tab bar, menus and Settings ta
 | `src/face/paint.lyra` | a tab painted (`paint_tab`): the grid as `PaintCells`, the cards, the box, the command line and its menu, the scrollbar, the hovered block's copy button (`hovered_block`, `copy_button`) — from `session.frame_layout` |
 | `src/face/input.lyra` | keys, typed text and the pointer as the painter hears them: to the command line at a prompt, else encoded for the program; the mouse selecting, a block whole on the terminal's chord, folded on a card-gutter click, copied on a right click, its output copied by its copy button, editing or reported |
 | `src/shell/shell.lyra` | shell integration (zsh's `.zshenv` through `ZDOTDIR`, bash's rc file through `--rcfile`): the marks, Tab's completion widget and its request file, the command lookup widget and its file, the history files, what Return sends |
-| `src/editor/editor.lyra` | the command line's editor — text, caret, selection, motions, words, undo, layout; **pure** |
+| `src/editor/editor.lyra` | the command line's editor — text, caret, selection, motions by character (grapheme cluster, `std.unicode`), word and line, undo, layout; **pure** |
 | `src/editor/syntax.lyra` | the command line's syntax for coloring: each rune's kind (command, option, quoted, variable, operator, comment), and the plain command words to ask the shell about; **pure** |
 | `src/vt/parser.lyra` | bytes → `Action`s — Paul Williams' DEC parser; **pure**, keeps all state across reads |
 | `src/vt/screen.lyra` | `Action`s → the cell grid, cursor, scroll region, scrollback ring |
@@ -493,7 +493,12 @@ each tab a painter taking input raw, under `ui`'s tab bar, menus and Settings ta
   line ended by Return runs, as in any terminal, the next at the next prompt, and the
   unended rest goes into the editor.
 - **Editor edits build new arrays** (undo snapshots share buffers); typing joins one undo
-  step until a word ends, rune deletes join, word and line deletes stand alone.
+  step until a word ends, character deletes join, word and line deletes stand alone.
+- **The command line's character is a grapheme cluster** (`std.unicode`, UAX #29): Left,
+  Right, Shift+Left/Right, Backspace and Delete step over `e` and its combining accent, a flag's
+  two regional indicators or an emoji and its skin tone whole (`grapheme_before`/`_after`), a
+  click lands at the nearest cluster boundary, and `index_at` (clicks, ↑/↓) offers only
+  clusters' ends. Positions stay rune offsets; word moves and the shell's words go by rune.
 - **Gaps in Lyra or its bindings go in `../lyra/todo.md`**, as Sheliak's do.
 
 ## Plan

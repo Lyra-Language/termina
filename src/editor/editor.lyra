@@ -8,12 +8,18 @@ module editor
 //! runes, as a caret is. The selection is the runes between the anchor and the cursor; with
 //! no selection the two are equal.
 //!
+//! **A character is a grapheme cluster** ([std.unicode]): Left, Right, Backspace and Delete
+//! step over `e` and its combining accent, a flag's two regional indicators or an emoji and
+//! its skin tone whole, and a click or a move up or down lands between clusters, never inside
+//! one. Words and lines are found by rune, as before.
+//!
 //! **A rune takes the cells the grid gives it** ([cells_of]): a wide rune two, a combining
 //! mark none. Positions stay rune offsets; only [layout] knows columns.
 //!
 //! **Edits build new arrays.** An undo snapshot holds the text it saw, and arrays share
 //! their buffer, so writing a rune in place would rewrite history too.
 
+import std.unicode
 import vt.{ width_of }
 
 /// The text being edited, the caret, the selection and the history of edits.
@@ -129,18 +135,18 @@ impl Editor {
     self.last = OtherEdit
   }
 
-  /// Delete the selection, or the rune before the caret.
+  /// Delete the selection, or the character (grapheme cluster) before the caret.
   pub let backspace = (self: mut) -> void => {
     if self.has_selection() { self.delete_selection() } else { self.delete_to(
-      self.cursor - 1,
+      self.text.grapheme_before(self.cursor),
       true
     ) }
   }
 
-  /// Delete the selection, or the rune after the caret.
+  /// Delete the selection, or the character (grapheme cluster) after the caret.
   pub let delete_forward = (self: mut) -> void => {
     if self.has_selection() { self.delete_selection() } else { self.delete_to(
-      self.cursor + 1,
+      self.text.grapheme_after(self.cursor),
       true
     ) }
   }
@@ -212,16 +218,17 @@ impl Editor {
   //
   // Each motion moves the caret; with `select` the anchor stays, extending the selection,
   // and without it a selection collapses — to its start or end for a move left or right by
-  // a rune, as editors do, rather than moving one rune from the caret.
+  // a character, as editors do, rather than moving one character from the caret. Left and
+  // Right step a grapheme cluster.
 
   pub let left = (self: mut, select: bool) -> void => {
     if self.has_selection() && !select { self.move_to(self.selection().0, false) }
-    else { self.move_to(self.cursor - 1, select) }
+    else { self.move_to(self.text.grapheme_before(self.cursor), select) }
   }
 
   pub let right = (self: mut, select: bool) -> void => {
     if self.has_selection() && !select { self.move_to(self.selection().1, false) }
-    else { self.move_to(self.cursor + 1, select) }
+    else { self.move_to(self.text.grapheme_after(self.cursor), select) }
   }
 
   pub let word_left = (self: mut, select: bool) -> void =>
@@ -261,8 +268,9 @@ impl Editor {
   }
 
   /// Put the caret at `i` — a click; with `select`, extend the selection there (a
-  /// shift-click, or a drag).
-  pub let click = (self: mut, i: i64, select: bool) -> void => self.move_to(i, select)
+  /// shift-click, or a drag). Inside a grapheme cluster, at its nearest end.
+  pub let click = (self: mut, i: i64, select: bool) -> void =>
+    self.move_to(self.text.nearest_grapheme_boundary(i), select)
 
   /// Select the word containing the rune at `i` — a double-click on it. A word is a run of
   /// letters, digits and `_`; a double-click on punctuation or on spaces selects that run
@@ -380,13 +388,14 @@ pub let row_count = pure (text: []rune, wrap: Wrap) -> i64 =>
 /// The position nearest column boundary `x` of row `row` (fractional: a click's place) —
 /// where a click there puts the caret, and where vertical motion lands: the row's end when
 /// `x` is past it, the start or end of the text when the row is above or below it. On a tie
-/// the left one.
+/// the left one. Only a grapheme cluster's ends count: a combining mark's place before it
+/// shares its base's column, but the caret never goes there.
 pub let index_at = pure (text: []rune, wrap: Wrap, row: i64, x: f32) -> i64 => {
   if row < 0 { return 0 }
   let at = layout(text, wrap)
   var best = -1
   var off: f32 = 0.0
-  for k in 0..<at.len() {
+  for k in text.grapheme_boundaries() {
     let (r, c) = at[k]
     if r == row {
       let d = (f32(c) - x).abs()

@@ -784,12 +784,52 @@ let check_editor = () -> i64 => {
     pos(position("éx".to_runes(), wrap, 2)),
     "0,1"
   )
+  failed += check(
+    "a click lands after a combining mark",
+    "${index_at("éx".to_runes(), wrap, 0, 1.0)}",
+    "2"
+  )
+  failed += check_characters()
 
   var p = editor()
   p.paste("a\r\nb\rc")
   failed += check("paste line ends", p.content(), "a\nb\nc")
   p.select_all()
   failed += check("cut", "${p.cut()}|${p.content()}", "a\nb\nc|")
+  failed
+}
+
+// A character is a grapheme cluster: an accent written as a combining mark, a flag's two
+// regional indicators and a thumbs up with its skin tone each take one Left, one Right, one
+// Backspace and one Delete, between an `x` and a `y`.
+let check_characters = () -> i64 => {
+  var failed = 0
+  for (name, c) in [("e and U+0301", "é"), ("a flag", "🇫🇷"), ("a skin tone", "👍🏽")] {
+    let end = c.to_runes().len() + 1
+    var e = with_text("x${c}y")
+    e.left(false)
+    e.left(false)
+    failed += check("left over ${name}", "${e.cursor}", "1")
+    e.right(false)
+    failed += check("right over ${name}", "${e.cursor}", "${end}")
+    e.backspace()
+    failed += check("backspace over ${name}", "${e.content()}:${e.cursor}", "xy:1")
+    var f = with_text("x${c}y")
+    f.text_start(false)
+    f.right(false)
+    f.delete_forward()
+    failed += check("delete over ${name}", "${f.content()}:${f.cursor}", "xy:1")
+    f.text_start(false)
+    f.right(false)
+    f.paste(c)
+    f.text_start(false)
+    f.right(true)
+    f.right(true)
+    failed += check("select right over ${name}", f.selected_text(), "x${c}")
+    // Each is two runes: a click between them goes to the nearer end, the earlier on a tie.
+    f.click(2, false)
+    failed += check("a click inside ${name}", "${f.cursor}", "1")
+  }
   failed
 }
 
